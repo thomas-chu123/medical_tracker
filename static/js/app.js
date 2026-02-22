@@ -134,8 +134,10 @@ async function initApp(userFromLogin = null) {
         // Page reload: fetch profile with stored token
         try {
             currentUser = await apiFetch('/api/users/me');
+            console.log('[initApp] currentUser loaded:', currentUser);
             if (!currentUser) return;
-        } catch {
+        } catch (e) {
+            console.error('[initApp] Failed to load profile:', e);
             handleLogout(); return;
         }
     }
@@ -163,7 +165,7 @@ async function initApp(userFromLogin = null) {
 }
 
 // ── Navigation ────────────────────────────────────────────────
-function navigate(btn, pageId) {
+function navigate(btn, pageId, options = {}) {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -185,15 +187,17 @@ function navigate(btn, pageId) {
     } else if (pageId === 'profile') {
         loadProfile();
     } else if (pageId === 'admin') {
-        loadAdminUsers();
-        loadSchedulerStatus();
-        loadServerLogs();
+        switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        // Reset stepper state
-        Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
-        stepperGoTo(1);
-        document.getElementById('stepper-breadcrumb').innerHTML = '';
-        loadStepperHospitals();
+        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, '_st BEFORE:', JSON.parse(JSON.stringify(_st)));
+        if (!options.skipReset) {
+            // Reset stepper state only if not skipped (e.g., from quickTrack)
+            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            console.log('[navigate] _st RESET');
+            stepperGoTo(1);
+            document.getElementById('stepper-breadcrumb').innerHTML = '';
+            loadStepperHospitals();
+        }
     }
 }
 
@@ -750,6 +754,7 @@ function stepperNextFromStep4() {
     const session = document.getElementById('modal-session').value;
     if (!date) { toast('請選擇就診日期', 'warning'); return; }
     if (!session) { toast('請選擇診次', 'warning'); return; }
+
     // Build confirm summary
     const apptNum = document.getElementById('modal-appointment-number').value;
     const notify = [
@@ -757,11 +762,19 @@ function stepperNextFromStep4() {
         document.getElementById('notify-10').checked ? '前10號' : '',
         document.getElementById('notify-5').checked ? '前5號' : ''
     ].filter(Boolean).join('、');
+
+    const hName = _st.hospitalName || '（未知醫院）';
+    const dName = _st.deptName || '（未知科室）';
+    const docName = _st.doctorName || '（未知醫師）';
+
+    console.log('[stepperNextFromStep4] _st state:', JSON.parse(JSON.stringify(_st)));
+    console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
+
     document.getElementById('confirm-summary').innerHTML = `
-      <div>🏥 <b>醫院：</b>${escHtml(_st.hospitalName)}</div>
+      <div>🏥 <b>醫院：</b>${escHtml(hName)}</div>
       ${_st.cat ? `<div>🏷️ <b>類別：</b>${escHtml(_st.cat)}</div>` : ''}
-      <div>🩺 <b>科室：</b>${escHtml(_st.deptName)}</div>
-      <div>👨‍⚕️ <b>醫師：</b>${escHtml(_st.doctorName)}</div>
+      <div>🩺 <b>科室：</b>${escHtml(dName)}</div>
+      <div>👨‍⚕️ <b>醫師：</b>${escHtml(docName)}</div>
       <div>📅 <b>日期：</b>${date} ${session}診</div>
       ${apptNum ? `<div>🎫 <b>掛號號碼：</b>${apptNum} 號</div>` : ''}
       <div>🔔 <b>通知門檻：</b>${notify || '（未設定）'}</div>
@@ -800,27 +813,32 @@ async function quickTrack(doctorId, doctorName) {
     // Collect context from existing selections if possible
     _st.hospitalId = _hsHospitalId;
     _st.hospitalName = _hsHospitalName;
-    _st.deptId = ''; // will be filled or we fetch
+    _st.deptId = '';
     _st.deptName = '';
     _st.doctorId = doctorId;
     _st.doctorName = doctorName;
 
     // Use the new info endpoint to get perfect context
     const info = await apiFetch(`/api/doctors/${doctorId}/info`);
+    console.log('[quickTrack] doctor info from API:', info);
     if (info) {
-        _st.hospitalId = info.hospital_id;
-        _st.hospitalName = info.hospital_name;
-        _st.deptId = info.department_id;
-        _st.deptName = info.department_name;
+        _st.hospitalId = info.hospital_id || info.hospitalId || _st.hospitalId;
+        _st.hospitalName = info.hospital_name || info.hospitalName || _st.hospitalName;
+        _st.deptId = info.department_id || info.deptId || _st.deptId;
+        _st.deptName = info.department_name || info.deptName || _st.deptName;
+        _st.doctorName = info.name || _st.doctorName;
     }
 
-    // Go to "add-tracking" page
-    const page = document.querySelector('[data-page="add-tracking"]');
-    navigate(page, 'add-tracking');
+    console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
 
-    // Jump to Step 4 (Confirm/Preview) directly as we have doctor/dept info
+    // Go to "add-tracking" page WITHOUT resetting stepper state
+    const page = document.querySelector('[data-page="add-tracking"]');
+    navigate(page, 'add-tracking', { skipReset: true });
+
+    // Ensure step-4 content is visible and breadcrumb updated
+    _stepperBreadcrumb();
     stepperGoTo(4);
-    loadModalSchedules();
+    await loadModalSchedules();
 }
 
 // Keep as noop stubs so old call-sites don't crash
@@ -948,10 +966,16 @@ function renderTrackingCard(sub, isExpired = false) {
     const line = sub.notify_line ? '📲 LINE' : '';
 
     const doctor = escHtml(sub.doctor_name || sub.doctor_id?.slice(0, 8) + '…');
-    const dept = escHtml(sub.department_name || '');
-    const hospital = escHtml(sub.hospital_name || '');
+    const dept = sub.department_name || '';
+    const hospital = sub.hospital_name || '';
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNo = sub.appointment_number ? `掛號號碼：${sub.appointment_number}` : '';
+
+    const emailDisplay = sub.notify_email && currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
+    if (sub.notify_email) {
+        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', currentUser);
+    }
+    const lineDisplay = sub.notify_line ? '📲 LINE' : '';
 
     const expiredClass = isExpired ? 'expired' : (sub.is_active ? '' : 'inactive');
 
@@ -960,10 +984,10 @@ function renderTrackingCard(sub, isExpired = false) {
     <div class="tc-header">
       <div>
         <div style="font-weight:600; font-size:15px">👨‍⚕️ ${doctor}</div>
-        ${dept ? `<div style="font-size:12px; color:var(--accent); margin-top:2px">🏥 ${hospital}｜${dept}</div>` : ''}
+        ${(hospital || dept) ? `<div style="font-size:12px; color:var(--accent); margin-top:2px">🏥 ${escHtml(hospital)} ${dept ? '｜' + escHtml(dept) : ''}</div>` : ''}
         <div style="font-size:13px; color:var(--text-muted); margin-top:4px">📅 ${sessionLabel}</div>
         ${apptNo ? `<div style="font-size:12px; color:var(--text-muted)">🎫 ${apptNo}</div>` : ''}
-        <div style="font-size:12px; color:var(--text-dim); margin-top:2px">${email} ${line}</div>
+        <div style="font-size:12px; color:var(--text-dim); margin-top:2px">${emailDisplay} ${lineDisplay}</div>
       </div>
       ${isExpired ? '' : `<div class="tc-actions">
         <button class="btn btn-secondary btn-sm" onclick="toggleSubActive('${sub.id}', ${!sub.is_active})">
@@ -1018,50 +1042,6 @@ async function submitTracking(e) {
     } catch (e) { toast(e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = '確認新增'; }
 }
-
-async function quickTrack(doctorId, doctorName) {
-    // Pre-fill stepper state from current hospital-search context
-    _st.hospitalId = _hsHospitalId || '';
-    _st.hospitalName = _hsHospitalName || '';
-    _st.cat = _hsDeptAll?.cat || '';
-    _st.deptId = '';
-    _st.deptName = '';
-    _st.doctorId = doctorId;
-    _st.doctorName = doctorName;
-
-    // Try to resolve dept from the currently selected dept button
-    const activeDeptBtn = document.querySelector('#hs-dept-grid .dept-btn.active');
-    if (activeDeptBtn) {
-        _st.deptName = activeDeptBtn.textContent.trim();
-    }
-    // Resolve deptId from current breadcrumb state stored in _hsDeptAll
-    if (_hsDeptAll?.depts?.length) {
-        const found = _hsDeptAll.depts.find(d => d.name === _st.deptName);
-        if (found) _st.deptId = found.id;
-    }
-
-    // Fetch doctor's dept info if we still don't have it
-    if (!_st.deptId) {
-        const docInfo = await apiFetch(`/api/doctors/${doctorId}/info`).catch(() => null);
-        if (docInfo) {
-            _st.hospitalId = docInfo.hospital_id;
-            _st.hospitalName = docInfo.hospital_name;
-            _st.deptId = docInfo.department_id;
-            _st.deptName = docInfo.department_name;
-        }
-    }
-
-    document.getElementById('modal-doctor').value = doctorId;
-    _stepperBreadcrumb();
-
-    navigate(document.querySelector('[data-page=add-tracking]'), 'add-tracking');
-    // Small delay to let page render, then jump to step 4
-    setTimeout(async () => {
-        stepperGoTo(4);
-        await loadModalSchedules();
-    }, 80);
-}
-
 
 // ── Notifications ─────────────────────────────────────────────
 
@@ -1118,6 +1098,22 @@ async function saveLineToken(e) {
         await apiPatch('/api/users/me', { line_notify_token: document.getElementById('line-token').value });
         toast('LINE Notify Token 已儲存', 'success');
     } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadProfile() {
+    console.log('[loadProfile] loading...');
+    const profile = await apiFetch('/api/users/me');
+    console.log('[loadProfile] fetched profile:', profile);
+    if (profile) {
+        currentUser = profile;
+        const nameEl = document.getElementById('profile-name');
+        const emailEl = document.getElementById('profile-email');
+        const lineEl = document.getElementById('line-token');
+
+        if (nameEl) nameEl.value = profile.display_name || '';
+        if (emailEl) emailEl.value = profile.email || '（未提供）';
+        if (lineEl) lineEl.value = profile.line_notify_token || '';
+    }
 }
 
 // ── Modal helpers ─────────────────────────────────────────────
@@ -1317,6 +1313,97 @@ async function clearServerLogs() {
         await apiDelete('/api/admin/logs');
         toast('日誌已清空', 'success');
         loadServerLogs();
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+}
+
+// ── Admin Tabs & Tracking Management ────────────────────────
+function switchAdminTab(tabId) {
+    // hide all tabs
+    document.querySelectorAll('.admin-tab-content').forEach(el => el.style.display = 'none');
+    // reset button styles
+    document.querySelectorAll('.hs-tabs button').forEach(btn => {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+    });
+
+    // show selected tab
+    document.getElementById(`admin-tab-${tabId}`).style.display = 'block';
+
+    // highlight selected button
+    const btn = document.getElementById(`admin-tab-btn-${tabId}`);
+    if (btn) {
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+    }
+
+    // load data for selected tab
+    if (tabId === 'users') {
+        loadAdminUsers();
+    } else if (tabId === 'tracking') {
+        loadAdminTracking();
+    } else if (tabId === 'system') {
+        loadSchedulerStatus();
+        loadServerLogs();
+    }
+}
+
+async function loadAdminTracking() {
+    const tbody = document.getElementById('admin-tracking-tbody');
+    try {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted)">載入中…</td></tr>';
+        const trackings = await apiFetch('/api/admin/tracking');
+        if (!trackings || trackings.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted)">目前沒有任何追蹤紀錄。</td></tr>';
+            return;
+        }
+
+        let html = '';
+        for (const t of trackings) {
+            const userName = t.user_name ? `${t.user_name} (${t.user_email})` : t.user_email;
+
+            const notifyArr = [];
+            if (t.notify_at_20) notifyArr.push('20');
+            if (t.notify_at_10) notifyArr.push('10');
+            if (t.notify_at_5) notifyArr.push('5');
+            const methods = [];
+            if (t.notify_email) methods.push('Email');
+            if (t.notify_line) methods.push('LINE');
+
+            const notifyStr = `剩 ${notifyArr.join(',')} 號<br><small style="color:var(--text-muted)">${methods.join(', ')}</small>`;
+
+            const statusStr = t.is_active ?
+                '<span style="color:var(--success)">✅ 追蹤中</span>' :
+                '<span style="color:var(--text-muted)">⏸ 已結束</span>';
+
+            html += `
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:10px 12px">${userName}</td>
+                    <td style="padding:10px 12px">${t.session_date}<br><small style="color:var(--text-muted)">${t.session_type || ''}</small></td>
+                    <td style="padding:10px 12px">${t.hospital_name || '（未知）'}<br><small style="color:var(--text-muted)">${t.department_name || '（未知）'}</small></td>
+                    <td style="padding:10px 12px">${t.doctor_name}<br><small style="color:var(--text-muted)">${t.appointment_number ? '我的號碼: ' + t.appointment_number : ''}</small></td>
+                    <td style="padding:10px 12px">${notifyStr}</td>
+                    <td style="padding:10px 12px">${statusStr}</td>
+                    <td style="padding:10px 12px">
+                        <button class="btn btn-secondary btn-sm" style="color:var(--danger)" onclick="deleteAdminTracking('${t.id}')">🗑 刪除</button>
+                    </td>
+                </tr>
+            `;
+        }
+        tbody.innerHTML = html;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--danger)">載入失敗: ${e.message}</td></tr>`;
+        toast(e.message, 'error');
+    }
+}
+
+async function deleteAdminTracking(id) {
+    if (!confirm('確定要刪除這筆追蹤紀錄嗎？此操作不可逆。')) return;
+    try {
+        await apiDelete(`/api/admin/tracking/${id}`);
+        toast('追蹤紀錄已刪除', 'success');
+        loadAdminTracking();
     } catch (e) {
         toast(e.message, 'error');
     }

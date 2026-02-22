@@ -48,6 +48,7 @@ class UserProfile(BaseModel):
 
 class UserProfileOut(BaseModel):
     id: UUID
+    email: str
     display_name: Optional[str] = None
     line_notify_token: Optional[str] = None
     is_admin: bool = False

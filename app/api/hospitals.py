@@ -176,16 +176,34 @@ async def get_doctor_info(doctor_id: str):
         raise HTTPException(status_code=404, detail="Doctor not found")
     
     data = result.data
-    dept = data.get("departments") or {}
-    hosp = dept.get("hospitals") or {}
+    # PostgREST can sometimes return joined objects as a list if it's a 1-to-many relationship
+    dept = data.get("departments")
+    if isinstance(dept, list) and len(dept) > 0:
+        dept = dept[0]
+    elif not isinstance(dept, dict):
+        dept = {}
+
+    hosp = dept.get("hospitals")
+    if isinstance(hosp, list) and len(hosp) > 0:
+        hosp = hosp[0]
+    elif not isinstance(hosp, dict):
+        hosp = {}
+
+    # Fallback: if hospital_name still missing, try direct lookup via hospital_id if available
+    h_name = hosp.get("name")
+    h_id = dept.get("hospital_id") or data.get("hospital_id")
+    if not h_name and h_id:
+        h_res = supabase.table("hospitals").select("name").eq("id", h_id).execute()
+        if h_res.data:
+            h_name = h_res.data[0].get("name")
     
     return {
         "id": data["id"],
         "name": data["name"],
-        "specialty": data["specialty"],
-        "department_id": data["department_id"],
-        "department_name": dept.get("name"),
+        "specialty": data.get("specialty"),
+        "department_id": data.get("department_id"),
+        "department_name": dept.get("name") or "（無科室資訊）",
         "department_category": dept.get("category"),
-        "hospital_id": dept.get("hospital_id"),
-        "hospital_name": hosp.get("name")
+        "hospital_id": h_id,
+        "hospital_name": h_name or "（無醫院資訊）"
     }

@@ -26,15 +26,21 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
     if not subs:
         return []
 
-    # Batch-fetch doctors and departments to avoid N+1
+    # Batch-fetch doctors and departments to prevent N+1
     doctor_ids = list({s["doctor_id"] for s in subs if s.get("doctor_id")})
-    dept_ids = list({s["department_id"] for s in subs if s.get("department_id")})
-
+    
     doctors_map = {}
     if doctor_ids:
-        docs = supabase.table("doctors").select("id, name, specialty, hospital_id").in_("id", doctor_ids).execute()
+        docs = supabase.table("doctors").select("id, name, specialty, hospital_id, department_id").in_("id", doctor_ids).execute()
         doctors_map = {d["id"]: d for d in docs.data}
 
+    # Collect department IDs from both subs and their doctors (as fallback)
+    dept_ids_set = {s["department_id"] for s in subs if s.get("department_id")}
+    for d in doctors_map.values():
+        if d.get("department_id"):
+            dept_ids_set.add(d["department_id"])
+    
+    dept_ids = list(dept_ids_set)
     depts_map = {}
     if dept_ids:
         depts = supabase.table("departments").select("id, name, category").in_("id", dept_ids).execute()
@@ -51,7 +57,10 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
     enriched = []
     for s in subs:
         doc = doctors_map.get(s.get("doctor_id"), {})
-        dept = depts_map.get(s.get("department_id"), {})
+        # Use sub's dept_id or fallback to doctor's dept_id
+        d_id = s.get("department_id") or doc.get("department_id")
+        dept = depts_map.get(d_id, {})
+        
         hosp_name = hospitals_map.get(doc.get("hospital_id"), "")
         s["doctor_name"] = doc.get("name", "")
         s["department_name"] = dept.get("name", "")

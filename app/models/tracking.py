@@ -61,6 +61,15 @@ class TrackingRichOut(TrackingOut):
         from_attributes = True
 
 
+class AdminTrackingOut(TrackingRichOut):
+    """Admin view of tracking with user details."""
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class NotificationLogOut(BaseModel):
     id: UUID
     subscription_id: UUID
