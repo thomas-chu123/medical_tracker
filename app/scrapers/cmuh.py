@@ -164,13 +164,22 @@ class CMUHScraper(BaseScraper):
         url = "https://appointment.cmuh.org.tw/cgi-bin/reg52.cgi"
         
         client = await self._get_client()
-        try:
-            # Need to handle Big5/CP950 encoding from the CGI backend
-            resp = await client.get(url, params={"DocNo": appointment_doc_no, "Docname": doc_name})
-            resp.raise_for_status()
-            html = resp.content.decode("big5", errors="ignore")
-        except Exception as e:
-            print(f"Error fetching doctor info for {doc_no}: {e}")
+        html = ""
+        for attempt in range(3):
+            try:
+                # Need to handle Big5/CP950 encoding from the CGI backend
+                resp = await client.get(url, params={"DocNo": appointment_doc_no, "Docname": doc_name})
+                resp.raise_for_status()
+                html = resp.content.decode("big5", errors="ignore")
+                break
+            except Exception as e:
+                if attempt == 2:
+                    print(f"Error fetching doctor info for {doc_no} after 3 attempts: {e}")
+                    return []
+                import asyncio
+                await asyncio.sleep(1.0 * (attempt + 1))
+                
+        if not html:
             return []
 
         soup = BeautifulSoup(html, "lxml")
@@ -219,9 +228,15 @@ class CMUHScraper(BaseScraper):
                     if not session_date:
                         continue
 
-                    registered = _parse_int(re.search(r"已掛號：(\d+)", block).group(1)) if re.search(r"已掛號：(\d+)", block) else None
-                    room_match = re.search(r"\((\d+診)\)", block)
+                    registered = _parse_int(re.search(r"已掛號[：:]\s*(\d+)", block).group(1)) if re.search(r"已掛號[：:]\s*(\d+)", block) else None
+                    room_match = re.search(r"\(([\dA-Za-z]+)診?\)", block)
                     clinic_room = room_match.group(1) if room_match else None
+                    
+                    # Extract current calling number (診間燈號)
+                    # Pattern on page: <div style="text-align:center;">診間燈號：37</div>
+                    lamp_match = re.search(r"診間燈號[：:]\s*(\d+)", block)
+                    current_number = int(lamp_match.group(1)) if lamp_match else None
+
                     is_full = "額滿" in block or "掛滿" in block
                     status_text = "額滿" if is_full else None
 
@@ -235,6 +250,7 @@ class CMUHScraper(BaseScraper):
                             total_quota=None,           # CGI doesn't easily show quota
                             registered=registered,
                             clinic_room=clinic_room,
+                            current_number=current_number,
                             is_full=is_full,
                             status=status_text,
                         )
@@ -248,42 +264,82 @@ class CMUHScraper(BaseScraper):
         self, room: str, period: str
     ) -> Optional[ClinicProgress]:
         """
-        Query current calling number.
+        Query current calling number and clinic status using reg64.cgi.
         period: '1'=morning, '2'=afternoon, '3'=evening
         """
-        url = f"{self.BASE_URL}/OnlineAppointment/ClinicQuery"
+        url = "https://appointment.cmuh.org.tw/cgi-bin/reg64.cgi"
+        
+        # Room passed from DB already has '診' stripped by the upstream method
+        params = {"TimeCode": period, "CliRoom": room.strip()}
         try:
-            html = await self._post(url, data={"ClinicRoom": room, "TimePeriod": period})
-        except Exception:
+            client = await self._get_client()
+            # reg64.cgi responds with Big5 encoding
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            html = resp.content.decode("big5", errors="ignore")
+        except Exception as e:
+            # Fallback to old behavior if reg64 fails, or just return None
             return None
 
         soup = BeautifulSoup(html, "lxml")
-
-        # Look for the current number in the response
+        
         current_number = None
-        for tag in soup.find_all(text=True):
-            m = re.search(r"目前看診號[：:]\s*(\d+)", tag)
-            if m:
-                current_number = int(m.group(1))
-                break
-            m = re.search(r"(\d+)\s*號", tag)
-            if m and current_number is None:
-                current_number = int(m.group(1))
+        status = None
+        
+        # 1. Extract Current Number & Basic Status
+        # Look for the specific line: 診間目前燈號：24 or 看診完畢
+        text_all = soup.get_text()
+        html_all = str(soup)
+        
+        # Look for the specific pattern in raw HTML (since they added tags)
+        # e.g.: 目前診號 <span class="text-primary"><strong>104</strong></span>
+        # or old versions: 目前燈號：24
+        lamp_match = re.search(r"目前[燈診]號.*?(\d+)", html_all)
+        if lamp_match:
+            current_number = int(lamp_match.group(1))
+        
+        if "看診完畢" in text_all or "掛號看診完畢" in text_all:
+            status = "看診完畢"
+            if current_number is None: current_number = 0
+        elif "未開診" in text_all:
+            status = "未開診"
+            if current_number is None: current_number = 0
+        elif "休診" in text_all:
+            status = "休診"
+            if current_number is None: current_number = 0
 
-        if current_number is None:
-            # Try to extract any number from inside a result element
-            result_div = soup.find(class_=re.compile(r"result|number|current", re.I))
-            if result_div:
-                current_number = _parse_int(result_div.get_text())
+        # 2. Extract Quota and Registered Count from table
+        registered_count = None
+        total_quota = None
+        rows = soup.find_all("tr")
+        numbers = []
+        patient_rows = 0
+        for row in rows:
+            tds = row.find_all("td")
+            if len(tds) >= 2: # Look for rows with [Number, Status]
+                val_str = tds[0].get_text(strip=True)
+                val = _parse_int(val_str)
+                # Ensure it's not a header row by checking if it contains a pure number
+                if val is not None and val_str.isdigit():
+                    numbers.append(val)
+                    patient_rows += 1
 
-        if current_number is None:
+        if numbers:
+            registered_count = max(numbers)
+        if patient_rows > 0:
+            total_quota = patient_rows
+
+        if current_number is None and not status:
             return None
 
         period_map = {"1": "上午", "2": "下午", "3": "晚上"}
         return ClinicProgress(
             clinic_room=room,
             session_type=period_map.get(period, period),
-            current_number=current_number,
+            current_number=current_number or 0,
+            total_quota=total_quota,
+            registered_count=registered_count,
+            status=status
         )
 
     # ─────────────────────────────────────────────────────────

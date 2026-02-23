@@ -1,7 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, status
+import asyncio
+
 from app.database import get_supabase
+from app.auth import get_current_user
+from app.scheduler import run_tracked_appointments
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
 
@@ -10,6 +14,7 @@ class GlobalStats(BaseModel):
     departments: int
     doctors: int
     snapshots_today: int
+    notifications_today: int
 
 @router.get("/global", response_model=GlobalStats)
 async def get_global_stats():
@@ -29,12 +34,27 @@ async def get_global_stats():
         .execute()
     )
     
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    notif_res = (
+        supabase.table("notification_logs")
+        .select("count", count="exact")
+        .gte("sent_at", today_start)
+        .limit(1)
+        .execute()
+    )
+    
     return GlobalStats(
         hospitals=hosp_res.count or 0,
         departments=dept_res.count or 0,
         doctors=doc_res.count or 0,
         snapshots_today=snap_res.count or 0,
+        notifications_today=notif_res.count or 0,
     )
+
+@router.post("/scrape-now", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_scrape_now(current_user: dict = Depends(get_current_user)):
+    asyncio.create_task(run_tracked_appointments())
+    return {"message": "Scrape task triggered"}
 
 
 class CrowdAnalysisResult(BaseModel):
@@ -85,4 +105,3 @@ async def get_crowd_analysis():
         labels=list(averages.keys()),
         data=list(averages.values())
     )
-

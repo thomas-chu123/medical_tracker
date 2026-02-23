@@ -21,6 +21,7 @@ class DoctorSlot:
     total_quota: Optional[int]
     registered: Optional[int]
     clinic_room: Optional[str]
+    current_number: Optional[int] = None
     is_full: bool = False
     status: Optional[str] = None
 
@@ -30,6 +31,8 @@ class ClinicProgress:
     clinic_room: str
     session_type: str
     current_number: int
+    total_quota: Optional[int] = None
+    registered_count: Optional[int] = None
     status: Optional[str] = None
 
 

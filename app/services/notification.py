@@ -69,14 +69,19 @@ async def _process_subscription(supabase, sub: dict):
     current_number = snap.get("current_number")
     total_quota = snap.get("total_quota")
 
-    if current_number is None or total_quota is None:
+    if current_number is None:
         return
 
-    remaining = total_quota - current_number
+    # Use appointment_number if set by user, fallback to total_quota
+    target_number = sub.get("appointment_number") or total_quota
+    if target_number is None:
+        return
+
+    remaining = target_number - current_number
 
     # Build context for notifications
-    doctor_name = sub.get("doctors", {}).get("name", "未知醫師")
-    dept_name = sub.get("departments", {}).get("name", "未知科別")
+    doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
+    dept_name = (sub.get("departments") or {}).get("name", "未知科別")
     session_date_str = str(date.today())
     session_type_str = sub.get("session_type", "")
     

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
 
 
 # ── Auth schemas ────────────────────────────────────────────
@@ -42,8 +42,7 @@ class UserProfile(BaseModel):
     is_verified: bool = False
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserProfileOut(BaseModel):
@@ -54,8 +53,7 @@ class UserProfileOut(BaseModel):
     is_admin: bool = False
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserProfileUpdate(BaseModel):
@@ -72,5 +70,4 @@ class UserAdminOut(BaseModel):
     is_verified: bool = False
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

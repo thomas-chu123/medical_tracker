@@ -213,7 +213,7 @@ async function loadDashboard() {
     if (gStats) {
         document.getElementById('stat-hospitals').textContent = gStats.hospitals;
         document.getElementById('stat-doctors').textContent = gStats.doctors;
-        document.getElementById('stat-alerts').textContent = gStats.snapshots_today;
+        document.getElementById('stat-alerts').textContent = gStats.notifications_today || '0';
     }
 
     const activeSubs = (subs || []);
@@ -294,11 +294,31 @@ async function renderDashboardTracking(subs) {
 }
 
 function renderClinicCard(sub, snap) {
-    const remaining = snap?.remaining ?? '—';
-    const total = snap?.total_quota ?? '?';
-    const current = snap?.current_number ?? '—';
+    console.log('renderClinicCard data - sub room:', sub.clinic_room, 'snap room:', snap?.clinic_room);
+    const current = (sub.current_number != null) ? sub.current_number : (snap?.current_number != null ? snap.current_number : '—');
+    const total_quota = (sub.total_quota != null) ? sub.total_quota : (snap?.total_quota != null ? snap.total_quota : '?');
+    const current_registered = (sub.current_registered != null) ? sub.current_registered : (snap?.current_registered != null ? snap.current_registered : '?');
+
+    // If we only have one value, display it as "總號" or "已掛號". If both exist, display both.
+    let numberDisplayHtml = '';
+    let hasBoth = total_quota !== '?' && current_registered !== '?';
+    let total = '—';
+
+    if (hasBoth) {
+        numberDisplayHtml = `目前號 / ${current_registered} 已掛號 / ${total_quota} 總號`;
+        total = total_quota;
+    } else {
+        total = (total_quota !== '?') ? total_quota : ((current_registered !== '?') ? current_registered : '?');
+        const totalLabel = (total_quota !== '?') ? '總號' : ((current_registered !== '?') ? '已掛號' : '總號');
+        numberDisplayHtml = `目前號 / ${total} ${totalLabel}`;
+    }
+
+    const remaining = sub.remaining ?? '—';
+    const status = sub.status;
     const isNum = typeof remaining === 'number';
-    const pct = isNum && total ? Math.round((1 - remaining / total) * 100) : 0;
+    const isFinished = status === '看診完畢' || status === '已關診';
+
+    const pct = isNum && total !== '—' && typeof total === 'number' && total > 0 ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
     const pillDone = (flag, label) => `<span class="threshold-pill ${flag ? 'done' : 'active'}">${label}</span>`;
 
@@ -306,6 +326,9 @@ function renderClinicCard(sub, snap) {
     const deptLabel = sub.department_name || '';
     const hospLabel = sub.hospital_name || '';
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
+    const apptNoHtml = `<div style="font-size:12px; color:var(--text-muted); margin-top:2px">🎫 我的號碼：${(sub.appointment_number != null) ? sub.appointment_number : '<span style="opacity:0.6">(未填寫)</span>'}</div>`;
+
+    const statusBadge = status ? `<span class="status-badge ${isFinished ? 'finished' : 'upcoming'}">${status}</span>` : '';
 
     let distanceHtml = '';
     if (isNum && sub.appointment_number && typeof current === 'number') {
@@ -314,25 +337,29 @@ function renderClinicCard(sub, snap) {
             distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">距您的 ${sub.appointment_number} 號還差 <strong style="color:var(--text)">${diff}</strong> 號</div>`;
         } else if (diff === 0) {
             distanceHtml = `<div style="font-size:13px; color:var(--text-muted)"><strong>⭐ 到號了！</strong></div>`;
-        } else {
+        } else if (diff < 0) {
             distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">⚠️ 您的號碼已過號</div>`;
         }
-    } else if (isNum) {
+    } else if (isNum && !isFinished) {
         distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">距滿號還剩 <strong style="color:var(--text)">${remaining}</strong> 號</div>`;
     }
 
     return `
-  <div class="clinic-card">
-    <div class="doctor-name">👨‍⚕️ ${escHtml(doctorLabel)}</div>
+  <div class="clinic-card ${isFinished ? 'status-finished' : ''}">
+    <div class="doctor-name">👨‍⚕️ ${escHtml(doctorLabel)} ${statusBadge}</div>
     ${deptLabel ? `<div style="font-size:12px; color:var(--text-muted); margin-bottom:2px">🏥 ${escHtml(hospLabel)}｜${escHtml(deptLabel)}</div>` : ''}
-    <span class="dept-tag">📅 ${escHtml(sessionLabel)}</span>
+    <div style="margin-bottom: 8px;">
+      <span class="dept-tag">📅 ${escHtml(sessionLabel)}</span>
+      ${(sub.clinic_room || snap?.clinic_room) ? `<span class="dept-tag" style="margin-left:6px;">🚪 診間：${escHtml(sub.clinic_room || snap.clinic_room)}診</span>` : ''}
+    </div>
+    ${apptNoHtml}
     <div class="number-display">
-      <div class="current-num">${current}</div>
-      <div class="num-label">目前號 / ${total} 總號</div>
+      <div class="current-num ${isFinished ? 'text-muted' : ''}">${isFinished ? '完畢' : current}</div>
+      <div class="num-label">${numberDisplayHtml}</div>
     </div>
     ${isNum ? `
     <div class="progress-wrap" style="margin-bottom:10px">
-      <div class="progress-bar ${barClass}" style="width:${pct}%"></div>
+      <div class="progress-bar ${isFinished ? 'muted' : barClass}" style="width:${pct}%"></div>
     </div>
     ${distanceHtml}
     ` : ''}
@@ -347,7 +374,7 @@ function renderClinicCard(sub, snap) {
 async function refreshAll() {
     toast('正在更新資料…', 'info');
     try {
-        await apiPost('/api/admin/scrape-now', {});
+        await apiPost('/api/stats/scrape-now', {});
         await new Promise(r => setTimeout(r, 1500));
         await loadDashboard();
         toast('資料已更新', 'success');
@@ -477,19 +504,24 @@ function _hsRenderCategoryChips(hospId, hospName, cats) {
     wrap.style.display = 'block';
     document.getElementById('hs-dept-wrap').style.display = 'none';
     document.getElementById('doctors-grid').innerHTML =
-        '<div class="empty-state"><div class="empty-icon">🏷️</div><p>請選擇科室類別</p></div>';
+        '<div class="empty-state"><div class="empty-icon">🏷️</div><p>請選擇科室類別，或輸入名稱搜尋全院</p></div>';
 }
 
 async function hsSelectCategory(hospId, hospName, cat) {
     document.querySelectorAll('#hs-category-chips .cat-chip').forEach(b =>
         b.classList.toggle('active', b.textContent === cat));
     _hsBreadcrumb([hospName, cat]);
-    document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
+
     // Reset dept search when switching category
     const deptSearchEl = document.getElementById('dept-search');
-    if (deptSearchEl) deptSearchEl.value = '';
+    if (deptSearchEl) { deptSearchEl.value = ''; deptSearchEl.dataset.lastVal = ''; }
+
+    document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
     const depts = await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [];
     _hsRenderDeptGrid(hospId, hospName, cat, depts);
+
+    // Apply existing doctor/dept filters (if any) to the newly selected category
+    filterHospitalSearch();
 }
 
 function _hsDeptButtons(depts, hospName, cat) {
@@ -512,43 +544,38 @@ function _hsRenderDeptGrid(hospId, hospName, cat, depts) {
         : '<div style="color:var(--text-muted);font-size:14px">此類別下無科室資料<\/div>';
     wrap.style.display = 'block';
     document.getElementById('doctors-grid').innerHTML =
-        '<div class="empty-state"><div class="empty-icon">🏥<\/div><p>請選擇科室<\/p><\/div>';
+        '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
 }
 
 let _hsDeptAll = { depts: [], hospName: '', cat: '' };
+let _currentHsDeptId = null;
+let _doctorSearchTimer = null;
 
 function filterHospitalSearch() {
     const dq = (document.getElementById('dept-search')?.value || '').toLowerCase().trim();
     const docq = (document.getElementById('doctor-search')?.value || '').toLowerCase().trim();
     const { depts, hospName, cat } = _hsDeptAll;
 
-    // Reset UI if dept search is cleared while in category mode
-    if (cat && !dq) {
+    const dsNode = document.getElementById('dept-search');
+    const prevDq = dsNode?.dataset.lastVal || '';
+    if (dq !== prevDq && dsNode) {
+        _currentHsDeptId = null; // Unselect dept if user manually edits dept-search
+        dsNode.dataset.lastVal = dq;
+    }
+
+    if (!dq && cat) {
         document.getElementById('hs-dept-grid').innerHTML = _hsDeptButtons(depts, hospName, cat);
         document.getElementById('hs-dept-label').textContent = `${cat} — 請選擇科室`;
-        return;
+        document.getElementById('hs-dept-wrap').style.display = 'block';
     }
-
-    // Reset UI if dept search is cleared while NO category is selected
-    if (!cat && !dq && _hsHospitalId) {
+    else if (!dq && !cat && _hsHospitalId) {
         document.getElementById('hs-dept-wrap').style.display = 'none';
         document.getElementById('hs-category-wrap').style.display = 'block';
-        return;
     }
-
-    if (cat) {
-        // Filter within current category locally
-        let filteredDepts = dq ? depts.filter(d => d.name.toLowerCase().includes(dq)) : depts;
-        document.getElementById('hs-dept-grid').innerHTML = _hsDeptButtons(filteredDepts, hospName, cat);
-        document.getElementById('hs-dept-label').textContent = dq
-            ? `搜尋「${dq}」— 找到 ${filteredDepts.length} 個科室`
-            : `${cat} — 請選擇科室`;
-        document.getElementById('hs-dept-wrap').style.display = 'block';
-    } else if (_hsHospitalId && dq) {
-        // No category selected — do full-hospital API search for depts
+    else if (_hsHospitalId && dq) {
+        // If there's a search query, always search the whole hospital departments
         apiFetch(`/api/hospitals/${_hsHospitalId}/departments?q=${encodeURIComponent(dq)}`).then(results => {
             const deptWrap = document.getElementById('hs-dept-wrap');
-            // Hide categories if searching
             document.getElementById('hs-category-wrap').style.display = 'none';
             document.getElementById('hs-dept-label').textContent = `搜尋「${dq}」— 找到 ${(results || []).length} 個科室`;
             const html = (results || []).length
@@ -558,30 +585,58 @@ function filterHospitalSearch() {
                 : '<div style="color:var(--text-muted);font-size:14px">找不到符合的科室</div>';
             document.getElementById('hs-dept-grid').innerHTML = html;
             deptWrap.style.display = 'block';
-
-            // If also searching for doctor, we reset the doctors grid because we are searching across depts
-            if (docq) {
-                document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-            }
         });
     }
 
-    // Filter doctors locally if we have results
-    if (allDoctors.length) {
-        let filteredDocs = docq ? allDoctors.filter(d => d.name.toLowerCase().includes(docq)) : allDoctors;
-        renderDoctorCards(filteredDocs);
-    } else if (docq && _hsHospitalId) {
-        // Optional: If doctor search is entered but no dept selected, 
-        // maybe search globally in that hospital? 
-        // For now, keep it simple: doctor search only works after selecting a dept/performing a dept search.
-    }
+    clearTimeout(_doctorSearchTimer);
+    _doctorSearchTimer = setTimeout(async () => {
+        if (!_hsHospitalId) return;
+
+        if (!docq && !_currentHsDeptId) {
+            // Revert to empty state if no search text and no department selected
+            document.getElementById('doctors-grid').innerHTML =
+                '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
+            return;
+        } else if (!docq && _currentHsDeptId && allDoctors.length) {
+            renderDoctorCards(allDoctors);
+            return;
+        }
+
+        document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
+        try {
+            let url = `/api/hospitals/${_hsHospitalId}/doctors`;
+            const params = new URLSearchParams();
+            if (docq) params.append('q', docq);
+            if (_currentHsDeptId) params.append('department_id', _currentHsDeptId);
+
+            if (params.toString()) url += `?${params.toString()}`;
+            let docs = await apiFetch(url) || [];
+
+            if (!_currentHsDeptId) {
+                if (cat && _hsDeptAll.depts.length) {
+                    const validIds = new Set(_hsDeptAll.depts.map(d => d.id));
+                    docs = docs.filter(d => validIds.has(d.department_id));
+                }
+                if (dq) {
+                    docs = docs.filter(d => (d.department_name || '').toLowerCase().includes(dq));
+                }
+            }
+
+            renderDoctorCards(docs);
+        } catch (e) {
+            console.error('Doctor search error:', e);
+            document.getElementById('doctors-grid').innerHTML = '<div class="empty-state"><p>載入失敗</p></div>';
+        }
+    }, 300);
 }
 
 function resetHospitalSearch() {
     const ds = document.getElementById('dept-search');
     const docs = document.getElementById('doctor-search');
-    if (ds) ds.value = '';
+    if (ds) { ds.value = ''; ds.dataset.lastVal = ''; }
     if (docs) docs.value = '';
+
+    _currentHsDeptId = null;
 
     // If a hospital is selected, reset to category view
     if (_hsHospitalId) {
@@ -605,9 +660,11 @@ function filterDoctors() {
 }
 
 async function hsSelectDept(deptId, deptName, hospName, cat) {
-    // Clear doctor search + previous results to prevent stacking
+    _currentHsDeptId = deptId;
     const docSearchEl = document.getElementById('doctor-search');
+    const dsNode = document.getElementById('dept-search');
     if (docSearchEl) docSearchEl.value = '';
+    if (dsNode) { dsNode.value = deptName; dsNode.dataset.lastVal = deptName.toLowerCase(); }
     allDoctors = [];
 
     document.querySelectorAll('#hs-dept-grid .dept-btn').forEach(b =>
@@ -829,6 +886,9 @@ async function quickTrack(doctorId, doctorName) {
         _st.doctorName = info.name || _st.doctorName;
     }
 
+    document.getElementById('modal-doctor').value = _st.doctorId;
+    document.getElementById('modal-dept').value = _st.deptId;
+
     console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
 
     // Go to "add-tracking" page WITHOUT resetting stepper state
@@ -899,12 +959,20 @@ async function showDoctorDetail(doctorId, name) {
     document.getElementById('doctor-modal').classList.add('open');
     document.getElementById('doctor-modal-body').innerHTML = `<div class="spinner"></div>`;
 
-    const snaps = await apiFetch(`/api/doctors/${doctorId}/snapshots?limit=10`) || [];
+    const snaps = await apiFetch(`/api/doctors/${doctorId}/snapshots?limit=50`) || [];
     if (!snaps.length) {
         document.getElementById('doctor-modal-body').innerHTML =
             `<div class="empty-state"><div class="empty-icon">📊</div><p>尚無門診資料</p></div>`;
         return;
     }
+
+    const sessionOrder = { "上午": 1, "下午": 2, "晚上": 3 };
+    snaps.sort((a, b) => {
+        if (a.session_date !== b.session_date) {
+            return a.session_date.localeCompare(b.session_date);
+        }
+        return (sessionOrder[a.session_type] || 99) - (sessionOrder[b.session_type] || 99);
+    });
 
     document.getElementById('doctor-modal-body').innerHTML = `
     <div class="table-wrap">
@@ -960,16 +1028,17 @@ async function loadTracking() {
 }
 
 function renderTrackingCard(sub, isExpired = false) {
+    console.log('renderTrackingCard data - sub room:', sub.clinic_room);
     const pill = (on, done, label) => !on ? '' :
         `<span class="threshold-pill ${done ? 'done' : 'active'}">${label} ${done ? '✓' : '⏳'}</span>`;
     const email = sub.notify_email ? '📧 Email' : '';
     const line = sub.notify_line ? '📲 LINE' : '';
 
-    const doctor = escHtml(sub.doctor_name || sub.doctor_id?.slice(0, 8) + '…');
+    const docName = sub.doctor_name || sub.doctor_id?.slice(0, 8) || '未知';
     const dept = sub.department_name || '';
     const hospital = sub.hospital_name || '';
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
-    const apptNo = sub.appointment_number ? `掛號號碼：${sub.appointment_number}` : '';
+    const apptNo = sub.appointment_number ? `${sub.appointment_number}` : '<span style="opacity:0.6">(未填寫)</span>';
 
     const emailDisplay = sub.notify_email && currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
     if (sub.notify_email) {
@@ -979,14 +1048,30 @@ function renderTrackingCard(sub, isExpired = false) {
 
     const expiredClass = isExpired ? 'expired' : (sub.is_active ? '' : 'inactive');
 
+    // Handle quota logic with fallback
+    const total_quota = sub.total_quota != null ? sub.total_quota : '?';
+    const current_registered = sub.current_registered != null ? sub.current_registered : '?';
+    const hasBoth = total_quota !== '?' && current_registered !== '?';
+    let quotaHtml = '';
+
+    if (hasBoth) {
+        quotaHtml = `<div style="font-size:12px; color:var(--text); margin-top:2px">📊 ${current_registered} 已掛號 / ${total_quota} 總號</div>`;
+    } else if (total_quota !== '?') {
+        quotaHtml = `<div style="font-size:12px; color:var(--text); margin-top:2px">📊 ${total_quota} 總號</div>`;
+    } else if (current_registered !== '?') {
+        quotaHtml = `<div style="font-size:12px; color:var(--text); margin-top:2px">📊 ${current_registered} 已掛號</div>`;
+    }
+
     return `
   <div class="tracking-card ${expiredClass}" id="sub-${sub.id}">
     <div class="tc-header">
       <div>
-        <div style="font-weight:600; font-size:15px">👨‍⚕️ ${doctor}</div>
+        <div style="font-weight:600; font-size:15px">👩‍⚕️ ${escHtml(docName)}</div>
         ${(hospital || dept) ? `<div style="font-size:12px; color:var(--accent); margin-top:2px">🏥 ${escHtml(hospital)} ${dept ? '｜' + escHtml(dept) : ''}</div>` : ''}
-        <div style="font-size:13px; color:var(--text-muted); margin-top:4px">📅 ${sessionLabel}</div>
-        ${apptNo ? `<div style="font-size:12px; color:var(--text-muted)">🎫 ${apptNo}</div>` : ''}
+        <div style="font-size:13px; color:var(--text-muted); margin-top:4px">📅 ${sessionLabel}${sub.clinic_room ? ` ｜ 🚪 診間：${escHtml(sub.clinic_room)}診` : ''}</div>
+        <div style="font-size:12px; color:var(--text-muted)">🎫 我的號碼：${apptNo}</div>
+        ${quotaHtml}
+        ${sub.current_number ? `<div style="font-size:12px; color:var(--primary); font-weight:bold; margin-top:2px">🔔 目前看診號碼：${sub.current_number}</div>` : ''}
         <div style="font-size:12px; color:var(--text-dim); margin-top:2px">${emailDisplay} ${lineDisplay}</div>
       </div>
       ${isExpired ? '' : `<div class="tc-actions">
@@ -1004,7 +1089,29 @@ function renderTrackingCard(sub, isExpired = false) {
   </div>`;
 }
 
+async function toggleSubActive(subId, isActive) {
+    try {
+        await apiFetch(`/api/tracking/${subId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_active: isActive })
+        });
+        toast(isActive ? '已恢復追蹤' : '已暫停追蹤', 'success');
+        setTimeout(() => loadTracking(), 300);
+    } catch (e) {
+        toast('操作失敗', 'error');
+    }
+}
 
+async function deleteSub(subId) {
+    if (!confirm('確定要刪除這筆追蹤紀錄嗎？')) return;
+    try {
+        await apiFetch(`/api/tracking/${subId}`, { method: 'DELETE' });
+        toast('已刪除紀錄', 'success');
+        setTimeout(() => loadTracking(), 300);
+    } catch (e) {
+        toast('刪除失敗', 'error');
+    }
+}
 
 async function submitTracking(e) {
     e.preventDefault();
@@ -1382,7 +1489,7 @@ async function loadAdminTracking() {
                     <td style="padding:10px 12px">${userName}</td>
                     <td style="padding:10px 12px">${t.session_date}<br><small style="color:var(--text-muted)">${t.session_type || ''}</small></td>
                     <td style="padding:10px 12px">${t.hospital_name || '（未知）'}<br><small style="color:var(--text-muted)">${t.department_name || '（未知）'}</small></td>
-                    <td style="padding:10px 12px">${t.doctor_name}<br><small style="color:var(--text-muted)">${t.appointment_number ? '我的號碼: ' + t.appointment_number : ''}</small></td>
+                    <td style="padding:10px 12px">${t.doctor_name}<br><small style="color:var(--text-muted)">我的號碼: ${t.appointment_number || '<span style="opacity:0.6">(未填寫)</span>'}</small></td>
                     <td style="padding:10px 12px">${notifyStr}</td>
                     <td style="padding:10px 12px">${statusStr}</td>
                     <td style="padding:10px 12px">

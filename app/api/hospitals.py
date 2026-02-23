@@ -92,18 +92,32 @@ async def list_doctors(department_id: str):
 
 
 @router.get("/hospitals/{hospital_id}/doctors", response_model=list[DoctorOut])
-async def list_all_doctors(hospital_id: str, q: str = Query(default="", description="搜尋醫師名稱")):
+async def list_all_doctors(
+    hospital_id: str, 
+    department_id: str = Query(default=None, description="過濾特定科室"),
+    q: str = Query(default="", description="搜尋醫師名稱")
+):
     supabase = get_supabase()
     query = (
         supabase.table("doctors")
-        .select("*")
+        .select("id, hospital_id, department_id, doctor_no, name, specialty, is_active, departments(name)")
         .eq("hospital_id", hospital_id)
         .eq("is_active", True)
     )
+    if department_id:
+        query = query.eq("department_id", department_id)
     if q:
         query = query.ilike("name", f"%{q}%")
+        
     result = query.execute()
-    return result.data
+    
+    docs = []
+    for d in result.data:
+        dept = d.pop("departments", None)
+        d["department_name"] = dept.get("name") if isinstance(dept, dict) else None
+        docs.append(d)
+        
+    return docs
 
 
 @router.get("/doctors/{doctor_id}/snapshots", response_model=list[SnapshotOut])

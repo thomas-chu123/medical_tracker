@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # ── Create / Update ─────────────────────────────────────────
@@ -47,8 +47,7 @@ class TrackingOut(BaseModel):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TrackingRichOut(TrackingOut):
@@ -56,9 +55,14 @@ class TrackingRichOut(TrackingOut):
     doctor_name: Optional[str] = None
     department_name: Optional[str] = None
     hospital_name: Optional[str] = None
+    clinic_room: Optional[str] = None
+    current_number: Optional[int] = None
+    total_quota: Optional[int] = None
+    current_registered: Optional[int] = None
+    remaining: Optional[int] = None
+    status: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AdminTrackingOut(TrackingRichOut):
@@ -66,8 +70,7 @@ class AdminTrackingOut(TrackingRichOut):
     user_email: Optional[str] = None
     user_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NotificationLogOut(BaseModel):
@@ -79,5 +82,4 @@ class NotificationLogOut(BaseModel):
     success: bool
     error_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

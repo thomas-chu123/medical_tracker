@@ -26,7 +26,11 @@ async def list_all_tracking(admin=Depends(require_super_admin)):
     supabase = get_supabase()
     
     # Fetch all subscriptions
-    result = supabase.table("tracking_subscriptions").select("*").order("created_at", desc=True).execute()
+    result = supabase.table("tracking_subscriptions").select(
+        "id, user_id, doctor_id, department_id, session_date, session_type, appointment_number, "
+        "notify_at_20, notify_at_10, notify_at_5, notify_email, notify_line, "
+        "notified_20, notified_10, notified_5, is_active, created_at"
+    ).order("created_at", desc=True).execute()
     subs = result.data
     if not subs:
         return []
@@ -35,7 +39,7 @@ async def list_all_tracking(admin=Depends(require_super_admin)):
     user_ids = list({s["user_id"] for s in subs if s.get("user_id")})
     users_map = {}
     if user_ids:
-        users = supabase.table("users").select("id, email, display_name").in_("id", user_ids).execute()
+        users = supabase.table("users_local").select("id, email, display_name").in_("id", user_ids).execute()
         users_map = {u["id"]: u for u in users.data}
 
     # Batch fetch doctors
@@ -186,6 +190,6 @@ async def clear_logs(admin=Depends(require_super_admin)):
 async def trigger_scrape_now(admin=Depends(require_super_admin)):
     """Trigger background scraping immediately."""
     import asyncio
-    from app.scheduler import run_cmuh_appointments
-    asyncio.create_task(run_cmuh_appointments())
+    from app.scheduler import run_tracked_appointments
+    asyncio.create_task(run_tracked_appointments())
     return {"message": "Scrape task triggered"}

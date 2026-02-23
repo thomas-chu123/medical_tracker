@@ -160,3 +160,5 @@ uvicorn.log
 doctor_info_debug.html
 output.json
 *.tmp
+temp/
+allure-results/*

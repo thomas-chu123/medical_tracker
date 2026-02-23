@@ -157,7 +157,12 @@ async def run_tracked_appointments():
             .execute()
         )
         departments = dept_res.data or []
+        
+        # Keep track of which doctors we've already scraped in this cycle
+        scraped_doctor_ids = set()
+        all_snapshot_rows = []
 
+        # 1. Scrape by Department
         for dept in departments:
             dept_id = dept["id"]
             dept_code = dept["code"]
@@ -168,7 +173,7 @@ async def run_tracked_appointments():
             except Exception:
                 continue
 
-            # Pre-fetch doctors for this department
+            # Pre-fetch doctors for this department to map doctor_no to doc_id
             doc_res = await asyncio.to_thread(
                 lambda: supabase.table("doctors")
                 .select("id, doctor_no")
@@ -177,8 +182,6 @@ async def run_tracked_appointments():
             )
             doctor_map = {d["doctor_no"]: d["id"] for d in (doc_res.data or [])}
 
-            snapshot_rows: list[dict] = []
-
             for slot in slots:
                 doctor_id = doctor_map.get(slot.doctor_no)
                 if not doctor_id:
@@ -186,45 +189,54 @@ async def run_tracked_appointments():
                         doctor_id = await upsert_doctor(hosp_id, dept_id, slot)
                     except Exception:
                         continue
-                        
-                # Progress fetching logic:
-                # We fetch progress ONLY IF the doctor is individually tracked OR 
-                # their entire department is tracked.
+                
+                scraped_doctor_ids.add(doctor_id)
+                
+                # Check if this specific slot needs real-time progress
                 needs_progress = is_entire_dept_tracked or (doctor_id in tracked_doctors)
+                
+                row = await _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
+                if row:
+                    all_snapshot_rows.append(row)
 
+        # 2. Individual Doctor Supplement
+        # Some doctors might not appear in the department schedule (e.g. D6351 Meng)
+        # but they have active subscriptions. We fetch them individually.
+        missing_doctors = tracked_doctors - scraped_doctor_ids
+        if missing_doctors:
+            logger.info(f"[Scheduler] {len(missing_doctors)} tracked doctors missing from dept schedules. Fetching individually...")
+            doc_info_res = await asyncio.to_thread(
+                lambda: supabase.table("doctors")
+                .select("id, name, doctor_no, department_id, departments(code)")
+                .in_("id", list(missing_doctors))
+                .execute()
+            )
+            
+            for d in (doc_info_res.data or []):
+                doc_id = d["id"]
+                doc_no = d["doctor_no"]
+                doc_name = d["name"]
+                dept_id = d["department_id"]
+                dept_code = d.get("departments", {}).get("code") if d.get("departments") else None
+                
+                if not dept_code: continue
+                
                 try:
-                    current_number = None
-                    if slot.session_date == date.today() and slot.clinic_room and needs_progress:
-                        period_map = {"上午": "1", "下午": "2", "晚上": "3"}
-                        period = period_map.get(slot.session_type, "1")
-                        try:
-                            progress = await scraper.fetch_clinic_progress(slot.clinic_room, period)
-                            if progress:
-                                current_number = progress.current_number
-                        except Exception:
-                            pass
-
-                    snapshot_rows.append({
-                        "doctor_id": doctor_id,
-                        "department_id": dept_id,
-                        "session_date": str(slot.session_date),
-                        "session_type": slot.session_type,
-                        "clinic_room": slot.clinic_room or "",
-                        "total_quota": slot.total_quota,
-                        "current_registered": slot.registered,
-                        "current_number": current_number,
-                        "is_full": slot.is_full,
-                        "status": slot.status,
-                    })
+                    # _fetch_doctor_slots is technically private but we use it here for targeted scrape
+                    slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
+                    for slot in slots:
+                        row = await _build_snapshot_row(scraper, slot, doc_id, dept_id, True)
+                        if row:
+                            all_snapshot_rows.append(row)
                 except Exception as e:
-                    logger.error(f"[Scheduler]   -> Error building slot for {slot.doctor_name} in {dept_code}: {e}")
+                    logger.error(f"[Scheduler] Error supplement-fetching doctor {doc_name}: {e}")
 
-            # Batch insert snapshots
-            if snapshot_rows:
-                try:
-                    await batch_insert_snapshots(snapshot_rows)
-                except Exception as e:
-                    logger.error(f"[Scheduler] Error batch inserting snapshots for {dept_code}: {e}")
+        # Batch insert all gathered snapshots
+        if all_snapshot_rows:
+            try:
+                await batch_insert_snapshots(all_snapshot_rows)
+            except Exception as e:
+                logger.error(f"[Scheduler] Error batch inserting snapshots: {e}")
 
         logger.info("[Scheduler] Targeted appointments scrape complete. Running notification checks...")
         await check_and_notify()
@@ -234,6 +246,49 @@ async def run_tracked_appointments():
         logger.error(f"[Scheduler] Fatal error in tracked appointments: {e}", exc_info=True)
     finally:
         await scraper.close()
+
+
+async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress) -> dict | None:
+    """Helper to build a snapshot row with optional progress fetching."""
+    try:
+        current_number = slot.current_number # Use progress from slot if already scraped
+        registered_count = slot.registered
+        total_quota = slot.total_quota
+        status = slot.status
+
+        # If it's today + tracked, try to fetch more detailed progress from room query
+        if slot.session_date == date.today() and slot.clinic_room and needs_progress:
+            period_map = {"上午": "1", "下午": "2", "晚上": "3"}
+            period = period_map.get(slot.session_type, "1")
+            try:
+                progress = await scraper.fetch_clinic_progress(slot.clinic_room, period)
+                if progress:
+                    # Update with more real-time info if available
+                    current_number = progress.current_number
+                    if progress.registered_count:
+                        registered_count = progress.registered_count
+                    if getattr(progress, "total_quota", None) is not None:
+                        total_quota = progress.total_quota
+                    if progress.status:
+                        status = progress.status
+            except Exception:
+                pass
+
+        return {
+            "doctor_id": doctor_id,
+            "department_id": dept_id,
+            "session_date": str(slot.session_date),
+            "session_type": slot.session_type,
+            "clinic_room": slot.clinic_room or "",
+            "total_quota": total_quota,
+            "current_registered": registered_count,
+            "current_number": current_number,
+            "is_full": slot.is_full,
+            "status": status,
+        }
+    except Exception as e:
+        logger.error(f"[Scheduler] Error building snapshot row for {slot.doctor_name}: {e}")
+        return None
 
 
 def start_scheduler():

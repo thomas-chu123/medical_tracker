@@ -53,11 +53,56 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         hosps = supabase.table("hospitals").select("id, name").in_("id", hospital_ids).execute()
         hospitals_map = {h["id"]: h["name"] for h in hosps.data}
 
-    # Attach doctor/dept/hospital info to each sub
+    # Fetch latest current_number for these tracked sessions
+    now_date_str = date.today().isoformat()
+    # We only care about snapshots for the tracked session dates
+    tracked_dates = list({s["session_date"] for s in subs})
+    
+    current_numbers = {}
+    doctor_latest_rooms = {}
+    if doctor_ids:
+        # 1. Fetch the most recent snapshot for each doctor/date/session_type combination (precise match)
+        if tracked_dates:
+            try:
+                date_strs = [d.isoformat() if isinstance(d, date) else str(d) for d in tracked_dates]
+                snaps = (
+                    supabase.table("appointment_snapshots")
+                    .select("doctor_id, session_date, session_type, clinic_room, current_number, total_quota, current_registered, remaining, status")
+                    .in_("doctor_id", doctor_ids)
+                    .in_("session_date", date_strs)
+                    .order("created_at", desc=True)
+                    .execute()
+                )
+                for snap in snaps.data:
+                    key = (snap["doctor_id"], snap["session_date"], snap["session_type"])
+                    if key not in current_numbers:
+                        current_numbers[key] = snap
+            except Exception as e:
+                print(f"Error fetching clinic snapshots: {e}")
+
+        # 2. Fetch latest snapshot per doctor regardless of date (as fallback for clinic_room)
+        try:
+            # We can't easily do a limit-per-group in Supabase select, so we fetch recent snaps and dedupe
+            # or better: use the existing scraped room if available.
+            # For now, let's just fetch the absolute latest scan for each doctor.
+            latest_snaps = (
+                supabase.table("appointment_snapshots")
+                .select("doctor_id, clinic_room")
+                .in_("doctor_id", doctor_ids)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            for ls in latest_snaps.data:
+                d_id = ls["doctor_id"]
+                if d_id not in doctor_latest_rooms and ls.get("clinic_room"):
+                    doctor_latest_rooms[d_id] = ls["clinic_room"]
+        except Exception as e:
+            print(f"Error fetching latest rooms: {e}")
+
+    # Attach doctor/dept/hospital info & current_number to each sub
     enriched = []
     for s in subs:
         doc = doctors_map.get(s.get("doctor_id"), {})
-        # Use sub's dept_id or fallback to doctor's dept_id
         d_id = s.get("department_id") or doc.get("department_id")
         dept = depts_map.get(d_id, {})
         
@@ -65,6 +110,20 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         s["doctor_name"] = doc.get("name", "")
         s["department_name"] = dept.get("name", "")
         s["hospital_name"] = hosp_name
+        
+        # Determine current_number and clinic_room
+        key = (s["doctor_id"], s["session_date"], s["session_type"])
+        snap_info = current_numbers.get(key, {})
+        
+        s["current_number"] = snap_info.get("current_number")
+        s["total_quota"] = snap_info.get("total_quota")
+        s["current_registered"] = snap_info.get("current_registered")
+        s["remaining"] = snap_info.get("remaining")
+        s["status"] = snap_info.get("status")
+
+        # Clinic room fallback: prioritize specific session, then latest known
+        s["clinic_room"] = snap_info.get("clinic_room") or doctor_latest_rooms.get(s["doctor_id"])
+        
         enriched.append(s)
 
     return enriched
@@ -169,3 +228,14 @@ async def get_notification_logs(
         .execute()
     )
     return result.data
+@router.get("/debug/cmuh/{room}/{period}")
+async def debug_cmuh(room: str, period: str):
+    from app.scrapers.cmuh import CMUHScraper
+    scraper = CMUHScraper()
+    try:
+        prog = await scraper.fetch_clinic_progress(room, period)
+        return {"success": True, "progress": prog}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        await scraper.close()

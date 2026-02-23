@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 
 
 # ── Hospital ────────────────────────────────────────────────
@@ -15,8 +15,7 @@ class HospitalOut(HospitalBase):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Department ──────────────────────────────────────────────
@@ -28,8 +27,7 @@ class DepartmentOut(BaseModel):
     category: Optional[str] = None
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Doctor ──────────────────────────────────────────────────
@@ -37,13 +35,13 @@ class DoctorOut(BaseModel):
     id: UUID
     hospital_id: UUID
     department_id: Optional[UUID] = None
+    department_name: Optional[str] = None
     doctor_no: str
     name: str
     specialty: Optional[str] = None
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── AppointmentSnapshot ─────────────────────────────────────
@@ -62,5 +60,4 @@ class SnapshotOut(BaseModel):
     status: Optional[str] = None
     scraped_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
