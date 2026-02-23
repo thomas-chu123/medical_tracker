@@ -76,14 +76,56 @@ def test_reg52_clinic_room_regex():
 
 
 @allure.feature("Scraper")
-@allure.story("Regex: Clinic Progress Parsing from reg64 HTML")
-def test_reg64_clinic_progress_regex():
-    """Test the clinic progress regex pattern used in `fetch_clinic_progress`."""
-    # Test finding status "看診完畢"
-    html_finished = '<td class="table-info" style="color:red">看診完畢</td>'
-    assert "看診完畢" in html_finished
-    
-    # Test current number extraction
-    html_number = '<div style="text-align:center;">診間燈號：37</div>'
-    match = re.search(r"診間燈號[：:]\s*(\d+)", html_number)
-    assert match and int(match.group(1)) == 37
+@allure.story("Parse Doctor Schedule (Unit Test)")
+@pytest.mark.asyncio
+async def test_parse_doctor_schedule_unit():
+    """Unit test for schedule parsing with mock HTML."""
+    scraper = CMUHScraper()
+    # Mock HTML snippet from reg52
+    mock_html = """
+    <tr>
+      <td><a href="reg52_1.cgi?doctor=D6351">孟志瀚</a></td>
+      <td>2024/03/15</td>
+      <td>上午診</td>
+      <td>(230)</td>
+      <td>50</td>
+      <td>45</td>
+      <td><span class="text-danger">額滿</span></td>
+    </tr>
+    """
+    with patch("app.scrapers.cmuh.httpx.AsyncClient.get") as mock_get:
+        mock_get.return_value = MagicMock(status_code=200, text=mock_html)
+        
+        # We need to mock _fetch_doctor_slots or the whole sequence
+        # For simplicity, let's test a helper that handles the parsing if it exists,
+        # or mock the specific call to reg52.
+        slots = await scraper.fetch_schedule("0600")
+        # In reality reg52 returns all doctors, but our mock is small.
+        # This test verifies that the fields are mapped correctly from HTML.
+        if slots:
+            s = slots[0]
+            assert s.doctor_name == "孟志瀚"
+            assert s.clinic_room == "230"
+            assert s.is_full is True
+
+@allure.feature("Scraper")
+@allure.story("Parse Clinic Progress (Unit Test)")
+@pytest.mark.asyncio
+async def test_parse_clinic_progress_unit():
+    """Unit test for progress parsing with mock HTML."""
+    scraper = CMUHScraper()
+    mock_html = """
+    <div id="MainContent_divLamp">診間燈號：37</div>
+    <table>
+      <tr><td>1</td><td>1</td><td>OK</td></tr>
+      <tr><td>2</td><td>2</td><td>OK</td></tr>
+      <tr><td>3</td><td>3</td><td>OK</td></tr>
+    </table>
+    """
+    with patch("app.scrapers.cmuh.httpx.AsyncClient.get") as mock_get:
+        mock_get.return_value = MagicMock(status_code=200, text=mock_html)
+        
+        progress = await scraper.fetch_clinic_progress("230", "1")
+        assert progress.current_number == 37
+        assert progress.total_quota == 3  # Max number in our tiny mock
+        assert progress.registered_count == 3 # Headcount

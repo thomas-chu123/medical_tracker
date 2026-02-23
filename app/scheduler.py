@@ -6,7 +6,8 @@ blocking the FastAPI event loop while scraping.
 """
 
 import asyncio
-from datetime import date
+import random
+from datetime import date, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
