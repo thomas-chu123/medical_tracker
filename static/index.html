@@ -89,6 +89,9 @@
       <button class="nav-item active" data-page="dashboard" onclick="navigate(this, 'dashboard')">
         <span class="nav-icon">📊</span> 總覽
       </button>
+      <button class="nav-item" data-page="analysis" onclick="navigate(this, 'analysis')">
+        <span class="nav-icon">📈</span> 圖表分析
+      </button>
       <button class="nav-item" data-page="hospitals" onclick="navigate(this, 'hospitals')">
         <span class="nav-icon">🏥</span> 醫院查詢
       </button>
@@ -172,6 +175,141 @@
         </div>
         <div id="dashboard-tracking-grid" class="card-grid">
           <div class="spinner"></div>
+        </div>
+      </section>
+
+      <!-- ── Chart Analysis ── -->
+      <section id="page-analysis" class="page">
+        <div class="section-header">
+          <div>
+            <h2>📈 圖表統計分析</h2>
+            <div class="subtitle">視覺化分析醫院門診負荷與醫師看診差異</div>
+          </div>
+        </div>
+
+        <div class="hs-tabs"
+          style="margin-bottom:20px; display:flex; gap:10px; border-bottom:1px solid var(--border); padding-bottom:10px;">
+          <button class="btn btn-primary" id="btn-tab-sheet1" onclick="switchAnalysisSheet('sheet1')">📊
+            各科室負荷比較</button>
+          <button class="btn btn-secondary" id="btn-tab-sheet2" onclick="switchAnalysisSheet('sheet2')">👨‍⚕️
+            醫師看診進度</button>
+          <button class="btn btn-secondary" id="btn-tab-sheet4" onclick="switchAnalysisSheet('sheet4')">⚡
+            醫師看診速度</button>
+          <button class="btn btn-secondary" id="btn-tab-sheet3" onclick="switchAnalysisSheet('sheet3')">🏆
+            看診人數排行</button>
+        </div>
+
+        <!-- Sheet 1: Dept Comparison -->
+        <div id="analysis-sheet1" class="analysis-tab-content">
+          <div class="card" style="margin-bottom:20px">
+            <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+              <div class="form-group" style="margin:0; min-width:200px;">
+                <label>醫院</label>
+                <select id="analysis-sheet1-hosp-select" onchange="loadDeptComparison()">
+                  <option value="">所有醫院</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:200px;">
+                <label>科室類別</label>
+                <select id="analysis-sheet1-cat-select" onchange="loadDeptComparison()">
+                  <option value="">所有類別</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="position:relative; height:450px;">
+            <canvas id="dept-comparison-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Sheet 2: Doctor Comparison -->
+        <div id="analysis-sheet2" class="analysis-tab-content" style="display:none">
+          <div class="card" style="margin-bottom:20px">
+            <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+              <div class="form-group" style="margin:0; min-width:180px;">
+                <label>選擇醫院</label>
+                <select id="analysis-sheet2-hosp-select" onchange="loadAnalysisDepts()"></select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:180px;">
+                <label>科室類別</label>
+                <select id="analysis-sheet2-cat-select" onchange="loadAnalysisDepts()">
+                  <option value="">所有類別</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:180px;">
+                <label>選擇科室</label>
+                <select id="analysis-sheet2-dept-select" onchange="refreshDoctorComparison()"></select>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="position:relative; height:400px;">
+            <canvas id="doctor-comparison-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Sheet 3: Ranking -->
+        <div id="analysis-sheet3" class="analysis-tab-content" style="display:none">
+          <div class="card" style="margin-bottom:20px">
+            <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+              <div class="form-group" style="margin:0; min-width:180px;">
+                <label>醫院</label>
+                <select id="rank-hosp-filter" onchange="filterRankingTable()"></select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:180px;">
+                <label>科室</label>
+                <input type="text" id="rank-dept-filter" placeholder="關鍵字搜尋…" oninput="filterRankingTable()"
+                  style="height:38px; border:1px solid var(--border); border-radius:6px; padding:0 12px;">
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="ranking-table">
+              <thead>
+                <tr>
+                  <th>醫院</th>
+                  <th>科室名稱</th>
+                  <th>最高看診數</th>
+                  <th>平均看診數</th>
+                </tr>
+              </thead>
+              <tbody id="ranking-table-body">
+                <tr>
+                  <td colspan="4" style="text-align:center; padding:32px;">讀取中…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Sheet 4: Doctor Speed Analysis -->
+        <div id="analysis-sheet4" class="analysis-tab-content" style="display:none">
+          <div class="card" style="margin-bottom:20px">
+            <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+              <div class="form-group" style="margin:0; min-width:200px;">
+                <label>醫院</label>
+                <select id="analysis-sheet4-hosp-select"
+                  onchange="loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis()">
+                  <option value="">所有醫院</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:200px;">
+                <label>科室類別</label>
+                <select id="analysis-sheet4-cat-select"
+                  onchange="loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis()">
+                  <option value="">所有類別</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0; min-width:200px;">
+                <label>科室</label>
+                <select id="analysis-sheet4-dept-select" onchange="loadDoctorSpeedAnalysis()">
+                  <option value="">所有科室</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="position:relative; height:450px;">
+            <canvas id="doctor-speed-chart"></canvas>
+          </div>
         </div>
       </section>
 

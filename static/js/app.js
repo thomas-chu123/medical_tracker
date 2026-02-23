@@ -184,6 +184,8 @@ function navigate(btn, pageId, options = {}) {
         loadTracking();
     } else if (pageId === 'notifications') {
         loadNotifications();
+    } else if (pageId === 'analysis') {
+        switchAnalysisSheet('sheet1');
     } else if (pageId === 'profile') {
         loadProfile();
     } else if (pageId === 'admin') {
@@ -1514,4 +1516,256 @@ async function deleteAdminTracking(id) {
     } catch (e) {
         toast(e.message, 'error');
     }
+}
+
+/* ── Chart Analysis ─────────────────────────────────────────── */
+let deptComparisonChart = null;
+let doctorComparisonChart = null;
+let doctorSpeedChart = null;
+let allRankingData = [];
+
+async function switchAnalysisSheet(sheetId) {
+    document.querySelectorAll('.analysis-tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('#page-analysis .hs-tabs button').forEach(btn => {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+    });
+
+    document.getElementById(`analysis-${sheetId}`).style.display = 'block';
+    const btn = document.getElementById(`btn-tab-${sheetId}`);
+    if (btn) {
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+    }
+
+    if (sheetId === 'sheet1') {
+        loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
+        loadAnalysisCategories('analysis-sheet1-cat-select');
+        loadDeptComparison();
+    } else if (sheetId === 'sheet2') {
+        loadAnalysisHospitals('analysis-sheet2-hosp-select');
+        loadAnalysisCategories('analysis-sheet2-cat-select');
+    } else if (sheetId === 'sheet3') {
+        loadAnalysisHospitals('rank-hosp-filter', true);
+        loadRankingTable();
+    } else if (sheetId === 'sheet4') {
+        loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
+        loadAnalysisCategories('analysis-sheet4-cat-select');
+        loadDoctorSpeedAnalysis();
+    }
+}
+
+async function loadDeptComparison() {
+    const ctx = document.getElementById('dept-comparison-chart');
+    if (!ctx) return;
+
+    const hospId = document.getElementById('analysis-sheet1-hosp-select')?.value || '';
+    const cat = document.getElementById('analysis-sheet1-cat-select')?.value || '';
+
+    try {
+        const stats = await apiFetch(`/api/stats/dept-comparison?hospital_id=${hospId}&category=${encodeURIComponent(cat)}`);
+        if (!stats) return;
+
+        if (deptComparisonChart) deptComparisonChart.destroy();
+        deptComparisonChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: stats.labels,
+                datasets: [{
+                    label: '各科室平均看診人數',
+                    data: stats.data,
+                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                    borderColor: 'rgb(59, 130, 246)',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        title: { display: true, text: '平均掛號人數 (人)' }
+                    }
+                }
+            }
+        });
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadAnalysisCategories(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select || select.dataset.loaded === '1') return;
+
+    try {
+        const cats = await apiFetch('/api/stats/categories') || [];
+        let html = '<option value="">所有類別</option>';
+        html += cats.map(c => `<option value="${c}">${c}</option>`).join('');
+        select.innerHTML = html;
+        select.dataset.loaded = '1';
+    } catch (e) { console.error('Load categories failed', e); }
+}
+
+async function loadAnalysisHospitals(selectId, includeAll = false) {
+    const select = document.getElementById(selectId);
+    if (select.dataset.loaded === '1') return;
+
+    try {
+        const hosps = await apiFetch('/api/hospitals') || [];
+        let html = includeAll ? '<option value="">所有醫院</option>' : '<option value="">請選擇醫院…</option>';
+        html += hosps.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
+        select.innerHTML = html;
+        select.dataset.loaded = '1';
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadAnalysisDepts(hospSelectId, catSelectId, deptSelectId) {
+    const hSelect = document.getElementById(hospSelectId || 'analysis-sheet2-hosp-select');
+    const cSelect = document.getElementById(catSelectId || 'analysis-sheet2-cat-select');
+    const dSelect = document.getElementById(deptSelectId || 'analysis-sheet2-dept-select');
+    if (!hSelect || !dSelect) return;
+
+    const hospId = hSelect.value;
+    const cat = cSelect?.value || '';
+    if (!hospId) {
+        dSelect.innerHTML = '<option value="">所有科室</option>';
+        return;
+    }
+
+    try {
+        let url = `/api/hospitals/${hospId}/departments`;
+        if (cat) url += `?category=${encodeURIComponent(cat)}`;
+        const depts = await apiFetch(url) || [];
+        dSelect.innerHTML = '<option value="">所有科室</option>' +
+            depts.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function refreshDoctorComparison() {
+    const hospId = document.getElementById('analysis-sheet2-hosp-select').value;
+    const cat = document.getElementById('analysis-sheet2-cat-select').value;
+    const deptId = document.getElementById('analysis-sheet2-dept-select').value;
+    const ctx = document.getElementById('doctor-comparison-chart');
+    if (!ctx) return;
+
+    try {
+        let url = `/api/stats/doctor-comparison?`;
+        if (hospId) url += `hospital_id=${hospId}&`;
+        if (deptId) url += `dept_id=${deptId}&`;
+        if (cat) url += `category=${encodeURIComponent(cat)}`;
+
+        const stats = await apiFetch(url);
+        if (!stats) return;
+
+        if (doctorComparisonChart) doctorComparisonChart.destroy();
+        doctorComparisonChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: stats.labels,
+                datasets: [{
+                    label: '平均看診人數',
+                    data: stats.data,
+                    backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                    borderColor: 'rgb(16, 185, 129)',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadDoctorSpeedAnalysis() {
+    const ctx = document.getElementById('doctor-speed-chart');
+    if (!ctx) return;
+
+    const hospId = document.getElementById('analysis-sheet4-hosp-select').value;
+    const cat = document.getElementById('analysis-sheet4-cat-select').value;
+    const deptId = document.getElementById('analysis-sheet4-dept-select')?.value || '';
+
+    try {
+        let url = `/api/stats/doctor-speed?`;
+        if (hospId) url += `hospital_id=${hospId}&`;
+        if (cat) url += `category=${encodeURIComponent(cat)}&`;
+        if (deptId) url += `dept_id=${deptId}`;
+
+        const stats = await apiFetch(url);
+        if (!stats) return;
+
+        if (doctorSpeedChart) doctorSpeedChart.destroy();
+        doctorSpeedChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: stats.labels,
+                datasets: [{
+                    label: '看診速度 (人/小時)',
+                    data: stats.data,
+                    backgroundColor: 'rgba(245, 158, 11, 0.7)',
+                    borderColor: 'rgb(245, 158, 11)',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        title: { display: true, text: '平均每小時看診人數 (人/小時)' }
+                    }
+                }
+            }
+        });
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadRankingTable() {
+    const tbody = document.getElementById('ranking-table-body');
+    try {
+        allRankingData = await apiFetch('/api/stats/dept-ranking') || [];
+        renderRankingTable(allRankingData);
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger)">載入失敗: ${e.message}</td></tr>`;
+    }
+}
+
+function renderRankingTable(data) {
+    const tbody = document.getElementById('ranking-table-body');
+    if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:32px;">目前無統計數據</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.map(v => `
+        <tr>
+            <td>${escHtml(v.hospital_name)}</td>
+            <td>${escHtml(v.dept_name)}</td>
+            <td>${v.max_registered}</td>
+            <td><strong style="color:var(--primary)">${v.avg_registered}</strong></td>
+        </tr>
+    `).join('');
+}
+
+function filterRankingTable() {
+    const hospId = document.getElementById('rank-hosp-filter').value;
+    const hospSelect = document.getElementById('rank-hosp-filter');
+    const hospName = hospId ? hospSelect.options[hospSelect.selectedIndex].text : '';
+    const deptQ = document.getElementById('rank-dept-filter').value.toLowerCase();
+
+    const filtered = allRankingData.filter(v => {
+        const matchHosp = !hospName || v.hospital_name === hospName;
+        const matchDept = !deptQ || v.dept_name.toLowerCase().includes(deptQ);
+        return matchHosp && matchDept;
+    });
+    renderRankingTable(filtered);
 }
