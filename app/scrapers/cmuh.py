@@ -45,6 +45,8 @@ def _parse_int(text: Optional[str]) -> Optional[int]:
 class CMUHScraper(BaseScraper):
     HOSPITAL_CODE = "CMUH"
     BASE_URL = "https://www.cmuh.cmu.edu.tw"
+    CGI_BASE_URL = "https://appointment.cmuh.org.tw/cgi-bin"
+    PROGRESS_CGI = "reg64.cgi"
 
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
@@ -161,7 +163,7 @@ class CMUHScraper(BaseScraper):
         # The actual schedule is in an iframe pointing to the appointment backend.
         # Doctor IDs in the appointment backend need a 'D' prefix.
         appointment_doc_no = f"D{doc_no}" if not doc_no.startswith("D") else doc_no
-        url = "https://appointment.cmuh.org.tw/cgi-bin/reg52.cgi"
+        url = f"{self.CGI_BASE_URL}/reg52.cgi"
         
         client = await self._get_client()
         html = ""
@@ -267,7 +269,7 @@ class CMUHScraper(BaseScraper):
         Query current calling number and clinic status using reg64.cgi.
         period: '1'=morning, '2'=afternoon, '3'=evening
         """
-        url = "https://appointment.cmuh.org.tw/cgi-bin/reg64.cgi"
+        url = f"{self.CGI_BASE_URL}/{self.PROGRESS_CGI}"
         
         # Room passed from DB already has '診' stripped by the upstream method
         params = {"TimeCode": period, "CliRoom": room.strip()}
@@ -374,3 +376,10 @@ class CMUHScraper(BaseScraper):
         if "晚上" in text or "evening" in text.lower() or "night" in text.lower():
             return "晚上"
         return text.strip() or "上午"
+
+
+class CMUHHsinchuScraper(CMUHScraper):
+    HOSPITAL_CODE = "CMUH_HS"
+    BASE_URL = "https://www.cmu-hch.cmu.edu.tw"
+    CGI_BASE_URL = "https://www.cmu-hch.com/cgi-bin/hc"
+    PROGRESS_CGI = "reg64x.cgi"
