@@ -295,8 +295,8 @@ class CMUHScraper(BaseScraper):
         
         # Look for the specific pattern in raw HTML (since they added tags)
         # e.g.: 目前診號 <span class="text-primary"><strong>104</strong></span>
-        # or old versions: 目前燈號：24
-        lamp_match = re.search(r"目前[燈診]號.*?(\d+)", html_all)
+        # or old versions: 目前燈號：24, 目前的診號是 37
+        lamp_match = re.search(r"目前[的]?[燈診]號.*?(\d+)", html_all)
         if lamp_match:
             current_number = int(lamp_match.group(1))
         

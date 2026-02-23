@@ -3,6 +3,7 @@ import asyncio
 import pytest
 import allure
 import re
+from unittest.mock import patch, MagicMock 
 from app.scrapers.cmuh import CMUHScraper, DoctorSlot, ClinicProgress
 
 
@@ -94,7 +95,11 @@ async def test_parse_doctor_schedule_unit():
     </tr>
     """
     with patch("app.scrapers.cmuh.httpx.AsyncClient.get") as mock_get:
-        mock_get.return_value = MagicMock(status_code=200, text=mock_html)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = mock_html
+        mock_resp.content = mock_html.encode("utf-8") # CMUH uses big5 but utf8 is fine for ASCII mock
+        mock_get.return_value = mock_resp
         
         # We need to mock _fetch_doctor_slots or the whole sequence
         # For simplicity, let's test a helper that handles the parsing if it exists,
@@ -115,7 +120,7 @@ async def test_parse_clinic_progress_unit():
     """Unit test for progress parsing with mock HTML."""
     scraper = CMUHScraper()
     mock_html = """
-    <div id="MainContent_divLamp">診間燈號：37</div>
+    <div id="MainContent_divLamp">目前的診號是 37</div>
     <table>
       <tr><td>1</td><td>1</td><td>OK</td></tr>
       <tr><td>2</td><td>2</td><td>OK</td></tr>
@@ -123,7 +128,10 @@ async def test_parse_clinic_progress_unit():
     </table>
     """
     with patch("app.scrapers.cmuh.httpx.AsyncClient.get") as mock_get:
-        mock_get.return_value = MagicMock(status_code=200, text=mock_html)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = mock_html.encode("big5")
+        mock_get.return_value = mock_resp
         
         progress = await scraper.fetch_clinic_progress("230", "1")
         assert progress.current_number == 37

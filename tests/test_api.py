@@ -1,8 +1,10 @@
 """Tests for FastAPI endpoints."""
 import pytest
 import allure
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from app.main import app
+import uuid
 
 client = TestClient(app)
 
@@ -20,11 +22,14 @@ def test_health_check():
 @allure.story("List Hospitals (Mocked)")
 def test_list_hospitals_mocked(mock_supabase):
     """Test hospitals listing using a mocked database."""
-    from app.services.data_writer import get_supabase
-    with patch("app.main.get_supabase", return_value=mock_supabase):
-        mock_supabase.table.return_value.select.return_value.execute.return_value.data = [
-            {"id": "h1", "name": "Hospital A"},
-            {"id": "h2", "name": "Hospital B"}
+    # Patch get_supabase in the module where it's used
+    with patch("app.api.hospitals.get_supabase", return_value=mock_supabase):
+        # Handle chained calls like .select().eq().execute()
+        mock_select = mock_supabase.table.return_value.select.return_value
+        mock_select.eq.return_value = mock_select
+        mock_select.execute.return_value.data = [
+            {"id": str(uuid.uuid4()), "name": "Hospital A", "is_active": True, "code": "HA", "base_url": "http://hospital-a.com", "created_at": "2023-01-01T00:00:00+00:00"},
+            {"id": str(uuid.uuid4()), "name": "Hospital B", "is_active": True, "code": "HB", "base_url": "http://hospital-b.com", "created_at": "2023-01-01T00:00:00+00:00"}
         ]
         resp = client.get("/api/hospitals")
         assert resp.status_code == 200
@@ -38,7 +43,8 @@ def test_set_tracking_mocked(mock_supabase):
     """Verify tracking setup calls the database correctly."""
     # This assumes we have a way to inject mock_supabase into the dependency
     # Usually done via app.dependency_overrides
-    from app.main import app, get_supabase
+    from app.main import app
+    from app.database import get_supabase
     app.dependency_overrides[get_supabase] = lambda: mock_supabase
     
     try:
