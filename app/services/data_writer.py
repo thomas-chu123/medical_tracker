@@ -97,18 +97,22 @@ async def insert_snapshot(
 
 
 async def batch_insert_snapshots(rows: list[dict]):
-    """Batch upsert multiple appointment snapshots in a single DB call."""
+    """Batch upsert multiple appointment snapshots in chunks to avoid server disconnects."""
     if not rows:
         return
     supabase = get_supabase()
-    await _run(
-        lambda: supabase.table("appointment_snapshots")
-        .upsert(
-            rows,
-            on_conflict="doctor_id,department_id,session_date,session_type,clinic_room",
+    
+    chunk_size = 500
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        await _run(
+            lambda c=chunk: supabase.table("appointment_snapshots")
+            .upsert(
+                c,
+                on_conflict="doctor_id,department_id,session_date,session_type,clinic_room",
+            )
+            .execute()
         )
-        .execute()
-    )
 
 
 async def get_hospital_id(hospital_code: str) -> Optional[str]:
