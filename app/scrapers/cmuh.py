@@ -327,9 +327,9 @@ class CMUHScraper(BaseScraper):
                     patient_rows += 1
 
         if numbers:
-            registered_count = max(numbers)
+            max_num = max(numbers)
         if patient_rows > 0:
-            total_quota = patient_rows
+            headcount = patient_rows
 
         if current_number is None and not status:
             return None
@@ -339,8 +339,8 @@ class CMUHScraper(BaseScraper):
             clinic_room=room,
             session_type=period_map.get(period, period),
             current_number=current_number or 0,
-            total_quota=total_quota,
-            registered_count=registered_count,
+            total_quota=max_num,        # Maximum Number
+            registered_count=headcount, # Headcount
             status=status
         )
 

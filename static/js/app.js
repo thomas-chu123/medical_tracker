@@ -305,11 +305,11 @@ function renderClinicCard(sub, snap) {
     let total = '—';
 
     if (hasBoth) {
-        numberDisplayHtml = `目前號 / ${current_registered} 已掛號 / ${total_quota} 總號`;
+        numberDisplayHtml = `目前號 / ${total_quota} 總號 / ${current_registered} 人掛號`;
         total = total_quota;
     } else {
         total = (total_quota !== '?') ? total_quota : ((current_registered !== '?') ? current_registered : '?');
-        const totalLabel = (total_quota !== '?') ? '總號' : ((current_registered !== '?') ? '已掛號' : '總號');
+        const totalLabel = (total_quota !== '?') ? '總號' : ((current_registered !== '?') ? '人掛號' : '總號');
         numberDisplayHtml = `目前號 / ${total} ${totalLabel}`;
     }
 
