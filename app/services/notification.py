@@ -93,7 +93,18 @@ async def _process_subscription(supabase, sub: dict):
     dept_name = (sub.get("departments") or {}).get("name", "未知科別")
     session_date_str = str(date.today())
     session_type_str = sub.get("session_type", "")
-    
+    clinic_room = snap.get("clinic_room", "未提供")
+
+    # Fetch hospital name
+    hospital_id = (sub.get("doctors") or {}).get("hospital_id")
+    hospital_name = "未知醫院"
+    if hospital_id:
+        hosp_res = await _run(
+            lambda: supabase.table("hospitals").select("name").eq("id", hospital_id).maybe_single().execute()
+        )
+        if hosp_res.data:
+            hospital_name = hosp_res.data.get("name", "未知醫院")
+
     # Fetch user_profiles separately due to missing FK
     profile_res = await _run(
         lambda: supabase.table("user_profiles")
@@ -125,7 +136,7 @@ async def _process_subscription(supabase, sub: dict):
             continue  # Not yet reached
 
         tasks.append(
-            _send_alerts(
+            await _send_alerts(
                 supabase=supabase,
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
@@ -133,6 +144,8 @@ async def _process_subscription(supabase, sub: dict):
                 line_token=line_token,
                 notify_email=sub.get("notify_email", True),
                 notify_line=sub.get("notify_line", False),
+                hospital_name=hospital_name,
+                clinic_room=clinic_room,
                 doctor_name=doctor_name,
                 dept_name=dept_name,
                 session_date_str=session_date_str,
@@ -146,6 +159,10 @@ async def _process_subscription(supabase, sub: dict):
 
     if tasks:
         await asyncio.gather(*tasks)
+    else:
+        # If no tasks but remaining is low, it might be already notified.
+        # But we should log if we expected to notify.
+        pass
 
 
 async def _send_alerts(
@@ -157,6 +174,8 @@ async def _send_alerts(
     line_token: str,
     notify_email: bool,
     notify_line: bool,
+    hospital_name: str,
+    clinic_room: str,
     doctor_name: str,
     dept_name: str,
     session_date_str: str,
@@ -170,6 +189,8 @@ async def _send_alerts(
 
     if notify_email and email:
         subject, body = build_clinic_alert_email(
+            hospital_name=hospital_name,
+            clinic_room=clinic_room,
             doctor_name=doctor_name,
             department_name=dept_name,
             session_date=session_date_str,
@@ -198,10 +219,7 @@ async def _send_alerts(
             send_line_notify(line_token, message)
         ))
 
-    if send_tasks:
-        await asyncio.gather(*send_tasks)
-
-    # Mark this threshold as notified (non-blocking)
+    # Mark this threshold as notified
     await _run(
         lambda: supabase.table("tracking_subscriptions")
         .update({notified_flag: True})
@@ -209,26 +227,37 @@ async def _send_alerts(
         .execute()
     )
 
-
 async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
-    success = False
-    error = None
-    try:
-        success = await coro
-    except Exception as e:
-        error = str(e)
-
-    # Non-blocking log insert
-    await _run(
+    # Log the attempt FIRST so we have a record even if it crashes
+    log_res = await _run(
         lambda: supabase.table("notification_logs").insert({
             "subscription_id": sub_id,
             "threshold": threshold,
             "channel": channel,
-            "recipient": recipient,
-            "success": success,
-            "error_message": error,
+            "recipient": recipient or "Unknown",
+            "success": False,
+            "error_message": "Started sending...",
         }).execute()
     )
+    log_id = log_res.data[0]["id"] if log_res.data else None
+
+    success = False
+    error = None
+    try:
+        if not recipient and channel == "email":
+             raise ValueError("User email is missing")
+        success = await coro
+    except Exception as e:
+        error = str(e)
+
+    # Update the log with final result
+    if log_id:
+        await _run(
+            lambda: supabase.table("notification_logs").update({
+                "success": success,
+                "error_message": error,
+            }).eq("id", log_id).execute()
+        )
 
 
 async def _get_user_email(supabase, user_id: str) -> str | None:
