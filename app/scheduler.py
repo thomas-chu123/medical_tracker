@@ -45,6 +45,93 @@ async def run_cmuh_master_data():
     await asyncio.gather(*[_scrape_hospital_master_data(s) for s in scrapers])
     logger.info("[Scheduler] Master data scrape complete for all hospitals.")
 
+async def run_morning_tracked_snapshot_sync():
+    """Triggered at 08:00 AM to update progress for all currently tracked clinics for today."""
+    logger.info(f"[Scheduler] Starting 08:00 AM tracked snapshot sync for {date.today()}")
+    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    await asyncio.gather(*[_sync_hospital_morning_progress(s) for s in scrapers])
+    logger.info("[Scheduler] 08:00 AM tracked snapshot sync complete.")
+
+async def _sync_hospital_morning_progress(scraper):
+    """Worker to perform a full progress scrape for a single hospital's current-day clinics."""
+    try:
+        hosp_id = await get_hospital_id(scraper.HOSPITAL_CODE)
+        if not hosp_id: return
+
+        # Fetch tracked appointments for today for this hospital
+        supabase = get_supabase()
+        today_str = str(date.today())
+        
+        # 1. Get tracked doctor_ids for today
+        tracking_res = await asyncio.to_thread(
+            lambda: supabase.table("tracking")
+            .select("doctor_id")
+            .eq("session_date", today_str)
+            .eq("is_active", True)
+            .execute()
+        )
+        tracked_doctor_ids = list(set([t["doctor_id"] for t in (tracking_res.data or [])]))
+        
+        if not tracked_doctor_ids:
+            logger.info(f"[Scheduler] No tracked appointments found for today. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
+            return
+
+        # 2. Fetch latest snapshots for these doctors today
+        res = await asyncio.to_thread(
+            lambda: supabase.table("appointment_snapshots")
+            .select("*, doctors(doctor_no, name), departments(code)")
+            .in_("doctor_id", tracked_doctor_ids)
+            .eq("session_date", today_str)
+            .execute()
+        )
+        
+        snapshots = res.data or []
+        if not snapshots:
+            logger.info(f"[Scheduler] No existing snapshots found for tracked doctors today. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
+            return
+
+        logger.info(f"[Scheduler] Syncing {len(snapshots)} tracked morning snapshots for {scraper.HOSPITAL_CODE}")
+        
+        updated_rows = []
+        for snap in snapshots:
+            dept_code = snap.get("departments", {}).get("code")
+            doc_no = snap.get("doctors", {}).get("doctor_no")
+            doc_name = snap.get("doctors", {}).get("name")
+            room = snap.get("clinic_room")
+            session_type = snap.get("session_type")
+            
+            if not (dept_code and doc_no and room): continue
+
+            # Create a mock Slot to use existing _build_snapshot_row logic
+            from .scrapers.base import DoctorSlot
+            slot = DoctorSlot(
+                doctor_no=doc_no,
+                doctor_name=doc_name or "",
+                department_code=dept_code,
+                session_date=date.today(),
+                session_type=session_type,
+                total_quota=snap.get("total_quota"),
+                registered=snap.get("current_registered"),
+                clinic_room=room,
+                is_full=snap.get("is_full", False)
+            )
+
+            # Force fetch progress by setting needs_progress=True
+            row = await _build_snapshot_row(scraper, slot, snap["doctor_id"], snap["department_id"], True)
+            if row:
+                updated_rows.append(row)
+            
+            # Tiny delay to avoid rate limiting
+            await asyncio.sleep(0.1)
+
+        if updated_rows:
+            await batch_insert_snapshots(updated_rows)
+            
+    except Exception as e:
+        logger.error(f"[Scheduler] Error in morning sync for {scraper.HOSPITAL_CODE}: {e}", exc_info=True)
+    finally:
+        await scraper.close()
+
 async def _scrape_hospital_master_data(scraper):
     """Worker to scrape master data for a single hospital with concurrency and delays."""
     import random
@@ -274,6 +361,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         registered_count = slot.registered
         total_quota = slot.total_quota
         status = slot.status
+        waiting_list = []
 
         # User's dynamic time gates:
         # 上午診: 08:00
@@ -313,8 +401,14 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         total_quota = progress.total_quota         # Max Number
                     if progress.status:
                         status = progress.status
+                    if progress.waiting_list:
+                        waiting_list = progress.waiting_list
             except Exception:
                 pass
+
+        # Calculate remaining based on waiting_list if available
+        remaining = len(waiting_list) if waiting_list else ((total_quota or 0) - (current_number or 0))
+        if remaining < 0: remaining = 0
 
         return {
             "doctor_id": doctor_id,
@@ -325,8 +419,10 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "total_quota": total_quota,
             "current_registered": registered_count,
             "current_number": current_number,
+            "remaining": remaining,
             "is_full": slot.is_full,
             "status": status,
+            "waiting_list": waiting_list,
         }
     except Exception as e:
         logger.error(f"[Scheduler] Error building snapshot row for {slot.doctor_name}: {e}")
@@ -347,6 +443,15 @@ def start_scheduler():
     )
 
     scheduler.add_job(
+        run_morning_tracked_snapshot_sync,
+        trigger=CronTrigger(hour=8, minute=0),
+        id="morning_tracked_sync",
+        name="Morning Tracked Snapshot Sync",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+    scheduler.add_job(
         run_tracked_appointments,
         trigger=CronTrigger(hour='7-23', minute=f'*/{interval}'),
         id="cmuh_appointments",
@@ -356,7 +461,7 @@ def start_scheduler():
     )
 
     scheduler.start()
-    logger.info(f"[Scheduler] Started. Master Data: 00-06 h. Appointments(Tracked): 07-23 h. Interval: {interval}m.")
+    logger.info(f"[Scheduler] Started. Master Data: 00-06 h. Morning Sync: 08:00. Appointments(Tracked): 07-23 h. Interval: {interval}m.")
     return scheduler
 
 

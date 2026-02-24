@@ -58,6 +58,8 @@ class SnapshotOut(BaseModel):
     remaining: Optional[int] = None
     is_full: bool
     status: Optional[str] = None
+    waiting_list: Optional[list[int]] = None
+    eta: Optional[str] = None
     scraped_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

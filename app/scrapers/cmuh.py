@@ -340,25 +340,24 @@ class CMUHScraper(BaseScraper):
             if current_number is None: current_number = 0
 
         # 2. Extract Quota and Registered Count from table
-        registered_count = None
-        total_quota = None
-        rows = soup.find_all("tr")
         numbers = []
+        waiting_list = []
         patient_rows = 0
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2: # Look for rows with [Number, Status]
                 val_str = tds[0].get_text(strip=True)
+                val_status = tds[1].get_text(strip=True)
                 val = _parse_int(val_str)
                 # Ensure it's not a header row by checking if it contains a pure number
                 if val is not None and val_str.isdigit():
                     numbers.append(val)
                     patient_rows += 1
+                    if val_status == "未看診":
+                        waiting_list.append(val)
 
-        if numbers:
-            max_num = max(numbers)
-        if patient_rows > 0:
-            headcount = patient_rows
+        max_num = max(numbers) if numbers else 0
+        headcount = patient_rows
 
         if current_number is None and not status:
             return None
@@ -370,7 +369,8 @@ class CMUHScraper(BaseScraper):
             current_number=current_number or 0,
             total_quota=max_num,        # Maximum Number
             registered_count=headcount, # Headcount
-            status=status
+            status=status,
+            waiting_list=waiting_list
         )
 
     # ─────────────────────────────────────────────────────────

@@ -36,6 +36,7 @@ class ClinicProgress:
     total_quota: Optional[int] = None
     registered_count: Optional[int] = None
     status: Optional[str] = None
+    waiting_list: list[int] = field(default_factory=list)
 
 
 class BaseScraper(ABC):

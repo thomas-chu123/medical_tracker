@@ -297,54 +297,53 @@ async function renderDashboardTracking(subs) {
 
 function renderClinicCard(sub, snap) {
     console.log('renderClinicCard data - sub room:', sub.clinic_room, 'snap room:', snap?.clinic_room);
+
+    // 1. Unified Progress Source
     const current = (sub.current_number != null) ? sub.current_number : (snap?.current_number != null ? snap.current_number : '—');
     const total_quota = (sub.total_quota != null) ? sub.total_quota : (snap?.total_quota != null ? snap.total_quota : '?');
     const current_registered = (sub.current_registered != null) ? sub.current_registered : (snap?.current_registered != null ? snap.current_registered : '?');
+    const waiting_list = sub.waiting_list || snap?.waiting_list || [];
+    const eta = sub.eta || snap?.eta;
 
-    // If we only have one value, display it as "總號" or "已掛號". If both exist, display both.
-    let numberDisplayHtml = '';
-    let hasBoth = total_quota !== '?' && current_registered !== '?';
-    let total = '—';
+    // 2. Updated Number Display
+    let numberDisplayHtml = `目前: ${current} / 總號: ${total_quota} / 掛號: ${current_registered}`;
+    let total = total_quota === '?' ? (current_registered === '?' ? 0 : current_registered) : total_quota;
 
-    if (hasBoth) {
-        numberDisplayHtml = `目前號 / ${total_quota} 總號 / ${current_registered} 人掛號`;
-        total = total_quota;
-    } else {
-        total = (total_quota !== '?') ? total_quota : ((current_registered !== '?') ? current_registered : '?');
-        const totalLabel = (total_quota !== '?') ? '總號' : ((current_registered !== '?') ? '人掛號' : '總號');
-        numberDisplayHtml = `目前號 / ${total} ${totalLabel}`;
-    }
-
+    // 3. Status & Progress
     const remaining = sub.remaining ?? '—';
     const status = sub.status;
     const isNum = typeof remaining === 'number';
     const isFinished = status === '看診完畢' || status === '已關診';
 
-    const pct = isNum && total !== '—' && typeof total === 'number' && total > 0 ? Math.round((1 - remaining / total) * 100) : 0;
+    const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
     const pillDone = (flag, label) => `<span class="threshold-pill ${flag ? 'done' : 'active'}">${label}</span>`;
 
+    // 4. Labels & Badges
     const doctorLabel = sub.doctor_name || ('ID: ' + sub.doctor_id?.slice(0, 8) + '…');
     const deptLabel = sub.department_name || '';
     const hospLabel = sub.hospital_name || '';
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNoHtml = `<div style="font-size:12px; color:var(--text-muted); margin-top:2px">🎫 我的號碼：${(sub.appointment_number != null) ? sub.appointment_number : '<span style="opacity:0.6">(未填寫)</span>'}</div>`;
-
     const statusBadge = status ? `<span class="status-badge ${isFinished ? 'finished' : 'upcoming'}">${status}</span>` : '';
 
+    // 5. Waiting People & Distance
     let distanceHtml = '';
-    if (isNum && sub.appointment_number && typeof current === 'number') {
-        const diff = sub.appointment_number - current;
-        if (diff > 0) {
-            distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">距您的 ${sub.appointment_number} 號還差 <strong style="color:var(--text)">${diff}</strong> 號</div>`;
-        } else if (diff === 0) {
-            distanceHtml = `<div style="font-size:13px; color:var(--text-muted)"><strong>⭐ 到號了！</strong></div>`;
-        } else if (diff < 0) {
+    if (isNum && sub.appointment_number && waiting_list.length > 0) {
+        const countAhead = waiting_list.filter(x => x < sub.appointment_number).length;
+        if (countAhead > 0) {
+            distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">前有 <strong style="color:var(--text)">${countAhead}</strong> 位等候人士</div>`;
+        } else if (waiting_list.includes(sub.appointment_number)) {
+            distanceHtml = `<div style="font-size:13px; color:var(--text-muted)"><strong>⭐ 到號了！(輪到您看診)</strong></div>`;
+        } else if (sub.appointment_number <= current) {
             distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">⚠️ 您的號碼已過號</div>`;
         }
     } else if (isNum && !isFinished) {
-        distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">距滿號還剩 <strong style="color:var(--text)">${remaining}</strong> 號</div>`;
+        distanceHtml = `<div style="font-size:13px; color:var(--text-muted)">剩餘 <strong style="color:var(--text)">${remaining}</strong> 位等候人士</div>`;
     }
+
+    // 6. ETA Display
+    const etaHtml = eta ? `<div style="font-size:12px; color:var(--primary); margin-top:4px">⏱️ 預計看診：<strong>${eta}</strong></div>` : '';
 
     return `
   <div class="clinic-card ${isFinished ? 'status-finished' : ''}">
@@ -355,6 +354,7 @@ function renderClinicCard(sub, snap) {
       ${(sub.clinic_room || snap?.clinic_room) ? `<span class="dept-tag" style="margin-left:6px;">🚪 診間：${escHtml(sub.clinic_room || snap.clinic_room)}診</span>` : ''}
     </div>
     ${apptNoHtml}
+    ${etaHtml}
     <div class="number-display">
       <div class="current-num ${isFinished ? 'text-muted' : ''}">${isFinished ? '完畢' : current}</div>
       <div class="num-label">${numberDisplayHtml}</div>
@@ -366,9 +366,9 @@ function renderClinicCard(sub, snap) {
     ${distanceHtml}
     ` : ''}
     <div class="threshold-pills" style="margin-top:10px">
-      ${sub.notify_at_20 ? pillDone(sub.notified_20, '前20') : ''}
-      ${sub.notify_at_10 ? pillDone(sub.notified_10, '前10') : ''}
-      ${sub.notify_at_5 ? pillDone(sub.notified_5, '前5') : ''}
+      ${sub.notify_at_20 ? pillDone(sub.notified_20, '前20人') : ''}
+      ${sub.notify_at_10 ? pillDone(sub.notified_10, '前10人') : ''}
+      ${sub.notify_at_5 ? pillDone(sub.notified_5, '前5人') : ''}
     </div>
   </div>`;
 }

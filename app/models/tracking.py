@@ -61,6 +61,8 @@ class TrackingRichOut(TrackingOut):
     current_registered: Optional[int] = None
     remaining: Optional[int] = None
     status: Optional[str] = None
+    waiting_list: Optional[list[int]] = None
+    eta: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

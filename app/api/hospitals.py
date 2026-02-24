@@ -1,8 +1,45 @@
 from fastapi import APIRouter, Query, HTTPException
+from datetime import datetime, date, timedelta
+from typing import Optional, List
+
 from app.database import get_supabase
 from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotOut
 
 router = APIRouter(prefix="/api", tags=["Hospitals"])
+
+def calculate_eta(session_type: str, registered_count: int, waiting_list: list[int]) -> Optional[str]:
+    """
+    Calculate Estimated Appointment Time (ETA).
+    Formula: Start Time + (People Seen) * 5 minutes.
+    """
+    if not session_type:
+        return None
+        
+    start_times = {
+        "上午": "08:30",
+        "下午": "13:00",
+        "晚上": "18:00"
+    }
+    start_time_str = start_times.get(session_type)
+    if not start_time_str:
+        return None
+        
+    try:
+        # Number of people processed = Total Registered - Still Waiting
+        waiting_count = len(waiting_list) if waiting_list else 0
+        processed_count = (registered_count or 0) - waiting_count
+        if processed_count < 0: processed_count = 0
+        
+        # Base start time
+        base_time = datetime.combine(date.today(), datetime.strptime(start_time_str, "%H:%M").time())
+        
+        # Doctor's current estimated progress time
+        current_eta = base_time + timedelta(minutes=processed_count * 5)
+        
+        return current_eta.strftime("%H:%M")
+    except Exception:
+        return None
+
 
 
 @router.get("/hospitals", response_model=list[HospitalOut])
@@ -146,7 +183,15 @@ async def get_doctor_snapshots(
         .limit(limit)
         .execute()
     )
-    return result.data
+    
+    data = result.data or []
+    for snapshot in data:
+        snapshot["eta"] = calculate_eta(
+            snapshot.get("session_type"),
+            snapshot.get("current_registered"),
+            snapshot.get("waiting_list")
+        )
+    return data
 
 
 @router.get("/doctors/{doctor_id}/latest", response_model=SnapshotOut | None)
@@ -161,7 +206,16 @@ async def get_doctor_latest_snapshot(doctor_id: str):
         .limit(1)
         .execute()
     )
-    return result.data[0] if result.data else None
+    if not result.data:
+        return None
+        
+    snapshot = result.data[0]
+    snapshot["eta"] = calculate_eta(
+        snapshot.get("session_type"),
+        snapshot.get("current_registered"),
+        snapshot.get("waiting_list")
+    )
+    return snapshot
 
 
 @router.get("/doctors/{doctor_id}/schedules")

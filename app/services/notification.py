@@ -68,16 +68,25 @@ async def _process_subscription(supabase, sub: dict):
     snap = snap_res.data[0]
     current_number = snap.get("current_number")
     total_quota = snap.get("total_quota")
+    waiting_list = snap.get("waiting_list") or []
 
     if current_number is None:
         return
 
-    # Use appointment_number if set by user, fallback to total_quota
-    target_number = sub.get("appointment_number") or total_quota
+    # Use appointment_number if set by user, fallback to 999 (should not happen in practice)
+    target_number = sub.get("appointment_number")
     if target_number is None:
-        return
+        # If no target number, we can't calculate waiting list ahead of user. 
+        # Fallback to total headcount vs current number to keep some level of notification?
+        # Standard: target_number = total_quota or 0
+        target_number = total_quota or 0
 
-    remaining = target_number - current_number
+    if waiting_list:
+        # Calculate people waiting AHEAD of the user
+        remaining = len([x for x in waiting_list if x < target_number])
+    else:
+        # Fallback to old behavior if waiting_list is missing
+        remaining = target_number - current_number
 
     # Build context for notifications
     doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
