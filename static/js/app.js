@@ -85,8 +85,8 @@ async function handleLogin(e) {
         }
         authToken = data.access_token;
         localStorage.setItem('auth_token', authToken);
-        // Pass user profile from login response — skip extra /api/users/me call
-        await initApp(data.user);
+        // Refresh page to clear any cached UI state from previous user
+        window.location.reload();
     } catch (err) {
         toast(err.message, 'error');
     } finally {
