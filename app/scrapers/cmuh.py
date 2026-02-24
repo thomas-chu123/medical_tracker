@@ -271,17 +271,22 @@ class CMUHScraper(BaseScraper):
                     registered = _parse_int(re.search(r"已掛號[：:]\s*(\d+)", block).group(1)) if re.search(r"已掛號[：:]\s*(\d+)", block) else None
                     
                     # Extract clinic room number with improved logic
-                    # Strategy: If multiple room numbers exist, prioritize the longest one
-                    # This handles cases like "復健科(118診),地點：兒童醫院1樓(15診)" → 118
-                    room_matches = re.findall(r'\((\d+)', block)
+                    # Strategy 1: Look for digits inside parentheses with "診" 字 suffix
+                    # This captures explicit clinic designations like (118診) or (15診)
+                    clinic_room_with_char = re.findall(r'\((\d+)診\)', block)
                     
-                    if room_matches:
-                        clinic_room = max(room_matches, key=len)
-                        # Log extraction details for debugging
-                        log.debug(f"[CMUH] Room extraction: block='{block[:100]}', matches={room_matches}, selected={clinic_room}")
+                    # Strategy 2: Fallback to all digits in parentheses if Strategy 1 fails
+                    if clinic_room_with_char:
+                        clinic_room = max(clinic_room_with_char, key=len)
+                        log.debug(f"[CMUH] Room (with 診 char): doc={doc_name}, block='{block[:100]}', matches={clinic_room_with_char}, selected={clinic_room}")
                     else:
-                        clinic_room = None
-                        log.debug(f"[CMUH] No room number found in block: '{block[:100]}'")
+                        room_matches = re.findall(r'\((\d+)', block)
+                        if room_matches:
+                            clinic_room = max(room_matches, key=len)
+                            log.debug(f"[CMUH] Room (fallback): doc={doc_name}, block='{block[:100]}', matches={room_matches}, selected={clinic_room}")
+                        else:
+                            clinic_room = None
+                            log.debug(f"[CMUH] No room number found: doc={doc_name}, block='{block[:100]}'")
                     
                     # Extract current calling number (診間燈號)
                     # Pattern on page: <div style="text-align:center;">診間燈號：37</div>
@@ -322,14 +327,17 @@ class CMUHScraper(BaseScraper):
         
         # Room passed from DB already has '診' stripped by the upstream method
         params = {"TimeCode": period, "CliRoom": room.strip()}
+        log.debug(f"[CMUH] Fetching clinic progress: CliRoom={room}, Period={period}")
         try:
             client = await self._get_client()
             # reg64.cgi responds with Big5 encoding
             resp = await client.get(url, params=params)
             resp.raise_for_status()
             html = resp.content.decode("big5", errors="ignore")
+            log.debug(f"[CMUH] Clinic progress HTML received for CliRoom={room}, length={len(html)}")
         except Exception as e:
             # Fallback to old behavior if reg64 fails, or just return None
+            log.error(f"[CMUH] Error fetching clinic progress for CliRoom={room}: {e}")
             return None
 
         soup = BeautifulSoup(html, "lxml")
@@ -348,6 +356,7 @@ class CMUHScraper(BaseScraper):
         lamp_match = re.search(r"目前[的]?[燈診]號.*?(\d+)", html_all)
         if lamp_match:
             current_number = int(lamp_match.group(1))
+            log.debug(f"[CMUH] Current number extracted for CliRoom={room}: {current_number}")
         
         if "看診完畢" in text_all or "掛號看診完畢" in text_all:
             status = "看診完畢"
@@ -379,6 +388,8 @@ class CMUHScraper(BaseScraper):
 
         max_num = max(numbers) if numbers else 0
         headcount = patient_rows
+        
+        log.debug(f"[CMUH] Clinic progress for CliRoom={room}: current={current_number}, total_quota={max_num}, registered={headcount}, status={status}")
 
         if current_number is None and not status:
             return None
