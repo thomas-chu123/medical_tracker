@@ -136,7 +136,7 @@ async def _process_subscription(supabase, sub: dict):
             continue  # Not yet reached
 
         tasks.append(
-            _send_alerts(
+            await _send_alerts(
                 supabase=supabase,
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
@@ -156,7 +156,6 @@ async def _process_subscription(supabase, sub: dict):
                 notified_flag=notified_flag,
             )
         )
-        break
 
     if tasks:
         await asyncio.gather(*tasks)

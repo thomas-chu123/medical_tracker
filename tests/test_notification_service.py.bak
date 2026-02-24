@@ -1,0 +1,247 @@
+import asyncio
+from datetime import date
+from unittest.mock import AsyncMock, MagicMock, call
+
+import pytest
+from app.services.notification import _process_subscription, _send_alerts
+
+
+@pytest.fixture
+def mock_supabase():
+    """Fixture to create a mock Supabase client."""
+    client = MagicMock()
+    # Make sure async methods are awaitable
+    client.auth.admin.get_user_by_id = AsyncMock()
+    return client
+
+@pytest.fixture
+def mock_send_email(mocker):
+    """Fixture to mock the send_email function."""
+    return mocker.patch("app.services.notification.send_email", new_callable=AsyncMock)
+
+@pytest.fixture
+def mock_send_line_notify(mocker):
+    """Fixture to mock the send_line_notify function."""
+    return mocker.patch("app.services.notification.send_line_notify", new_callable=AsyncMock)
+
+@pytest.fixture
+def mock_build_email(mocker):
+    """Fixture to mock the build_clinic_alert_email function."""
+    return mocker.patch(
+        "app.services.notification.build_clinic_alert_email",
+        return_value=("Test Subject", "Test Body"),
+    )
+
+@pytest.fixture
+def mock_build_line(mocker):
+    """Fixture to mock the build_line_message function."""
+    return mocker.patch(
+        "app.services.notification.build_line_message",
+        return_value="Test LINE Message",
+    )
+
+
+# --- Test Cases ---
+
+@pytest.mark.asyncio
+async def test_no_notification_if_remaining_is_high(
+    mock_supabase, mock_send_email, mock_send_line_notify
+):
+    """
+    Verify that no notification is sent if the number of remaining people
+    is higher than all notification thresholds.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_1", "user_id": "user_1", "doctor_id": 1,
+        "session_type": "上午", "appointment_number": 25,
+        "notify_at_20": True, "notify_at_10": True, "notify_at_5": True,
+        "notified_20": False, "notified_10": False, "notified_5": False,
+        "notify_email": True, "notify_line": True,
+        "doctors": {"name": "Dr. Test", "hospital_id": 1},
+        "departments": {"name": "Testing"},
+    }
+    snapshot_data = {
+        "current_number": 1, "waiting_list": list(range(2, 22)), # 20 remaining
+    }
+    
+    # Mock database responses
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [snapshot_data]
+    mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"name": "Test Hospital"}
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [{"line_notify_token": "fake_token"}]
+    
+    # Mock user email
+    # This simulates _get_user_email returning a valid email
+    async def _mock_get_user_email(*args):
+        return "test@example.com"
+    
+    # We need to patch the internal call to _get_user_email
+    mocker.patch('app.services.notification._get_user_email', _mock_get_user_email)
+
+    # Act
+    # We set remaining to a value higher than any threshold
+    snapshot_data["waiting_list"] = list(range(2, 30)) # 28 remaining
+    await _process_subscription(mock_supabase, subscription)
+
+    # Assert
+    mock_send_email.assert_not_called()
+    mock_send_line_notify.assert_not_called()
+    # Check that we didn't try to mark anything as notified
+    assert not mock_supabase.table.return_value.update.called
+
+@pytest.mark.asyncio
+async def test_sends_notification_when_threshold_crossed(
+    mocker, mock_supabase, mock_send_email, mock_send_line_notify, mock_build_email, mock_build_line
+):
+    """
+    Verify that a notification is sent when a specific threshold is crossed for the first time.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_2", "user_id": "user_2", "doctor_id": 2,
+        "session_date": str(date.today()),
+        "session_type": "下午", "appointment_number": 15,
+        "notify_at_20": True, "notify_at_10": True, "notify_at_5": True,
+        "notified_20": True,  # Already notified for 20
+        "notified_10": False, # NOT notified for 10 yet
+        "notified_5": False,
+        "notify_email": True, "notify_line": True,
+        "doctors": {"name": "Dr. Code", "hospital_id": 1, "doctor_no": "D2"},
+        "departments": {"name": "Software Engineering"},
+    }
+    # 9 people remaining (current=5, target=15)
+    snapshot_data = {
+        "current_number": 5, "waiting_list": list(range(6, 15)), # 9 remaining
+        "clinic_room": "Room 101"
+    }
+
+    # Mock database responses
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [snapshot_data]
+    mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"name": "General Hospital"}
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [{"line_notify_token": "fake_line_token"}]
+    # Mock the insert for logging, returning a mock log_id
+    mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{"id": 99}]
+
+    # Mock _get_user_email
+    mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user@email.com"))
+
+    # Act
+    await _process_subscription(mock_supabase, subscription)
+
+    # Assert
+    # Check that email and LINE notifications were sent
+    mock_send_email.assert_called_once()
+    mock_send_line_notify.assert_called_once()
+
+    # Verify the content passed to build functions
+    mock_build_email.assert_called_with(
+        hospital_name="General Hospital",
+        clinic_room="Room 101",
+        doctor_name="Dr. Code",
+        department_name="Software Engineering",
+        session_date=str(date.today()),
+        session_type="下午",
+        current_number=5,
+        remaining=9,
+        threshold=10, # It should trigger for the 10 threshold
+    )
+    mock_build_line.assert_called_with(
+        doctor_name="Dr. Code",
+        department_name="Software Engineering",
+        session_date=str(date.today()),
+        session_type="下午",
+        current_number=5,
+        remaining=9,
+        threshold=10,
+    )
+
+    # Verify that the subscription was marked as notified for the correct threshold
+    mock_supabase.table.return_value.update.assert_called_once_with({"notified_10": True})
+
+
+@pytest.mark.asyncio
+async def test_no_notification_if_already_notified(
+    mocker, mock_supabase, mock_send_email, mock_send_line_notify
+):
+    """
+    Verify that no notification is sent if the user has already been notified for a given threshold.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_3", "user_id": "user_3", "doctor_id": 3, "appointment_number": 12,
+        "notify_at_10": True, "notified_10": True, # Already notified
+        "doctors": {"name": "Dr. Skip", "hospital_id": 1}, "departments": {"name": "Redundancy"},
+    }
+    snapshot_data = {"current_number": 3, "waiting_list": list(range(4, 12))} # 8 remaining
+
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [snapshot_data]
+    mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user3@email.com"))
+
+    # Act
+    await _process_subscription(mock_supabase, subscription)
+
+    # Assert
+    mock_send_email.assert_not_called()
+    mock_send_line_notify.assert_not_called()
+    assert not mock_supabase.table.return_value.update.called
+
+@pytest.mark.asyncio
+async def test_no_notification_if_disabled_by_user(
+    mocker, mock_supabase, mock_send_email, mock_send_line_notify
+):
+    """
+    Verify that no notification is sent if the user has disabled a specific threshold.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_4", "user_id": "user_4", "doctor_id": 4, "appointment_number": 20,
+        "notify_at_10": False, # User disabled this threshold
+        "notified_10": False,
+        "doctors": {"name": "Dr. Opt-out", "hospital_id": 1}, "departments": {"name": "Preferences"},
+    }
+    snapshot_data = {"current_number": 11, "waiting_list": list(range(12, 20))} # 8 remaining
+
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [snapshot_data]
+    mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user4@email.com"))
+
+    # Act
+    await _process_subscription(mock_supabase, subscription)
+
+    # Assert
+    mock_send_email.assert_not_called()
+    mock_send_line_notify.assert_not_called()
+    assert not mock_supabase.table.return_value.update.called
+
+@pytest.mark.asyncio
+async def test_multiple_thresholds_trigger_once(
+    mocker, mock_supabase, mock_send_email, mock_send_line_notify
+):
+    """
+    Verify that if the remaining count crosses multiple thresholds at once, only the highest one triggers.
+    Pytest runs thresholds in descending order, so this works naturally.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_5", "user_id": "user_5", "doctor_id": 5, "appointment_number": 10,
+        "notify_at_20": True, "notify_at_10": True, "notify_at_5": True,
+        "notified_20": False, "notified_10": False, "notified_5": False,
+        "notify_email": True, "notify_line": False, # Only email
+        "doctors": {"name": "Dr. Jump", "hospital_id": 1}, "departments": {"name": "Efficiency"},
+    }
+    # 4 people remaining, crosses 20, 10, and 5 thresholds
+    snapshot_data = {"current_number": 5, "waiting_list": list(range(6, 10))} # 4 remaining
+
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [snapshot_data]
+    mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"name": "Test Hospital"}
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [] # No line token
+    mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{"id": 100}]
+    mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user5@email.com"))
+
+    # Act
+    await _process_subscription(mock_supabase, subscription)
+
+    # Assert
+    mock_send_email.assert_called_once()
+    mock_send_line_notify.assert_not_called()
+    # Should only notify for the highest threshold crossed (20)
+    mock_supabase.table.return_value.update.assert_called_once_with({"notified_20": True})

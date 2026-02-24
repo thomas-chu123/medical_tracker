@@ -85,8 +85,14 @@ async function handleLogin(e) {
         }
         authToken = data.access_token;
         localStorage.setItem('auth_token', authToken);
-        // Refresh page to clear any cached UI state from previous user
-        window.location.reload();
+        
+        // Show success feedback before reloading
+        toast('登入成功！重新載入中…', 'success', 2000);
+        
+        // Wait for toast to be visible, then reload to clear cached UI state
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
     } catch (err) {
         toast(err.message, 'error');
     } finally {
@@ -121,6 +127,7 @@ function handleLogout() {
     authToken = null;
     localStorage.removeItem('auth_token');
     currentUser = null;
+    document.body.classList.remove('is-admin');
     document.getElementById('app').style.display = 'none';
     document.getElementById('auth-page').classList.add('show');
 }
@@ -154,10 +161,16 @@ async function initApp(userFromLogin = null) {
     if (currentUser.line_notify_token)
         document.getElementById('line-token').value = currentUser.line_notify_token;
 
-    // Reveal admin nav if user is admin
-    if (currentUser.is_admin) {
-        const adminBtn = document.getElementById('admin-nav-btn');
-        if (adminBtn) adminBtn.style.display = '';
+    // Manage admin nav button visibility
+    const adminBtn = document.getElementById('admin-nav-btn');
+    if (adminBtn) {
+        if (currentUser.is_admin) {
+            adminBtn.style.display = 'flex';
+            document.body.classList.add('is-admin');
+        } else {
+            adminBtn.style.display = 'none';
+            document.body.classList.remove('is-admin');
+        }
     }
 
     // Load dashboard
