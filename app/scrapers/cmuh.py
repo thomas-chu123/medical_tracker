@@ -88,21 +88,45 @@ class CMUHScraper(BaseScraper):
 
         departments: list[DepartmentData] = []
 
-        # Links that look like DymSchedule?table=XXXXX
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            m = re.search(r"table=([A-Za-z0-9]+)", href)
-            if m:
-                code = m.group(1)
-                name = a.get_text(strip=True)
-                if name:
-                    departments.append(
-                        DepartmentData(
-                            name=name,
-                            code=code,
-                            hospital_code=self.HOSPITAL_CODE,
+        # CMUH Main Hospital has category boxes: onlinedivision_box
+        boxes = soup.find_all("div", class_="onlinedivision_box")
+        if boxes:
+            for box in boxes:
+                title_div = box.find("div", class_="title")
+                category = title_div.get_text(strip=True) if title_div else None
+                
+                for a in box.find_all("a", href=True):
+                    href = a["href"]
+                    m = re.search(r"table=([A-Za-z0-9]+)", href)
+                    if m:
+                        code = m.group(1)
+                        name = a.get_text(strip=True)
+                        if name:
+                            departments.append(
+                                DepartmentData(
+                                    name=name,
+                                    code=code,
+                                    hospital_code=self.HOSPITAL_CODE,
+                                    category=category
+                                )
+                            )
+        else:
+            # Fallback for pages without standard category boxes (e.g. Hsinchu if it used this base)
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                m = re.search(r"table=([A-Za-z0-9]+)", href)
+                if m:
+                    code = m.group(1)
+                    name = a.get_text(strip=True)
+                    if name:
+                        departments.append(
+                            DepartmentData(
+                                name=name,
+                                code=code,
+                                hospital_code=self.HOSPITAL_CODE,
+                                category=None
+                            )
                         )
-                    )
 
         # Deduplicate by code
         seen = set()
@@ -383,3 +407,54 @@ class CMUHHsinchuScraper(CMUHScraper):
     BASE_URL = "https://www.cmu-hch.cmu.edu.tw"
     CGI_BASE_URL = "https://www.cmu-hch.com/cgi-bin/hc"
     PROGRESS_CGI = "reg64x.cgi"
+
+    async def fetch_departments(self) -> list[DepartmentData]:
+        depts = await super().fetch_departments()
+
+        category_map = {
+            "一般內科": "內科系",
+            "神經科": "內科系",
+            "心臟血管科": "內科系",
+            "胸腔暨重症科": "內科系",
+            "消化科(腸胃肝膽)": "內科系",
+            "腎臟科": "內科系",
+            "風濕免疫科": "內科系",
+            "內分泌暨新陳代謝科": "內科系",
+            "感染科": "內科系",
+            "家庭醫學科": "內科系",
+            "職業醫學科": "內科系",
+            "精神醫學科": "內科系",
+            "臨床營養科": "內科系",
+            "放射腫瘤科": "內科系",
+            "血液腫瘤科": "內科系",
+            
+            "一般外科": "外科系",
+            "乳房外科": "外科系",
+            "減重外科": "外科系",
+            "心臟血管外科": "外科系",
+            "胸腔外科": "外科系",
+            "大腸直腸外科": "外科系",
+            "整形外科": "外科系",
+            "泌尿科": "外科系",
+            "神經外科": "外科系",
+            "骨科": "外科系",
+
+            "兒科": "婦兒科系",
+            "小兒外科": "婦兒科系",
+            "小兒心臟科": "婦兒科系",
+            "婦產科": "婦兒科系",
+            "不孕症門診": "婦兒科系",
+
+            "中醫科": "中醫科系",
+
+            "眼科": "其他專科",
+            "耳鼻喉科": "其他專科",
+            "牙科": "其他專科",
+            "復健科": "其他專科",
+            "皮膚科": "其他專科",
+        }
+
+        for d in depts:
+            d.category = category_map.get(d.name, "其他專科")
+
+        return depts

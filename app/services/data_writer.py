@@ -34,10 +34,16 @@ def _parse_doctor_name(raw: str) -> tuple[str, Optional[str]]:
 async def upsert_department(hosp_id: str, dept: DepartmentData) -> str:
     """Upsert a department and return its UUID."""
     supabase = get_supabase()
+    
+    # Base row data
+    row_data = {"hospital_id": hosp_id, "name": dept.name, "code": dept.code}
+    if dept.category is not None:
+        row_data["category"] = dept.category
+
     result = await _run(
         lambda: supabase.table("departments")
         .upsert(
-            {"hospital_id": hosp_id, "name": dept.name, "code": dept.code},
+            row_data,
             on_conflict="hospital_id,code",
         )
         .execute()

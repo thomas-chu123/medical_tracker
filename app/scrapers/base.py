@@ -9,6 +9,7 @@ class DepartmentData:
     name: str
     code: str
     hospital_code: str
+    category: Optional[str] = None
 
 
 @dataclass
