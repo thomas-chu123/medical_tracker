@@ -81,8 +81,9 @@ def calculate_eta(
         else:
             # If the clinic has already started today, use now as the minimum baseline
             base_time = now
-            
-        estimated_eta = base_time + timedelta(minutes=total_people_ahead * 5)
+        
+        minutes_per_patient = 3 if session_type == "晚上" else 5
+        estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
         
         return estimated_eta.strftime("%H:%M")
     except Exception:

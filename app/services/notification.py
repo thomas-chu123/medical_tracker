@@ -111,15 +111,15 @@ async def _process_subscription(supabase, sub: dict):
         if hosp_res.data:
             hospital_name = hosp_res.data.get("name", "未知醫院")
 
-    # Fetch user_profiles separately due to missing FK
-    profile_res = await _run(
-        lambda: supabase.table("user_profiles")
-        .select("line_notify_token")
+    # Fetch user's LINE User ID from users_local
+    user_res = await _run(
+        lambda: supabase.table("users_local")
+        .select("line_user_id")
         .eq("id", sub["user_id"])
         .execute()
     )
-    user_profile = profile_res.data[0] if profile_res.data else {}
-    line_token = user_profile.get("line_notify_token", "")
+    user_data = user_res.data[0] if user_res.data else {}
+    line_user_id = user_data.get("line_user_id", "")
 
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
@@ -154,7 +154,7 @@ async def _process_subscription(supabase, sub: dict):
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
                 email=user_email,
-                line_token=line_token,
+                line_user_id=line_user_id,
                 notify_email=sub.get("notify_email", True),
                 notify_line=sub.get("notify_line", False),
                 hospital_name=hospital_name,
@@ -185,7 +185,7 @@ async def _send_alerts(
     sub_id: str,
     user_id: str,
     email: str | None,
-    line_token: str,
+    line_user_id: str,
     notify_email: bool,
     notify_line: bool,
     hospital_name: str,
@@ -218,7 +218,7 @@ async def _send_alerts(
             send_email(email, subject, body)
         ))
 
-    if notify_line and line_token:
+    if notify_line and line_user_id:
         message = build_line_message(
             doctor_name=doctor_name,
             department_name=dept_name,
@@ -230,7 +230,7 @@ async def _send_alerts(
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "line", "",
-            send_line_notify(line_token, message)
+            send_line_message(line_user_id, message)
         ))
 
     if send_tasks:
@@ -246,7 +246,7 @@ async def _send_alerts(
         )
         log.info(f"[Notification] Updated {notified_flag} flag for sub {sub_id}")
     else:
-        log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineToken: {'set' if line_token else 'not set'}")
+        log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineUserID: {'set' if line_user_id else 'not set'}")
 
 
 async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):

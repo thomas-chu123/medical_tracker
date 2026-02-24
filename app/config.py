@@ -22,10 +22,7 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_from_name: str = "醫療門診追蹤系統"
 
-    # LINE Notify (deprecated, kept for backward compatibility)
-    line_notify_token: str = ""
-    
-    # LINE Message API (new, recommended)
+    # LINE Message API
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
 

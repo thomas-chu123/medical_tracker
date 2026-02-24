@@ -9,13 +9,13 @@ from app.services.notification import _process_subscription
 @pytest.fixture
 def mock_send_email(mocker):
     """Fixture to mock the send_email function."""
-    return mocker.patch("app.services.notification.send_email", new_callable=AsyncMock)
+    return mocker.patch("app.services.email_service.send_email", new_callable=AsyncMock)
 
 
 @pytest.fixture
 def mock_send_line_notify(mocker):
     """Fixture to mock the send_line_notify function."""
-    return mocker.patch("app.services.notification.send_line_notify", new_callable=AsyncMock)
+    return mocker.patch("app.services.line_service.send_line_notify", new_callable=AsyncMock)
 
 
 @pytest.fixture

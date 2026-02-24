@@ -77,6 +77,24 @@ def test_reg52_clinic_room_regex():
 
 
 @allure.feature("Scraper")
+@allure.story("Regex: Clinic Room Parsing from reg52 Schedule")
+def test_parse_room_number_picks_longest():
+    """Test that if multiple room numbers are in a block, the longest one is chosen."""
+    block_text_1 = "兒童發展與行為(118診),地點：兒童醫院1樓(15診)"
+    block_text_2 = "地點：急重症中心大樓1樓(15診), 神經內科(118)"
+
+    # Test case 1
+    matches_1 = re.findall(r'\((\d+)', block_text_1)
+    result_1 = max(matches_1, key=len) if matches_1 else None
+    assert result_1 == "118"
+
+    # Test case 2
+    matches_2 = re.findall(r'\((\d+)', block_text_2)
+    result_2 = max(matches_2, key=len) if matches_2 else None
+    assert result_2 == "118"
+
+
+@allure.feature("Scraper")
 @allure.story("Parse Doctor Schedule (Unit Test)")
 @pytest.mark.asyncio
 async def test_parse_doctor_schedule_unit():

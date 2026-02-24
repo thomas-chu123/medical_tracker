@@ -17,6 +17,7 @@ import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
 from app.config import get_settings
 
@@ -210,13 +211,16 @@ class CMUHScraper(BaseScraper):
                 break
             except Exception as e:
                 if attempt == 2:
-                    print(f"Error fetching doctor info for {doc_no} after 3 attempts: {e}")
+                    log.error(f"[CMUH] Error fetching doctor info for {doc_no} ({doc_name}) after 3 attempts: {e}")
                     return []
                 import asyncio
                 await asyncio.sleep(1.0 * (attempt + 1))
                 
         if not html:
+            log.warning(f"[CMUH] Empty HTML response for doctor {doc_no} ({doc_name})")
             return []
+
+        log.debug(f"[CMUH] Parsing schedule for {doc_name} (DocNo={doc_no}), HTML length={len(html)}")
 
         soup = BeautifulSoup(html, "lxml")
         slots: list[DoctorSlot] = []
@@ -265,8 +269,19 @@ class CMUHScraper(BaseScraper):
                         continue
 
                     registered = _parse_int(re.search(r"已掛號[：:]\s*(\d+)", block).group(1)) if re.search(r"已掛號[：:]\s*(\d+)", block) else None
-                    room_match = re.search(r"\(([\dA-Za-z]+)診?\)", block)
-                    clinic_room = room_match.group(1) if room_match else None
+                    
+                    # Extract clinic room number with improved logic
+                    # Strategy: If multiple room numbers exist, prioritize the longest one
+                    # This handles cases like "復健科(118診),地點：兒童醫院1樓(15診)" → 118
+                    room_matches = re.findall(r'\((\d+)', block)
+                    
+                    if room_matches:
+                        clinic_room = max(room_matches, key=len)
+                        # Log extraction details for debugging
+                        log.debug(f"[CMUH] Room extraction: block='{block[:100]}', matches={room_matches}, selected={clinic_room}")
+                    else:
+                        clinic_room = None
+                        log.debug(f"[CMUH] No room number found in block: '{block[:100]}'")
                     
                     # Extract current calling number (診間燈號)
                     # Pattern on page: <div style="text-align:center;">診間燈號：37</div>
