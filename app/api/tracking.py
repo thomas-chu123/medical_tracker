@@ -125,9 +125,11 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         # Calculate ETA (import helper from hospitals)
         from app.api.hospitals import calculate_eta
         s["eta"] = calculate_eta(
+            s["session_date"],
             s["session_type"],
-            s["current_registered"],
-            s["waiting_list"],
+            s.get("current_number"),
+            s.get("current_registered"),
+            s.get("waiting_list"),
             target_number=s.get("appointment_number")
         )
 

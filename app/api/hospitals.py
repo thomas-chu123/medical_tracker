@@ -8,7 +8,9 @@ from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotO
 router = APIRouter(prefix="/api", tags=["Hospitals"])
 
 def calculate_eta(
+    session_date_str: str,
     session_type: str, 
+    current_number: Optional[int],
     registered_count: int, 
     waiting_list: list[int],
     target_number: Optional[int] = None
@@ -20,7 +22,7 @@ def calculate_eta(
     
     Formula: Clinic Start Time + (People Ahead) * 5 minutes.
     """
-    if not session_type:
+    if not session_type or not session_date_str:
         return None
         
     start_times = {
@@ -33,29 +35,54 @@ def calculate_eta(
         return None
         
     try:
-        # 1. Calculate how many people are ahead
+        # 1. Date and Time Context
+        now = datetime.now()
+        today = now.date()
+        
+        try:
+            target_date = datetime.strptime(session_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+        # 2. Base Start Time Calculation
+        schedule_start = datetime.combine(target_date, datetime.strptime(start_time_str, "%H:%M").time())
+        
+        if target_date < today:
+            # Past clinic session
+            return "已結束"
+
+        # 3. Calculate how many people are ahead
+        total_people_ahead = 0
         if target_number:
             if waiting_list:
                 # Count people in waiting list whose number is strictly less than target
-                total_people_before_target = len([x for x in waiting_list if x < target_number])
+                total_people_ahead = len([x for x in waiting_list if x < target_number])
+            elif current_number is not None:
+                # Fallback: estimate based on current progress
+                total_people_ahead = max(0, target_number - current_number)
             else:
-                # Fallback: Sequential estimate
-                total_people_before_target = (target_number - 1)
+                # Absolute fallback: from the start
+                total_people_ahead = max(0, target_number - 1)
+                
+            # If target number is already passed and not in waiting list
+            if current_number is not None and target_number < current_number:
+                if not waiting_list or target_number not in waiting_list:
+                    return "已過號"
         else:
             # Doctor's current time: Based on how many are already finished
             waiting_count = len(waiting_list) if waiting_list else 0
-            total_people_before_target = (registered_count or 0) - waiting_count
-            if total_people_before_target < 0: total_people_before_target = 0
-        
-        # 2. Base start time (Considering current time if the clinic has started)
-        now = datetime.now()
-        base_time = datetime.combine(now.date(), datetime.strptime(start_time_str, "%H:%M").time())
-        if now > base_time:
-            # If the clinic has already started, use current time as the minimum base
+            total_people_ahead = (registered_count or 0) - waiting_count
+            if total_people_ahead < 0: total_people_ahead = 0
+
+        # 4. Final ETA Calculation
+        # For future dates or today before clinic starts, use schedule_start as the baseline
+        if now < schedule_start:
+            base_time = schedule_start
+        else:
+            # If the clinic has already started today, use now as the minimum baseline
             base_time = now
             
-        # 3. Calculate ETA (5 mins per person as requested)
-        estimated_eta = base_time + timedelta(minutes=total_people_before_target * 5)
+        estimated_eta = base_time + timedelta(minutes=total_people_ahead * 5)
         
         return estimated_eta.strftime("%H:%M")
     except Exception:
@@ -208,7 +235,9 @@ async def get_doctor_snapshots(
     data = result.data or []
     for snapshot in data:
         snapshot["eta"] = calculate_eta(
+            snapshot.get("session_date"),
             snapshot.get("session_type"),
+            snapshot.get("current_number"),
             snapshot.get("current_registered"),
             snapshot.get("waiting_list")
         )
@@ -232,7 +261,9 @@ async def get_doctor_latest_snapshot(doctor_id: str):
         
     snapshot = result.data[0]
     snapshot["eta"] = calculate_eta(
+        snapshot.get("session_date"),
         snapshot.get("session_type"),
+        snapshot.get("current_number"),
         snapshot.get("current_registered"),
         snapshot.get("waiting_list")
     )
