@@ -10,6 +10,7 @@ class DepartmentData:
     code: str
     hospital_code: str
     category: Optional[str] = None
+    sort_order: int = 0
 
 
 @dataclass

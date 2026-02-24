@@ -36,7 +36,7 @@ async def upsert_department(hosp_id: str, dept: DepartmentData) -> str:
     supabase = get_supabase()
     
     # Base row data
-    row_data = {"hospital_id": hosp_id, "name": dept.name, "code": dept.code}
+    row_data = {"hospital_id": hosp_id, "name": dept.name, "code": dept.code, "sort_order": dept.sort_order}
     if dept.category is not None:
         row_data["category"] = dept.category
 

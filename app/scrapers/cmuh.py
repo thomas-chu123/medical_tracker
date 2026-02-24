@@ -90,6 +90,7 @@ class CMUHScraper(BaseScraper):
 
         # CMUH Main Hospital has category boxes: onlinedivision_box
         boxes = soup.find_all("div", class_="onlinedivision_box")
+        current_sort_order = 1
         if boxes:
             for box in boxes:
                 title_div = box.find("div", class_="title")
@@ -107,9 +108,11 @@ class CMUHScraper(BaseScraper):
                                     name=name,
                                     code=code,
                                     hospital_code=self.HOSPITAL_CODE,
-                                    category=category
+                                    category=category,
+                                    sort_order=current_sort_order
                                 )
                             )
+                            current_sort_order += 1
         else:
             # Fallback for pages without standard category boxes (e.g. Hsinchu if it used this base)
             for a in soup.find_all("a", href=True):
@@ -124,9 +127,11 @@ class CMUHScraper(BaseScraper):
                                 name=name,
                                 code=code,
                                 hospital_code=self.HOSPITAL_CODE,
-                                category=None
+                                category=None,
+                                sort_order=current_sort_order
                             )
                         )
+                        current_sort_order += 1
 
         # Deduplicate by code
         seen = set()

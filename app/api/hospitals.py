@@ -39,6 +39,7 @@ async def list_departments(hospital_id: str, category: str = Query(default=""), 
         .select("*")
         .eq("hospital_id", hospital_id)
         .eq("is_active", True)
+        .order("sort_order")
     )
     if category:
         query = query.eq("category", category)
@@ -50,20 +51,27 @@ async def list_departments(hospital_id: str, category: str = Query(default=""), 
 
 @router.get("/hospitals/{hospital_id}/categories")
 async def list_department_categories(hospital_id: str):
-    """Return distinct department categories for a hospital, ordered by CMUH website order."""
+    """Return distinct department categories for a hospital, ordered by the first appearance in website sequence."""
     supabase = get_supabase()
     result = (
         supabase.table("departments")
         .select("category")
         .eq("hospital_id", hospital_id)
         .eq("is_active", True)
+        .order("sort_order")
         .execute()
     )
-    cats_in_db = {r["category"] for r in result.data if r.get("category")}
-    # Sort by CMUH official order, unknown categories appended alphabetically at end
-    ordered = [c for c in CATEGORY_ORDER if c in cats_in_db]
-    extras = sorted(cats_in_db - set(CATEGORY_ORDER))
-    return ordered + extras
+    
+    # Maintain order of first appearance based on scraped sequence
+    ordered_categories = []
+    seen = set()
+    for r in result.data:
+        cat = r.get("category")
+        if cat and cat not in seen:
+            seen.add(cat)
+            ordered_categories.append(cat)
+            
+    return ordered_categories
 
 
 

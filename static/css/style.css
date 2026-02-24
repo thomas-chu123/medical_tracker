@@ -596,8 +596,18 @@ tbody td {
   padding: 32px;
   width: 100%;
   max-width: 520px;
+  max-height: 90vh;
   box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
   animation: slideUp 0.25s ease;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-right: -4px;
 }
 
 @keyframes slideUp {
@@ -1078,6 +1088,12 @@ tbody td {
 
   .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .modal {
+    width: 95%;
+    padding: 24px 20px;
+    max-height: 95vh;
   }
 }
 
