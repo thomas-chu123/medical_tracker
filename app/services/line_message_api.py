@@ -75,7 +75,7 @@ def build_line_message(
         f"🏥 科別：{department_name}\n"
         f"📅 日期：{session_date} {session_type}\n"
         f"📍 目前號碼：{current_number}\n"
-        f"⚡ 距您還剩：{remaining} 號\n"
+        f"⚡ 距您還剩：{remaining} 人\n"
         f"━━━━━━━━━━━━━━━\n"
         f"您設定的提醒門檻為前 {threshold} 號，請儘快前往候診！"
     )
