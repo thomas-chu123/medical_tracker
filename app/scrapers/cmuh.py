@@ -343,6 +343,7 @@ class CMUHScraper(BaseScraper):
         numbers = []
         waiting_list = []
         patient_rows = 0
+        rows = soup.find_all("tr")
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2: # Look for rows with [Number, Status]

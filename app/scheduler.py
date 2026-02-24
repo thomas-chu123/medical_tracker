@@ -381,7 +381,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         if is_today and needs_progress:
             if slot.session_type == "上午" and now.hour >= 8:
                 should_fetch_realtime = True
-            elif slot.session_type == "下午" and now.hour >= 13:
+            elif slot.session_type == "下午" and (now.hour > 13 or (now.hour == 13 and now.minute >= 30)):
                 should_fetch_realtime = True
             elif slot.session_type == "晚上" and now.hour >= 18:
                 should_fetch_realtime = True

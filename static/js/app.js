@@ -300,14 +300,14 @@ function renderClinicCard(sub, snap) {
 
     // 1. Unified Progress Source
     const current = (sub.current_number != null) ? sub.current_number : (snap?.current_number != null ? snap.current_number : '—');
-    const total_quota = (sub.total_quota != null) ? sub.total_quota : (snap?.total_quota != null ? snap.total_quota : '?');
-    const current_registered = (sub.current_registered != null) ? sub.current_registered : (snap?.current_registered != null ? snap.current_registered : '?');
+    const total_quota = (sub.total_quota != null) ? sub.total_quota : (snap?.total_quota != null ? snap.total_quota : '—');
+    const current_registered = (sub.current_registered != null) ? sub.current_registered : (snap?.current_registered != null ? snap.current_registered : '—');
     const waiting_list = sub.waiting_list || snap?.waiting_list || [];
     const eta = sub.eta || snap?.eta;
 
     // 2. Updated Number Display
     let numberDisplayHtml = `目前: ${current} / 總號: ${total_quota} / 掛號: ${current_registered}`;
-    let total = total_quota === '?' ? (current_registered === '?' ? 0 : current_registered) : total_quota;
+    let total = total_quota === '—' ? (current_registered === '—' ? 0 : current_registered) : total_quota;
 
     // 3. Status & Progress
     const remaining = sub.remaining ?? '—';

@@ -7,17 +7,25 @@ from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotO
 
 router = APIRouter(prefix="/api", tags=["Hospitals"])
 
-def calculate_eta(session_type: str, registered_count: int, waiting_list: list[int]) -> Optional[str]:
+def calculate_eta(
+    session_type: str, 
+    registered_count: int, 
+    waiting_list: list[int],
+    target_number: Optional[int] = None
+) -> Optional[str]:
     """
     Calculate Estimated Appointment Time (ETA).
-    Formula: Start Time + (People Seen) * 5 minutes.
+    - If target_number is NOT provided: Returns the doctor's current estimated progress time.
+    - If target_number IS provided: Returns the estimated time for that specific patient.
+    
+    Formula: Clinic Start Time + (People Ahead) * 5 minutes.
     """
     if not session_type:
         return None
         
     start_times = {
         "上午": "08:30",
-        "下午": "13:00",
+        "下午": "13:30",
         "晚上": "18:00"
     }
     start_time_str = start_times.get(session_type)
@@ -25,18 +33,31 @@ def calculate_eta(session_type: str, registered_count: int, waiting_list: list[i
         return None
         
     try:
-        # Number of people processed = Total Registered - Still Waiting
-        waiting_count = len(waiting_list) if waiting_list else 0
-        processed_count = (registered_count or 0) - waiting_count
-        if processed_count < 0: processed_count = 0
+        # 1. Calculate how many people are ahead
+        if target_number:
+            if waiting_list:
+                # Count people in waiting list whose number is strictly less than target
+                total_people_before_target = len([x for x in waiting_list if x < target_number])
+            else:
+                # Fallback: Sequential estimate
+                total_people_before_target = (target_number - 1)
+        else:
+            # Doctor's current time: Based on how many are already finished
+            waiting_count = len(waiting_list) if waiting_list else 0
+            total_people_before_target = (registered_count or 0) - waiting_count
+            if total_people_before_target < 0: total_people_before_target = 0
         
-        # Base start time
-        base_time = datetime.combine(date.today(), datetime.strptime(start_time_str, "%H:%M").time())
+        # 2. Base start time (Considering current time if the clinic has started)
+        now = datetime.now()
+        base_time = datetime.combine(now.date(), datetime.strptime(start_time_str, "%H:%M").time())
+        if now > base_time:
+            # If the clinic has already started, use current time as the minimum base
+            base_time = now
+            
+        # 3. Calculate ETA (5 mins per person as requested)
+        estimated_eta = base_time + timedelta(minutes=total_people_before_target * 5)
         
-        # Doctor's current estimated progress time
-        current_eta = base_time + timedelta(minutes=processed_count * 5)
-        
-        return current_eta.strftime("%H:%M")
+        return estimated_eta.strftime("%H:%M")
     except Exception:
         return None
 

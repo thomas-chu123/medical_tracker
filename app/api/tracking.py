@@ -70,7 +70,7 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
                     .select("doctor_id, session_date, session_type, clinic_room, current_number, total_quota, current_registered, remaining, status, waiting_list")
                     .in_("doctor_id", doctor_ids)
                     .in_("session_date", date_strs)
-                    .order("created_at", desc=True)
+                    .order("scraped_at", desc=True)
                     .execute()
                 )
                 for snap in snaps.data:
@@ -89,7 +89,7 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
                 supabase.table("appointment_snapshots")
                 .select("doctor_id, clinic_room")
                 .in_("doctor_id", doctor_ids)
-                .order("created_at", desc=True)
+                .order("scraped_at", desc=True)
                 .execute()
             )
             for ls in latest_snaps.data:
@@ -127,7 +127,8 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         s["eta"] = calculate_eta(
             s["session_type"],
             s["current_registered"],
-            s["waiting_list"]
+            s["waiting_list"],
+            target_number=s.get("appointment_number")
         )
 
         # Clinic room fallback: prioritize specific session, then latest known
