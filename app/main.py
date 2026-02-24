@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, users, hospitals, tracking, stats, admin
+from app.api import auth, users, hospitals, tracking, stats, admin, webhooks
 from app.scheduler import start_scheduler, stop_scheduler
 from app.config import get_settings
 from app.auth import seed_super_user
@@ -62,6 +62,7 @@ app.include_router(hospitals.router)
 app.include_router(tracking.router)
 app.include_router(stats.router)
 app.include_router(admin.router)
+app.include_router(webhooks.router)  # LINE Message API webhook
 
 # Serve static files (CSS, JS)
 if STATIC_DIR.exists():
@@ -86,8 +87,8 @@ async def health_check():
 @app.post("/api/admin/scrape-now", tags=["Admin"])
 async def trigger_scrape_now():
     """Manually trigger an appointment scrape cycle (for testing)."""
-    from app.scheduler import run_cmuh_appointments
-    asyncio.create_task(run_cmuh_appointments())
+    from app.scheduler import run_tracked_appointments
+    asyncio.create_task(run_tracked_appointments())
     return {"message": "Scrape task queued"}
 
 

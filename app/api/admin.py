@@ -122,8 +122,8 @@ def require_super_admin(current_user: dict = Depends(get_current_user)):
     pass
 
 
-@router.get("/scheduler", response_model=SchedulerStatus)
-async def get_scheduler_status(admin=Depends(require_super_admin)):
+@router.get("/scheduler", response_model=SchedulerStatus, dependencies=[Depends(require_super_admin)])
+async def get_scheduler_status():
     """Get current running background tasks."""
     scheduler = get_scheduler()
     jobs = []
@@ -157,8 +157,8 @@ async def resume_scheduler(admin=Depends(require_super_admin)):
     return {"message": "Scheduler resumed"}
 
 
-@router.get("/logs", response_model=LogResponse)
-async def read_logs(lines: int = 100, admin=Depends(require_super_admin)):
+@router.get("/logs", response_model=LogResponse, dependencies=[Depends(require_super_admin)])
+async def read_logs(lines: int = 100):
     """Read the last N lines of the server.log file."""
     if not LOG_FILE.exists():
         return {"content": "No log file found.", "size_bytes": 0, "last_modified": ""}
@@ -187,7 +187,7 @@ async def clear_logs(admin=Depends(require_super_admin)):
     return {"message": "Logs cleared"}
 
 @router.post("/scrape-now", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_scrape_now(admin=Depends(require_super_admin)):
+async def trigger_scrape_now():
     """Trigger background scraping immediately."""
     import asyncio
     from app.scheduler import run_tracked_appointments

@@ -66,9 +66,12 @@ class CMUHScraper(BaseScraper):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get(self, url: str, **kwargs) -> str:
+        from app.core.logger import logger as log
+        log.info(f"[CMUH] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()
         resp = await client.get(url, **kwargs)
         resp.raise_for_status()
+        log.info(f"[CMUH] GET {url} success ({len(resp.text)} chars)")
         return resp.text
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -146,8 +149,10 @@ class CMUHScraper(BaseScraper):
     # 2. Fetch doctor slots for a department
     # ─────────────────────────────────────────────────────────
     async def fetch_schedule(self, dept_code: str) -> list[DoctorSlot]:
+        log.info(f"[CMUH] fetch_schedule for {dept_code} ({self.BASE_URL})")
         url = f"{self.BASE_URL}/OnlineAppointment/DymSchedule"
         html = await self._get(url, params={"table": dept_code, "flag": "first"})
+        log.info(f"[CMUH] fetch_schedule got HTML for {dept_code}")
         soup = BeautifulSoup(html, "lxml")
 
         slots: list[DoctorSlot] = []

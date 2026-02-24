@@ -13,6 +13,7 @@ from datetime import date
 from app.database import get_supabase
 from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_service import send_line_notify, build_line_message
+from app.core.logger import logger as log
 
 
 def _run(fn):
@@ -24,6 +25,7 @@ async def check_and_notify():
     """Main notification loop: called after each scrape cycle."""
     supabase = get_supabase()
     today = str(date.today())
+    log.info(f"[Notification] Starting check_and_notify for {today}")
 
     # Fetch all active subscriptions for today (non-blocking)
     subs_res = await _run(
@@ -84,9 +86,13 @@ async def _process_subscription(supabase, sub: dict):
     if waiting_list:
         # Calculate people waiting AHEAD of the user
         remaining = len([x for x in waiting_list if x < target_number])
+        # If the user's number is already passed, this count will correctly be 0
+        # However, we check if the current number already passed the target to be sure
+        if current_number > target_number:
+            remaining = 0
     else:
         # Fallback to old behavior if waiting_list is missing
-        remaining = target_number - current_number
+        remaining = max(0, target_number - current_number)
 
     # Build context for notifications
     doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
@@ -132,6 +138,13 @@ async def _process_subscription(supabase, sub: dict):
             continue
         if sub.get(notified_flag):
             continue  # Already notified for this threshold
+        
+        if current_number > target_number:
+            # If we missed the window entirely, mark as notified to stop trying, 
+            # but don't send an alert for a past appointment.
+            await _run(lambda: supabase.table("tracking_subscriptions").update({notified_flag: True}).eq("id", sub["id"]).execute())
+            continue
+
         if remaining > threshold:
             continue  # Not yet reached
 
@@ -220,13 +233,21 @@ async def _send_alerts(
             send_line_notify(line_token, message)
         ))
 
-    # Mark this threshold as notified
-    await _run(
-        lambda: supabase.table("tracking_subscriptions")
-        .update({notified_flag: True})
-        .eq("id", sub_id)
-        .execute()
-    )
+    if send_tasks:
+        log.info(f"[Notification] Awaiting {len(send_tasks)} alert tasks for sub {sub_id}")
+        await asyncio.gather(*send_tasks)
+
+        # Mark this threshold as notified ONLY if we actually attempted to send something
+        await _run(
+            lambda: supabase.table("tracking_subscriptions")
+            .update({notified_flag: True})
+            .eq("id", sub_id)
+            .execute()
+        )
+        log.info(f"[Notification] Updated {notified_flag} flag for sub {sub_id}")
+    else:
+        log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineToken: {'set' if line_token else 'not set'}")
+
 
 async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
     # Log the attempt FIRST so we have a record even if it crashes
@@ -262,11 +283,31 @@ async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
 
 
 async def _get_user_email(supabase, user_id: str) -> str | None:
-    """Fetch email from Supabase auth admin API (non-blocking)."""
+    """Fetch email from Supabase auth admin API, fallback to users_local table."""
+    
+    # 1. Try Supabase Auth
     try:
         user = await _run(
             lambda: supabase.auth.admin.get_user_by_id(user_id)
         )
-        return user.user.email if user and user.user else None
-    except Exception:
-        return None
+        if user and user.user and user.user.email:
+            return user.user.email
+    except Exception as e:
+        log.debug(f"[Notification] Supabase Auth email fetch failed for {user_id}: {e}")
+
+    # 2. Fallback to users_local table
+    try:
+        res = await _run(
+            lambda: supabase.table("users_local")
+            .select("email")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if res.data:
+            return res.data.get("email")
+    except Exception as e:
+        log.error(f"[Notification] users_local email fetch failed for {user_id}: {e}")
+
+    log.warning(f"[Notification] Could not find email for user {user_id} in Auth or users_local")
+    return None

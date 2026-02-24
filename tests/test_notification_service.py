@@ -92,12 +92,13 @@ async def test_sends_notification_when_threshold_crossed(
     mock_profile_res = MagicMock(); mock_profile_res.data = [{"line_notify_token": "fake_line_token"}]
     mock_log_res = MagicMock(); mock_log_res.data = [{"id": 99}]
     # The last _run call is for the update, which we don't need to mock data for
-    mock_update_res = MagicMock() 
+    mock_update_res = MagicMock()
 
     mock_run = mocker.patch(
         "app.services.notification._run",
         new_callable=AsyncMock,
-        side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_log_res, mock_update_res]
+        # snap, hosp, profile, log_email, update_log_email, log_line, update_log_line, update_sub
+        side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_update_res, mock_log_res, mock_update_res, mock_update_res]
     )
     mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user@email.com"))
 
@@ -203,7 +204,8 @@ async def test_multiple_thresholds_trigger_once(
     mocker.patch(
         "app.services.notification._run",
         new_callable=AsyncMock,
-        side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_update_res]
+        # snap, hosp, profile, log_email, update_log_email, update_sub
+        side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_update_res, mock_update_res]
     )
     mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user5@email.com"))
 

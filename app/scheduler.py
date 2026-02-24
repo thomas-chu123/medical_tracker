@@ -272,10 +272,14 @@ async def _scrape_hospital_tracked_data(scraper):
         all_snapshot_rows = []
 
         # 1. Scrape by Department
+        logger.info(f"[Scheduler] Scraping {len(departments)} departments for {scraper.HOSPITAL_CODE}")
         for dept in departments:
             dept_id = dept["id"]
             dept_code = dept["code"]
+            dept_name = dept.get("name", "Unknown")
             is_entire_dept_tracked = dept_id in {t.get("department_id") for t in tracks if t.get("department_id")}
+
+            logger.info(f"[Scheduler] Processing department {dept_name} ({dept_code}) for {scraper.HOSPITAL_CODE}")
 
             try:
                 # Add a small delay between departments
@@ -314,13 +318,21 @@ async def _scrape_hospital_tracked_data(scraper):
         missing_doctors = tracked_doctors - scraped_doctor_ids
         if missing_doctors:
             logger.info(f"[Scheduler] {len(missing_doctors)} tracked doctors missing from dept schedules for {scraper.HOSPITAL_CODE}. Fetching individually...")
-            doc_info_res = await asyncio.to_thread(
-                lambda: supabase.table("doctors")
-                .select("id, name, doctor_no, department_id, departments(code)")
-                .in_("id", list(missing_doctors))
-                .eq("hospital_id", hosp_id)
-                .execute()
-            )
+            missing_ids = [str(mid) for mid in missing_doctors]
+            logger.info(f"[Scheduler] DEBUG: Querying doctors table for IDs: {missing_ids}")
+            
+            try:
+                doc_info_res = await asyncio.to_thread(
+                    lambda: supabase.table("doctors")
+                    .select("id, name, doctor_no, department_id, departments(code)")
+                    .in_("id", missing_ids)
+                    .eq("hospital_id", str(hosp_id))
+                    .execute()
+                )
+                logger.info(f"[Scheduler] DEBUG: Query returned {len(doc_info_res.data or [])} results")
+            except Exception as e:
+                logger.error(f"[Scheduler] Error querying doctors for supplement: {e}")
+                doc_info_res = None
             
             for d in (doc_info_res.data or []):
                 doc_id = d["id"]
@@ -332,8 +344,10 @@ async def _scrape_hospital_tracked_data(scraper):
                 if not dept_code: continue
                 
                 try:
+                    logger.info(f"[Scheduler] DEBUG: Fetching slots for {doc_name} ({doc_no})")
                     await asyncio.sleep(0.5)
                     slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
+                    logger.info(f"[Scheduler] DEBUG: Found {len(slots)} slots for {doc_name}")
                     for slot in slots:
                         row = await _build_snapshot_row(scraper, slot, doc_id, dept_id, True)
                         if row:
@@ -406,9 +420,6 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             except Exception:
                 pass
 
-        # Calculate remaining based on waiting_list if available
-        remaining = len(waiting_list) if waiting_list else ((total_quota or 0) - (current_number or 0))
-        if remaining < 0: remaining = 0
 
         return {
             "doctor_id": doctor_id,
@@ -419,9 +430,9 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "total_quota": total_quota,
             "current_registered": registered_count,
             "current_number": current_number,
-            "remaining": remaining,
             "is_full": slot.is_full,
             "status": status,
+            "scraped_at": datetime.now().isoformat(),
             "waiting_list": waiting_list,
         }
     except Exception as e:

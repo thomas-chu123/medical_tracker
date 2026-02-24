@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import EmailStr
+from pydantic import EmailStr, ConfigDict
 from functools import lru_cache
 
 
@@ -22,16 +22,18 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_from_name: str = "醫療門診追蹤系統"
 
-    # LINE Notify
+    # LINE Notify (deprecated, kept for backward compatibility)
     line_notify_token: str = ""
+    
+    # LINE Message API (new, recommended)
+    line_channel_access_token: str = ""
+    line_channel_secret: str = ""
 
     # Scraper
     scrape_interval_minutes: int = 5
     request_timeout: int = 30
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = ConfigDict(env_file=".env", case_sensitive=False)
 
 
 @lru_cache()
