@@ -319,7 +319,7 @@ function renderClinicCard(sub, snap) {
     const eta = sub.eta || snap?.eta;
 
     // 2. Updated Number Display
-    let numberDisplayHtml = `目前: ${current} / 總號: ${total_quota} / 掛號: ${current_registered}`;
+    let numberDisplayHtml = `目前: ${current}號 / 總號: ${total_quota}號 / 掛號: ${current_registered}人`;
     let total = total_quota === '—' ? (current_registered === '—' ? 0 : current_registered) : total_quota;
 
     // 3. Status & Progress
@@ -1122,7 +1122,11 @@ async function deleteSub(subId) {
     try {
         await apiFetch(`/api/tracking/${subId}`, { method: 'DELETE' });
         toast('已刪除紀錄', 'success');
-        setTimeout(() => loadTracking(), 300);
+        // 同時更新追蹤清列和儀表板
+        setTimeout(() => {
+            loadTracking();
+            loadDashboard();
+        }, 300);
     } catch (e) {
         toast('刪除失敗', 'error');
     }

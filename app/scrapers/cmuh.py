@@ -43,11 +43,29 @@ def _parse_int(text: Optional[str]) -> Optional[int]:
     return int(m.group()) if m else None
 
 
+def _decode_big5_response(content: bytes) -> str:
+    """Decode Big5/CP950 encoded response from CGI backend."""
+    return content.decode("big5", errors="ignore")
+
+
 class CMUHScraper(BaseScraper):
     HOSPITAL_CODE = "CMUH"
     BASE_URL = "https://www.cmuh.cmu.edu.tw"
     CGI_BASE_URL = "https://appointment.cmuh.org.tw/cgi-bin"
     PROGRESS_CGI = "reg64.cgi"
+    
+    # Regular expression patterns
+    DEPT_CODE_PATTERN = re.compile(r"table=([A-Za-z0-9]+)")
+    DOC_NO_PATTERN = re.compile(r"DocNo=([A-Za-z0-9]+)")
+    DATE_PATTERN = re.compile(r"(\d{3})/(\d{2})/(\d{2})")
+    DATE_PATTERN_AD = re.compile(r"(\d{4})/(\d{2})/(\d{2})")
+    ROOM_PATTERN_FULL = re.compile(r"\((\d+)診\)")  # With 診 char
+    ROOM_PATTERN_FALLBACK = re.compile(r"\((\d+)")  # Fallback
+    REGISTERED_PATTERN = re.compile(r"已掛號[：:]\s*(\d+)")
+    LAMP_PATTERN = re.compile(r"目前[的]?[燈診]號.*?(\d+)")
+    
+    # Period mapping
+    PERIOD_MAP = {"1": "上午", "2": "下午", "3": "晚上"}
 
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
@@ -67,7 +85,6 @@ class CMUHScraper(BaseScraper):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get(self, url: str, **kwargs) -> str:
-        from app.core.logger import logger as log
         log.info(f"[CMUH] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()
         resp = await client.get(url, **kwargs)
@@ -102,7 +119,7 @@ class CMUHScraper(BaseScraper):
                 
                 for a in box.find_all("a", href=True):
                     href = a["href"]
-                    m = re.search(r"table=([A-Za-z0-9]+)", href)
+                    m = self.DEPT_CODE_PATTERN.search(href)
                     if m:
                         code = m.group(1)
                         name = a.get_text(strip=True)
@@ -121,7 +138,7 @@ class CMUHScraper(BaseScraper):
             # Fallback for pages without standard category boxes (e.g. Hsinchu if it used this base)
             for a in soup.find_all("a", href=True):
                 href = a["href"]
-                m = re.search(r"table=([A-Za-z0-9]+)", href)
+                m = self.DEPT_CODE_PATTERN.search(href)
                 if m:
                     code = m.group(1)
                     name = a.get_text(strip=True)
@@ -165,7 +182,7 @@ class CMUHScraper(BaseScraper):
         doctor_links = []
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            m = re.search(r"DocNo=([A-Za-z0-9]+)", href)
+            m = self.DOC_NO_PATTERN.search(href)
             if m:
                 doc_no = m.group(1)
                 doc_name = a.get_text(strip=True)
@@ -207,13 +224,12 @@ class CMUHScraper(BaseScraper):
                 # Need to handle Big5/CP950 encoding from the CGI backend
                 resp = await client.get(url, params={"DocNo": appointment_doc_no, "Docname": doc_name})
                 resp.raise_for_status()
-                html = resp.content.decode("big5", errors="ignore")
+                html = _decode_big5_response(resp.content)
                 break
             except Exception as e:
                 if attempt == 2:
                     log.error(f"[CMUH] Error fetching doctor info for {doc_no} ({doc_name}) after 3 attempts: {e}")
                     return []
-                import asyncio
                 await asyncio.sleep(1.0 * (attempt + 1))
                 
         if not html:
@@ -251,7 +267,7 @@ class CMUHScraper(BaseScraper):
                 # Use regex to find all date blocks in the cell
                 # Pattern: ROC date (11x/xx/xx) followed by optional registration/room info
                 # We split the cell text by the date pattern
-                matches = list(re.finditer(r"(\d{3}/\d{2}/\d{2})", text))
+                matches = list(self.DATE_PATTERN.finditer(text))
                 if not matches:
                     continue
 
@@ -263,24 +279,25 @@ class CMUHScraper(BaseScraper):
                     block = text[positions[i] : positions[i + 1]]
                     
                     # Parse block details
-                    d_str = matches[i].group(1)
+                    d_str = matches[i].group(0)
                     session_date = self._parse_date(d_str)
                     if not session_date:
                         continue
 
-                    registered = _parse_int(re.search(r"已掛號[：:]\s*(\d+)", block).group(1)) if re.search(r"已掛號[：:]\s*(\d+)", block) else None
+                    registered_match = self.REGISTERED_PATTERN.search(block)
+                    registered = int(registered_match.group(1)) if registered_match else None
                     
                     # Extract clinic room number with improved logic
                     # Strategy 1: Look for digits inside parentheses with "診" 字 suffix
                     # This captures explicit clinic designations like (118診) or (15診)
-                    clinic_room_with_char = re.findall(r'\((\d+)診\)', block)
+                    clinic_room_with_char = self.ROOM_PATTERN_FULL.findall(block)
                     
                     # Strategy 2: Fallback to all digits in parentheses if Strategy 1 fails
                     if clinic_room_with_char:
                         clinic_room = max(clinic_room_with_char, key=len)
                         log.debug(f"[CMUH] Room (with 診 char): doc={doc_name}, block='{block[:100]}', matches={clinic_room_with_char}, selected={clinic_room}")
                     else:
-                        room_matches = re.findall(r'\((\d+)', block)
+                        room_matches = self.ROOM_PATTERN_FALLBACK.findall(block)
                         if room_matches:
                             clinic_room = max(room_matches, key=len)
                             log.debug(f"[CMUH] Room (fallback): doc={doc_name}, block='{block[:100]}', matches={room_matches}, selected={clinic_room}")
@@ -333,7 +350,7 @@ class CMUHScraper(BaseScraper):
             # reg64.cgi responds with Big5 encoding
             resp = await client.get(url, params=params)
             resp.raise_for_status()
-            html = resp.content.decode("big5", errors="ignore")
+            html = _decode_big5_response(resp.content)
             log.debug(f"[CMUH] Clinic progress HTML received for CliRoom={room}, length={len(html)}")
         except Exception as e:
             # Fallback to old behavior if reg64 fails, or just return None
@@ -353,7 +370,7 @@ class CMUHScraper(BaseScraper):
         # Look for the specific pattern in raw HTML (since they added tags)
         # e.g.: 目前診號 <span class="text-primary"><strong>104</strong></span>
         # or old versions: 目前燈號：24, 目前的診號是 37
-        lamp_match = re.search(r"目前[的]?[燈診]號.*?(\d+)", html_all)
+        lamp_match = self.LAMP_PATTERN.search(html_all)
         if lamp_match:
             current_number = int(lamp_match.group(1))
             log.debug(f"[CMUH] Current number extracted for CliRoom={room}: {current_number}")
@@ -394,10 +411,9 @@ class CMUHScraper(BaseScraper):
         if current_number is None and not status:
             return None
 
-        period_map = {"1": "上午", "2": "下午", "3": "晚上"}
         return ClinicProgress(
             clinic_room=room,
-            session_type=period_map.get(period, period),
+            session_type=self.PERIOD_MAP.get(period, period),
             current_number=current_number or 0,
             total_quota=max_num,        # Maximum Number
             registered_count=headcount, # Headcount
@@ -412,20 +428,24 @@ class CMUHScraper(BaseScraper):
     def _parse_date(text: str) -> Optional[date]:
         text = text.strip()
         # Support formats: 2024/01/15, 2024-01-15, 113/01/15 (ROC year)
-        patterns = [
-            (r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})", False),  # AD year
-            (r"(\d{3})[/\-](\d{1,2})[/\-](\d{1,2})", True),   # ROC year
-        ]
-        for pat, is_roc in patterns:
-            m = re.search(pat, text)
-            if m:
+        
+        # Try AD year format first (YYYY/MM/DD or YYYY-MM-DD)
+        m = CMUHScraper.DATE_PATTERN_AD.search(text)
+        if m:
+            try:
+                return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                pass
+        
+        # Try ROC year format (YYY/MM/DD or YYY-MM-DD) - add 1911 to year
+        m = CMUHScraper.DATE_PATTERN.search(text)
+        if m:
+            try:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                if is_roc:
-                    y += 1911
-                try:
-                    return date(y, mo, d)
-                except ValueError:
-                    continue
+                return date(y + 1911, mo, d)
+            except ValueError:
+                pass
+        
         return None
 
     @staticmethod
