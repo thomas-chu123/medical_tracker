@@ -135,14 +135,14 @@ async def list_all_doctors(
 @router.get("/doctors/{doctor_id}/snapshots", response_model=list[SnapshotOut])
 async def get_doctor_snapshots(
     doctor_id: str,
-    limit: int = Query(default=20, le=100),
+    limit: int = Query(default=100, le=200),
 ):
     supabase = get_supabase()
     result = (
         supabase.table("appointment_snapshots")
         .select("*")
         .eq("doctor_id", doctor_id)
-        .order("scraped_at", desc=True)
+        .order("session_date", desc=False)
         .limit(limit)
         .execute()
     )

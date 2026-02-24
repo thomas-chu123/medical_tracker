@@ -108,7 +108,7 @@ async def batch_insert_snapshots(rows: list[dict]):
         return
     supabase = get_supabase()
     
-    chunk_size = 500
+    chunk_size = 200
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
         await _run(
