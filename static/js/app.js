@@ -199,6 +199,12 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'hospitals') {
         loadHospitalsPage();
     } else if (pageId === 'tracking') {
+        _currentTrackingTab = 'current';
+        // Reset tab button styles
+        const btnCurr = document.getElementById('btn-tab-tracking-current');
+        const btnPast = document.getElementById('btn-tab-tracking-past');
+        if (btnCurr) btnCurr.className = 'btn btn-primary';
+        if (btnPast) btnPast.className = 'btn btn-secondary';
         loadTracking();
     } else if (pageId === 'notifications') {
         loadNotifications();
@@ -1101,10 +1107,26 @@ async function showDoctorDetail(doctorId, name) {
 
 
 // ── Tracking list ─────────────────────────────────────────────
+let _allTrackingSubs = [];
+let _currentTrackingTab = 'current';
+
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking') || [];
+    _allTrackingSubs = subs;
+    renderTrackingList();
+}
+
+function switchTrackingTab(tab) {
+    _currentTrackingTab = tab;
+    document.getElementById('btn-tab-tracking-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
+    document.getElementById('btn-tab-tracking-past').className = tab === 'past' ? 'btn btn-primary' : 'btn btn-secondary';
+    renderTrackingList();
+}
+
+function renderTrackingList() {
     const list = document.getElementById('tracking-list');
-    if (!subs.length) {
+
+    if (!_allTrackingSubs.length) {
         list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
       <div class="empty-icon">🔔</div>
       <p>尚無追蹤設定<br><button class="btn btn-primary" onclick="openTrackingModal()" style="margin-top:12px">新增追蹤</button></p>
@@ -1112,19 +1134,26 @@ async function loadTracking() {
         return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const active = subs.filter(s => s.session_date >= today);
-    const expired = subs.filter(s => s.session_date < today);
+    const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    let html = '';
-    if (active.length) {
-        html += active.map(s => renderTrackingCard(s, false)).join('');
+    let subs;
+    if (_currentTrackingTab === 'current') {
+        subs = _allTrackingSubs.filter(s => (s.session_date || '') >= todayStr);
+    } else {
+        subs = _allTrackingSubs.filter(s => (s.session_date || '') < todayStr);
     }
-    if (expired.length) {
-        html += `<div class="tracking-section-title" style="grid-column:1/-1">📁 已過期的追蹤</div>`;
-        html += expired.map(s => renderTrackingCard(s, true)).join('');
+
+    const isExpiredTab = _currentTrackingTab === 'past';
+
+    if (!subs.length) {
+        list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="empty-icon">${isExpiredTab ? '📁' : '🔔'}</div>
+      <p>${isExpiredTab ? '目前沒有過去的追蹤紀錄' : '目前沒有進行中的追蹤<br><button class="btn btn-primary" onclick="openTrackingModal()" style="margin-top:12px">新增追蹤</button>'}</p>
+    </div>`;
+        return;
     }
-    list.innerHTML = html;
+
+    list.innerHTML = subs.map(s => renderTrackingCard(s, isExpiredTab)).join('');
 }
 
 function renderTrackingCard(sub, isExpired = false) {

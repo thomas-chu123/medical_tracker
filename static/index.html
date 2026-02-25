@@ -394,6 +394,12 @@
             ＋ 新增追蹤
           </button>
         </div>
+        <div class="hs-tabs" style="margin-bottom:16px; display:flex; gap:8px;">
+          <button class="btn btn-primary" id="btn-tab-tracking-current" onclick="switchTrackingTab('current')">📅
+            現在/未來的追蹤</button>
+          <button class="btn btn-secondary" id="btn-tab-tracking-past" onclick="switchTrackingTab('past')">⏳
+            過去的追蹤</button>
+        </div>
         <div id="tracking-list" class="card-grid">
           <div class="spinner"></div>
         </div>
