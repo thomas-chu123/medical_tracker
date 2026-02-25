@@ -1725,6 +1725,7 @@ async function deleteAdminTracking(id) {
 /* ── Chart Analysis ─────────────────────────────────────────── */
 
 async function switchAnalysisSheet(sheetId) {
+    console.log('[switchAnalysisSheet] Switching to:', sheetId);
     document.querySelectorAll('.analysis-tab-content').forEach(el => el.style.display = 'none');
     document.querySelectorAll('#page-analysis .hs-tabs button').forEach(btn => {
         btn.classList.remove('btn-primary');
@@ -1739,21 +1740,29 @@ async function switchAnalysisSheet(sheetId) {
     }
 
     if (sheetId === 'sheet1') {
+        console.log('[switchAnalysisSheet] Loading sheet1...');
         await loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
         await loadAnalysisCategories('analysis-sheet1-cat-select');
         loadDeptComparison();
     } else if (sheetId === 'sheet2') {
+        console.log('[switchAnalysisSheet] Loading sheet2...');
         await loadAnalysisHospitals('analysis-sheet2-hosp-select');
         await loadAnalysisCategories('analysis-sheet2-cat-select');
         await loadAnalysisDepts('analysis-sheet2-hosp-select', 'analysis-sheet2-cat-select', 'analysis-sheet2-dept-select');
     } else if (sheetId === 'sheet3') {
+        console.log('[switchAnalysisSheet] Loading sheet3...');
         await loadAnalysisHospitals('rank-hosp-filter', true);
         await loadRankingTable();
     } else if (sheetId === 'sheet4') {
+        console.log('[switchAnalysisSheet] Loading sheet4...');
         await loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
+        console.log('[switchAnalysisSheet] Hospitals loaded');
         await loadAnalysisCategories('analysis-sheet4-cat-select');
+        console.log('[switchAnalysisSheet] Categories loaded');
         await loadAnalysisDepts('analysis-sheet4-hosp-select', 'analysis-sheet4-cat-select', 'analysis-sheet4-dept-select');
-        loadDoctorSpeedAnalysis();
+        console.log('[switchAnalysisSheet] Departments loaded, calling loadDoctorSpeedAnalysis');
+        await loadDoctorSpeedAnalysis();
+        console.log('[switchAnalysisSheet] loadDoctorSpeedAnalysis completed');
     }
 }
 
@@ -1887,11 +1896,16 @@ async function refreshDoctorComparison() {
 
 async function loadDoctorSpeedAnalysis() {
     const ctx = document.getElementById('doctor-speed-chart');
-    if (!ctx) return;
+    console.log('[loadDoctorSpeedAnalysis] Canvas element:', ctx);
+    if (!ctx) {
+        console.warn('[loadDoctorSpeedAnalysis] Canvas not found');
+        return;
+    }
 
     const hospId = document.getElementById('analysis-sheet4-hosp-select').value;
     const cat = document.getElementById('analysis-sheet4-cat-select').value;
     const deptId = document.getElementById('analysis-sheet4-dept-select')?.value || '';
+    console.log('[loadDoctorSpeedAnalysis] Filters:', { hospId, cat, deptId });
 
     try {
         let url = `/api/stats/doctor-speed?`;
@@ -1899,10 +1913,19 @@ async function loadDoctorSpeedAnalysis() {
         if (cat) url += `category=${encodeURIComponent(cat)}&`;
         if (deptId) url += `dept_id=${deptId}`;
 
+        console.log('[loadDoctorSpeedAnalysis] API URL:', url);
         const stats = await apiFetch(url);
-        if (!stats) return;
+        console.log('[loadDoctorSpeedAnalysis] API response:', stats);
+        if (!stats) {
+            console.warn('[loadDoctorSpeedAnalysis] No stats data returned');
+            return;
+        }
 
-        if (AppState.charts.doctorSpeedChart) AppState.charts.doctorSpeedChart.destroy();
+        if (AppState.charts.doctorSpeedChart) {
+            console.log('[loadDoctorSpeedAnalysis] Destroying existing chart');
+            AppState.charts.doctorSpeedChart.destroy();
+        }
+        console.log('[loadDoctorSpeedAnalysis] Creating new chart with labels:', stats.labels.length, 'and data:', stats.data.length);
         AppState.charts.doctorSpeedChart = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -1929,7 +1952,11 @@ async function loadDoctorSpeedAnalysis() {
                 }
             }
         });
-    } catch (e) { toast(e.message, 'error'); }
+        console.log('[loadDoctorSpeedAnalysis] Chart created successfully');
+    } catch (e) {
+        console.error('[loadDoctorSpeedAnalysis] Error:', e);
+        toast(e.message, 'error');
+    }
 }
 
 async function loadRankingTable() {
