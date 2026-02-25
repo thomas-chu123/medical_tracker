@@ -49,6 +49,7 @@ async def check_and_notify():
     )
 
     for sub in subs_res.data or []:
+        log.info(f"[Notification] Processing sub={sub.get('id','?')[:8]} doctor={sub.get('doctor_id','?')[:8]} session={sub.get('session_date')} {sub.get('session_type')}")
         await _process_subscription(supabase, sub)
 
 
@@ -73,7 +74,10 @@ async def _process_subscription(supabase, sub: dict):
         return q.execute()
 
     snap_res = await _run(_fetch_snap)
+    sub_id_short = sub.get("id", "?")[:8]
+    doctor_id_short = doctor_id[:8]
     if not snap_res.data:
+        log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short} ({session_type}): no snapshot found for {tw_today}")
         return
 
     snap = snap_res.data[0]
@@ -82,6 +86,7 @@ async def _process_subscription(supabase, sub: dict):
     waiting_list = snap.get("waiting_list") or []
 
     if current_number is None:
+        log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: current_number is None, skipping")
         return
 
     # Use appointment_number if set by user, fallback to 999 (should not happen in practice)
@@ -133,6 +138,8 @@ async def _process_subscription(supabase, sub: dict):
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
 
+    log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: remaining={remaining}, target={target_number}, current={current_number}, wl={waiting_list}, email={user_email}")
+
     tasks = []
 
     # Check thresholds in descending order (20 → 10 → 5)
@@ -181,11 +188,10 @@ async def _process_subscription(supabase, sub: dict):
         break
 
     if tasks:
+        log.info(f"[Notification] sub={sub_id_short}: gathering {len(tasks)} alert task(s)")
         await asyncio.gather(*tasks)
     else:
-        # If no tasks but remaining is low, it might be already notified.
-        # But we should log if we expected to notify.
-        pass
+        log.info(f"[Notification] sub={sub_id_short}: no tasks queued (remaining={remaining}, notified flags checked)")
 
 
 async def _send_alerts(

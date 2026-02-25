@@ -422,20 +422,28 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                 pass
 
 
-        return {
+        row = {
             "doctor_id": doctor_id,
             "department_id": dept_id,
             "session_date": str(slot.session_date),
             "session_type": slot.session_type,
             "clinic_room": slot.clinic_room or "",
-            "total_quota": total_quota,
             "current_registered": registered_count,
-            "current_number": current_number,
             "is_full": slot.is_full,
             "status": status,
             "scraped_at": datetime.now().isoformat(),
-            "waiting_list": waiting_list,
         }
+        # Only write current_number / total_quota / waiting_list if we actually have values.
+        # This prevents the排班 (schedule) UPSERT from overwriting previously scraped
+        # real-time progress data with null values when the clinic hasn't opened yet.
+        if current_number is not None:
+            row["current_number"] = current_number
+        if total_quota is not None:
+            row["total_quota"] = total_quota
+        if waiting_list:
+            row["waiting_list"] = waiting_list
+        return row
+
     except Exception as e:
         logger.error(f"[Scheduler] Error building snapshot row for {slot.doctor_name}: {e}")
         return None
