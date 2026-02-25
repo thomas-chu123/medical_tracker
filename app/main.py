@@ -28,6 +28,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Medical Appointment Tracker starting...")
     await seed_super_user()
     start_scheduler()
+    from app.api.stats import start_stats_refresher
+    start_stats_refresher()
     yield
     # Shutdown
     stop_scheduler()

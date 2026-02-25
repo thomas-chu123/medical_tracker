@@ -128,10 +128,11 @@
           </div>
           <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
             <!-- Hospital Filter Combobox -->
-            <div class="combo-container" id="dash-hosp-combo" style="width:280px">
-              <input type="text" class="combo-input" placeholder="🔍 過濾醫院 (預設全部)..."
-                oninput="filterDashHosp(this.value)" onfocus="showDashHospList()">
-              <div class="combo-list" id="dash-hosp-list"></div>
+            <div class="combobox" id="dash-hosp-combo" style="width:280px">
+              <input type="text" placeholder="🔍 過濾醫院 (預設全部)..." autocomplete="off" oninput="filterDashHosp(this.value)"
+                onfocus="showDashHospList()">
+              <span class="combo-arrow" onclick="toggleDashHosp()">▼</span>
+              <div class="combo-dropdown" id="dash-hosp-list"></div>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="refreshAll()">
               🔄 立即更新

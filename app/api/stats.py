@@ -7,8 +7,17 @@ from app.database import get_supabase
 from app.auth import get_current_user
 from app.scheduler import run_tracked_appointments
 from app.core.timezone import today_tw_str, now_utc_str
+from app.core.logger import logger
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
+
+# In-memory cache for dashboard statistics
+# Structure: { "global": { hospital_id: GlobalStats }, "crowd": { hospital_id: CrowdAnalysisResult } }
+_STATS_CACHE = {
+    "global": {},
+    "crowd": {}
+}
+
 
 class GlobalStats(BaseModel):
     hospitals: int
@@ -17,8 +26,8 @@ class GlobalStats(BaseModel):
     snapshots_today: int
     notifications_today: int
 
-@router.get("/global", response_model=GlobalStats)
-async def get_global_stats(hospital_id: str = None):
+async def calculate_global_stats(hospital_id: str = None) -> GlobalStats:
+    """Heavy computation logic for global statistics."""
     supabase = get_supabase()
     
     # 1. Hospitals count
@@ -39,58 +48,80 @@ async def get_global_stats(hospital_id: str = None):
         doc_query = doc_query.eq("hospital_id", hospital_id)
     doc_res = doc_query.limit(1).execute()
     
-    # 4. Snapshots today
+    # 4. Snapshots & 5. Notifications
     today_tw = today_tw_str()
-    snap_query = supabase.table("appointment_snapshots").select("count", count="exact").eq("session_date", today_tw)
+    class Dummy: count = 0
+
     if hospital_id:
-        # Join with departments to filter by hospital
-        snap_query = supabase.table("appointment_snapshots").select("count", count="exact", inner=True).eq("session_date", today_tw).filter("departments.hospital_id", "eq", hospital_id)
-        # Note: direct joining requires departments relation in PostgREST, let's use inner join syntax if possible or filter
-        # PostgREST style: select=count&session_date=eq.today&departments.hospital_id=eq.hospital_id
-        snap_res = (
-            supabase.table("appointment_snapshots")
-            .select("count", count="exact", inner=True)
-            .eq("session_date", today_tw)
-            .filter("departments.hospital_id", "eq", hospital_id)
-            .limit(1)
-            .execute()
-        )
-    else:
-        snap_res = snap_query.limit(1).execute()
-    
-    # 5. Notifications today
-    # Using 00:00:00 local Taiwan time converted to UTC string for comparison if needed, 
-    # but for simplicity we rely on 'sent_at' >= today date
-    today_date = today_tw
-    notif_query = supabase.table("notification_logs").select("count", count="exact").gte("sent_at", f"{today_date}T00:00:00Z")
-    if hospital_id:
-        # notification_logs -> tracking_subscriptions -> doctors -> hospital_id
-        # This join is complex for standard PostgREST table().filter()
-        # Alternative: get sub_ids for this hospital
-        sub_ids_res = supabase.table("tracking_subscriptions").select("id", inner=True).filter("doctors.hospital_id", "eq", hospital_id).execute()
-        sub_ids = [s["id"] for s in sub_ids_res.data]
-        if sub_ids:
-            notif_res = (
-                supabase.table("notification_logs")
-                .select("count", count="exact")
-                .in_("subscription_id", sub_ids)
-                .gte("sent_at", f"{today_date}T00:00:00Z")
-                .limit(1)
-                .execute()
-            )
+        doc_ids_res = supabase.table("doctors").select("id").eq("hospital_id", hospital_id).execute()
+        doc_ids = [d["id"] for d in doc_ids_res.data]
+        
+        if doc_ids:
+            batch_size = 100
+            total_snap_count = 0
+            for i in range(0, len(doc_ids), batch_size):
+                batch = doc_ids[i:i + batch_size]
+                res = (
+                    supabase.table("appointment_snapshots")
+                    .select("count", count="exact")
+                    .eq("session_date", today_tw)
+                    .in_("doctor_id", batch)
+                    .limit(1)
+                    .execute()
+                )
+                total_snap_count += res.count or 0
+            snap_count = total_snap_count
+            
+            sub_ids = []
+            for i in range(0, len(doc_ids), batch_size):
+                batch = doc_ids[i:i + batch_size]
+                res = supabase.table("tracking_subscriptions").select("id").in_("doctor_id", batch).execute()
+                sub_ids.extend([s["id"] for s in res.data])
+            
+            if sub_ids:
+                total_notif_count = 0
+                for i in range(0, len(sub_ids), batch_size):
+                    batch = sub_ids[i:i + batch_size]
+                    res = (
+                        supabase.table("notification_logs")
+                        .select("count", count="exact")
+                        .gte("sent_at", f"{today_tw}T00:00:00Z")
+                        .in_("subscription_id", batch)
+                        .limit(1)
+                        .execute()
+                    )
+                    total_notif_count += res.count or 0
+                notif_count = total_notif_count
+            else:
+                notif_count = 0
         else:
-            class Dummy: count = 0
-            notif_res = Dummy()
+            snap_count = 0
+            notif_count = 0
     else:
-        notif_res = notif_query.limit(1).execute()
+        snap_res = supabase.table("appointment_snapshots").select("count", count="exact").eq("session_date", today_tw).limit(1).execute()
+        snap_count = snap_res.count or 0
+        notif_res = supabase.table("notification_logs").select("count", count="exact").gte("sent_at", f"{today_tw}T00:00:00Z").limit(1).execute()
+        notif_count = notif_res.count or 0
     
     return GlobalStats(
         hospitals=hosp_res.count or 0,
         departments=dept_res.count or 0,
         doctors=doc_res.count or 0,
-        snapshots_today=snap_res.count or 0,
-        notifications_today=notif_res.count or 0,
+        snapshots_today=snap_count,
+        notifications_today=notif_count,
     )
+
+@router.get("/global", response_model=GlobalStats)
+async def get_global_stats(hospital_id: str = None):
+    cache_key = hospital_id or "all"
+    if cache_key in _STATS_CACHE["global"]:
+        return _STATS_CACHE["global"][cache_key]
+    
+    # Fallback/First time
+    stats_data = await calculate_global_stats(hospital_id)
+    _STATS_CACHE["global"][cache_key] = stats_data
+    return stats_data
+
 
 @router.post("/scrape-now", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_scrape_now(current_user: dict = Depends(get_current_user)):
@@ -118,22 +149,38 @@ class DeptRankingItem(BaseModel):
     max_registered: int
     avg_registered: float
 
-@router.get("/crowd-analysis", response_model=CrowdAnalysisResult)
-async def get_crowd_analysis(hospital_id: str = None):
-    """
-    Returns average crowd metrics (current_registered) grouped by session type 
-    (Morning, Afternoon, Evening) for visualization.
-    """
+async def calculate_crowd_analysis(hospital_id: str = None) -> CrowdAnalysisResult:
+    """Heavy computation logic for crowd analysis charts."""
     supabase = get_supabase()
     
-    query = supabase.table("appointment_snapshots").select("session_type, current_registered")
+    snapshots = []
     if hospital_id:
-        # Filter snapshots where department belongs to the target hospital
-        query = query.filter("departments.hospital_id", "eq", hospital_id)
-        
-    res = query.order("scraped_at", desc=True).limit(2000).execute()
-    
-    snapshots = res.data or []
+        doc_ids_res = supabase.table("doctors").select("id").eq("hospital_id", hospital_id).execute()
+        doc_ids = [d["id"] for d in doc_ids_res.data]
+        if not doc_ids:
+            return CrowdAnalysisResult(labels=["上午", "下午", "晚上"], data=[0, 0, 0])
+            
+        batch_size = 100
+        for i in range(0, len(doc_ids), batch_size):
+            batch = doc_ids[i:i + batch_size]
+            res = (
+                supabase.table("appointment_snapshots")
+                .select("session_type, current_registered")
+                .in_("doctor_id", batch)
+                .order("scraped_at", desc=True)
+                .limit(2000)
+                .execute()
+            )
+            snapshots.extend(res.data or [])
+    else:
+        res = (
+            supabase.table("appointment_snapshots")
+            .select("session_type, current_registered")
+            .order("scraped_at", desc=True)
+            .limit(2000)
+            .execute()
+        )
+        snapshots = res.data or []
     
     group_totals = {"上午": 0, "下午": 0, "晚上": 0}
     group_counts = {"上午": 0, "下午": 0, "晚上": 0}
@@ -146,7 +193,6 @@ async def get_crowd_analysis(hospital_id: str = None):
             group_totals[stype] += val
             group_counts[stype] += 1
             
-    # Calculate averages
     averages = {}
     for stype in group_totals.keys():
         if group_counts[stype] > 0:
@@ -154,11 +200,21 @@ async def get_crowd_analysis(hospital_id: str = None):
         else:
             averages[stype] = 0.0
             
-    # Format for Chart.js: labels and data parallel arrays
     return CrowdAnalysisResult(
         labels=list(averages.keys()),
         data=list(averages.values())
     )
+
+@router.get("/crowd-analysis", response_model=CrowdAnalysisResult)
+async def get_crowd_analysis(hospital_id: str = None):
+    cache_key = hospital_id or "all"
+    if cache_key in _STATS_CACHE["crowd"]:
+        return _STATS_CACHE["crowd"][cache_key]
+        
+    crowd_data = await calculate_crowd_analysis(hospital_id)
+    _STATS_CACHE["crowd"][cache_key] = crowd_data
+    return crowd_data
+
 
 @router.get("/dept-comparison", response_model=CrowdAnalysisResult)
 async def get_dept_comparison(hospital_id: str = None, category: str = None):
@@ -343,3 +399,46 @@ async def get_categories():
     res = supabase.table("departments").select("category").execute()
     cats = sorted(list(set(d["category"] for d in res.data if d.get("category"))))
     return cats
+
+# Background Cache Refresher
+async def refresh_stats_cache_task():
+    """Periodically refreshes the global and crowd statistics cache."""
+    await asyncio.sleep(5) # Give some time for app startup
+    while True:
+        try:
+            logger.info("🔄 Refreshing dashboard stats cache...")
+            supabase = get_supabase()
+            
+            # 1. Get all hospitals
+            hospitals_res = supabase.table("hospitals").select("id").execute()
+            hosp_ids = [h["id"] for h in hospitals_res.data]
+            
+            # 2. Add 'None' for 'All Hospitals'
+            target_hids = [None] + hosp_ids
+            
+            for hid in target_hids:
+                cache_key = hid or "all"
+                
+                # Global Stats
+                g_stats = await calculate_global_stats(hid)
+                _STATS_CACHE["global"][cache_key] = g_stats
+                
+                # Crowd Analysis
+                c_stats = await calculate_crowd_analysis(hid)
+                _STATS_CACHE["crowd"][cache_key] = c_stats
+                
+                # Small sleep to be nice to DB during background refresh
+                await asyncio.sleep(0.5)
+                
+            logger.info(f"✅ Dashboard stats cache refreshed for {len(target_hids)} targets.")
+            
+        except Exception as e:
+            logger.error(f"❌ Error refreshing stats cache: {e}")
+            
+        # Refresh every hour
+        await asyncio.sleep(3600)
+
+def start_stats_refresher():
+    """Initiates the background stats refresher task."""
+    asyncio.create_task(refresh_stats_cache_task())
+

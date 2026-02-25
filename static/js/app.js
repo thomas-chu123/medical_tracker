@@ -262,7 +262,12 @@ async function loadDashboard() {
 /** Dashboard Hospital Filter Logic **/
 function renderDashHospList(filterText = '') {
     const list = document.getElementById('dash-hosp-list');
-    const q = filterText.toLowerCase().trim();
+    let q = filterText.toLowerCase().trim();
+
+    const selectedHosp = _dashHospitals.find(h => h.id === _selectedDashHospId);
+    if (selectedHosp && selectedHosp.name.toLowerCase().trim() === q) {
+        q = ''; // Skip filtering if input matches the currently selected hospital
+    }
 
     // Add "All Hospitals" option
     let items = [{ id: null, name: '全部醫院' }, ..._dashHospitals];
@@ -290,6 +295,16 @@ function filterDashHosp(val) {
 function showDashHospList() {
     renderDashHospList(document.querySelector('#dash-hosp-combo input').value);
     document.getElementById('dash-hosp-combo').classList.add('open');
+}
+
+function toggleDashHosp() {
+    const el = document.getElementById('dash-hosp-combo');
+    const inp = el.querySelector('input');
+    el.classList.toggle('open');
+    if (el.classList.contains('open')) {
+        renderDashHospList(inp.value);
+        inp.focus();
+    }
 }
 
 function selectDashHosp(id, name) {
