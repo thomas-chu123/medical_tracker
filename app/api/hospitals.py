@@ -4,6 +4,7 @@ from typing import Optional, List
 
 from app.database import get_supabase
 from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotOut
+from app.core.timezone import now_tw, today_tw, TAIWAN_TZ
 
 router = APIRouter(prefix="/api", tags=["Hospitals"])
 
@@ -36,8 +37,8 @@ def calculate_eta(
         
     try:
         # 1. Date and Time Context
-        now = datetime.now()
-        today = now.date()
+        now = now_tw()
+        today = today_tw()
         
         try:
             target_date = datetime.strptime(session_date_str, "%Y-%m-%d").date()
@@ -45,7 +46,11 @@ def calculate_eta(
             return None
 
         # 2. Base Start Time Calculation
-        schedule_start = datetime.combine(target_date, datetime.strptime(start_time_str, "%H:%M").time())
+        schedule_start = datetime.combine(
+            target_date, 
+            datetime.strptime(start_time_str, "%H:%M").time(),
+            tzinfo=TAIWAN_TZ
+        )
         
         if target_date < today:
             # Past clinic session

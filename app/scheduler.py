@@ -9,6 +9,8 @@ import asyncio
 import random
 from datetime import date, datetime
 
+from app.core.timezone import now_tw, today_tw, today_tw_str, now_utc_str
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -38,7 +40,7 @@ def get_scheduler() -> AsyncIOScheduler:
 
 async def run_cmuh_master_data():
     """Scrapes and updates departments, doctors, and full schedule snapshots. Runs 00:00-06:00."""
-    logger.info(f"[Scheduler] Starting master data scrape at {date.today()}")
+    logger.info(f"[Scheduler] Starting master data scrape at {today_tw()}")
     scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
     
     # Run scrapers for different hospitals concurrently
@@ -47,7 +49,7 @@ async def run_cmuh_master_data():
 
 async def run_morning_tracked_snapshot_sync():
     """Triggered at 08:00 AM to update progress for all currently tracked clinics for today."""
-    logger.info(f"[Scheduler] Starting 08:00 AM tracked snapshot sync for {date.today()}")
+    logger.info(f"[Scheduler] Starting 08:00 AM tracked snapshot sync for {today_tw()}")
     scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
     await asyncio.gather(*[_sync_hospital_morning_progress(s) for s in scrapers])
     logger.info("[Scheduler] 08:00 AM tracked snapshot sync complete.")
@@ -186,6 +188,7 @@ async def _scrape_hospital_master_data(scraper):
                         "current_number": None, # Skip fetching progress during off-peak full scan
                         "is_full": slot.is_full,
                         "status": slot.status,
+                        "scraped_at": now_utc_str(),
                     })
 
         # Batch insert all full-schedule snapshots for this hospital
@@ -388,8 +391,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         # For non-today sessions (e.g., future tracked appointments), we still upsert
         # the current_registered (headcount) so the dashboard stays up to date.
         # We just skip the real-time progress fetch (current_number).
-        now = datetime.now()
-        is_today = slot.session_date == date.today()
+        now = now_tw()
+        is_today = slot.session_date == today_tw()
 
         should_fetch_realtime = False
         if is_today and needs_progress:
@@ -431,7 +434,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "current_registered": registered_count,
             "is_full": slot.is_full,
             "status": status,
-            "scraped_at": datetime.now().isoformat(),
+            "scraped_at": now_utc_str(),
         }
         # Only write current_number / total_quota / waiting_list if we actually have values.
         # This prevents the排班 (schedule) UPSERT from overwriting previously scraped

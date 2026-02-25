@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -8,15 +8,9 @@ from app.database import get_supabase
 from app.models.tracking import TrackingCreate, TrackingUpdate, TrackingOut, TrackingRichOut, NotificationLogOut
 from app.auth import get_current_user
 
+from app.core.timezone import today_tw_str
+
 router = APIRouter(prefix="/api/tracking", tags=["Tracking"])
-
-# Taiwan timezone (UTC+8)
-_TW_TZ = timezone(timedelta(hours=8))
-
-
-def _tw_today() -> str:
-    """Return today's date string in Taiwan time (UTC+8)."""
-    return datetime.now(_TW_TZ).date().isoformat()
 
 @router.get("/", response_model=list[TrackingRichOut])
 async def list_subscriptions(current_user: dict = Depends(get_current_user)):
@@ -25,7 +19,7 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         supabase.table("tracking_subscriptions")
         .select("*")
         .eq("user_id", current_user["id"])
-        .gte("session_date", _tw_today())  # Only show today and future sessions
+        .gte("session_date", today_tw_str())  # Only show today and future sessions
         .order("session_date", desc=False)
         .execute()
     )
@@ -62,7 +56,7 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         hospitals_map = {h["id"]: h["name"] for h in hosps.data}
 
     # Fetch latest current_number for these tracked sessions
-    now_date_str = _tw_today()  # Use Taiwan time
+    now_date_str = today_tw_str()  # Use Taiwan time
     # We only care about snapshots for the tracked session dates
     tracked_dates = list({s["session_date"] for s in subs})
     

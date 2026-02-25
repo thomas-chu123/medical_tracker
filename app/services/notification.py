@@ -8,20 +8,12 @@ the FastAPI event loop.
 """
 
 import asyncio
-from datetime import datetime, timezone, timedelta
 
 from app.database import get_supabase
 from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_service import send_line_notify, build_line_message
 from app.core.logger import logger as log
-
-# Taiwan timezone (UTC+8)
-_TW_TZ = timezone(timedelta(hours=8))
-
-
-def _tw_today() -> str:
-    """Return today's date string in Taiwan time (UTC+8), e.g. '2026-02-24'."""
-    return datetime.now(_TW_TZ).date().isoformat()
+from app.core.timezone import today_tw_str
 
 
 def _run(fn):
@@ -32,7 +24,7 @@ def _run(fn):
 async def check_and_notify():
     """Main notification loop: called after each scrape cycle."""
     supabase = get_supabase()
-    today = _tw_today()  # Use Taiwan timezone to get correct local date
+    today = today_tw_str()  # Use Taiwan timezone to get correct local date
     log.info(f"[Notification] Starting check_and_notify for {today}")
 
     # Fetch all active subscriptions for today (non-blocking)
@@ -59,7 +51,7 @@ async def _process_subscription(supabase, sub: dict):
     session_type = sub.get("session_type")
 
     # Build query for latest snapshot
-    tw_today = _tw_today()  # Taiwan date to match session_date format
+    tw_today = today_tw_str()  # Taiwan date to match session_date format
     def _fetch_snap():
         q = (
             supabase.table("appointment_snapshots")
@@ -125,15 +117,15 @@ async def _process_subscription(supabase, sub: dict):
         if hosp_res.data:
             hospital_name = hosp_res.data.get("name", "未知醫院")
 
-    # Fetch user's LINE User ID from users_local
+    # Fetch user's LINE Notify token from users_local
     user_res = await _run(
         lambda: supabase.table("users_local")
-        .select("line_user_id")
+        .select("line_notify_token")
         .eq("id", sub["user_id"])
         .execute()
     )
     user_data = user_res.data[0] if user_res.data else {}
-    line_user_id = user_data.get("line_user_id", "")
+    line_notify_token = user_data.get("line_notify_token", "")
 
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
@@ -170,7 +162,7 @@ async def _process_subscription(supabase, sub: dict):
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
                 email=user_email,
-                line_user_id=line_user_id,
+                line_notify_token=line_notify_token,
                 notify_email=sub.get("notify_email", True),
                 notify_line=sub.get("notify_line", False),
                 hospital_name=hospital_name,
@@ -200,7 +192,7 @@ async def _send_alerts(
     sub_id: str,
     user_id: str,
     email: str | None,
-    line_user_id: str,
+    line_notify_token: str,
     notify_email: bool,
     notify_line: bool,
     hospital_name: str,
@@ -233,7 +225,7 @@ async def _send_alerts(
             send_email(email, subject, body)
         ))
 
-    if notify_line and line_user_id:
+    if notify_line and line_notify_token:
         message = build_line_message(
             doctor_name=doctor_name,
             department_name=dept_name,
@@ -245,7 +237,7 @@ async def _send_alerts(
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "line", "",
-            send_line_message(line_user_id, message)
+            send_line_notify(line_notify_token, message)
         ))
 
     if send_tasks:
@@ -261,7 +253,7 @@ async def _send_alerts(
         )
         log.info(f"[Notification] Updated {notified_flag} flag for sub {sub_id}")
     else:
-        log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineUserID: {'set' if line_user_id else 'not set'}")
+         log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineToken: {'set' if line_notify_token else 'not set'}")
 
 
 async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
