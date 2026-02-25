@@ -57,9 +57,9 @@ const AppState = {
   // Charts
   charts: {
     crowdChart: null,
-    AppState.charts.deptComparisonChart: null,
-    AppState.charts.doctorComparisonChart: null,
-    AppState.charts.doctorSpeedChart: null,
+    deptComparisonChart: null,
+    doctorComparisonChart: null,
+    doctorSpeedChart: null,
   },
 
   // Analysis
