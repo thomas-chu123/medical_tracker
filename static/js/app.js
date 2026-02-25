@@ -85,10 +85,10 @@ async function handleLogin(e) {
         }
         authToken = data.access_token;
         localStorage.setItem('auth_token', authToken);
-        
+
         // Show success feedback before reloading
         toast('登入成功！重新載入中…', 'success', 2000);
-        
+
         // Wait for toast to be visible, then reload to clear cached UI state
         setTimeout(() => {
             window.location.reload();
@@ -301,10 +301,7 @@ async function renderDashboardTracking(subs) {
         return;
     }
 
-    const cards = await Promise.all(activeSubs.map(async sub => {
-        const snap = await apiFetch(`/api/doctors/${sub.doctor_id}/latest`).catch(() => null);
-        return renderClinicCard(sub, snap);
-    }));
+    const cards = activeSubs.map(sub => renderClinicCard(sub, null));
     grid.innerHTML = cards.join('');
 }
 

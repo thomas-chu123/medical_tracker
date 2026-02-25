@@ -247,11 +247,15 @@ async def _scrape_hospital_tracked_data(scraper):
                 lambda: supabase.table("doctors")
                 .select("department_id")
                 .in_("id", list(tracked_doctors))
-                .eq("hospital_id", hosp_id)
+                # Note: Do NOT filter by hospital_id here — tracked doctors may belong
+                # to a different hospital entity than this scraper's hospital.
+                # The dept filter below (line ~265) ensures each scraper only
+                # scrapes its own hospital's departments.
                 .execute()
             )
             for d in (doc_dept_res.data or []):
                 tracked_depts.add(d["department_id"])
+
 
         if not tracked_depts:
             logger.info(f"[Scheduler] No departments resolved from trackings for {scraper.HOSPITAL_CODE}. Skipping.")
@@ -379,19 +383,13 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         status = slot.status
         waiting_list = []
 
-        # User's dynamic time gates:
-        # 上午診: 08:00
-        # 下午診: 13:00
-        # 晚上診: 18:00
+        # User's dynamic time gates for real-time progress (current_number):
+        # 上午診: 08:00, 下午診: 13:30, 晚上診: 18:00
+        # For non-today sessions (e.g., future tracked appointments), we still upsert
+        # the current_registered (headcount) so the dashboard stays up to date.
+        # We just skip the real-time progress fetch (current_number).
         now = datetime.now()
         is_today = slot.session_date == date.today()
-        
-        # 2. Skip snapshots for future dates (unless they are missing from DB entirely)
-        # Requirement: "當日期不是當日... 使用凌晨抓到的時抓到的診間及已掛號資訊"
-        # Since master data runs at midnight, we already have those records.
-        # We only want to update today's progress.
-        if not is_today:
-            return None
 
         should_fetch_realtime = False
         if is_today and needs_progress:
@@ -401,6 +399,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                 should_fetch_realtime = True
             elif slot.session_type == "晚上" and now.hour >= 18:
                 should_fetch_realtime = True
+
 
         # If it's time to fetch real-time progress
         if should_fetch_realtime and slot.clinic_room:
