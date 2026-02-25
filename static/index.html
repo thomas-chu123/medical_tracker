@@ -126,9 +126,17 @@
             <h2>📊 今日門診總覽</h2>
             <div class="subtitle" id="last-update-label">讀取中…</div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="refreshAll()">
-            🔄 立即更新
-          </button>
+          <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <!-- Hospital Filter Combobox -->
+            <div class="combo-container" id="dash-hosp-combo" style="width:280px">
+              <input type="text" class="combo-input" placeholder="🔍 過濾醫院 (預設全部)..."
+                oninput="filterDashHosp(this.value)" onfocus="showDashHospList()">
+              <div class="combo-list" id="dash-hosp-list"></div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="refreshAll()">
+              🔄 立即更新
+            </button>
+          </div>
         </div>
 
         <div class="stat-grid">
@@ -395,12 +403,14 @@
         <div class="section-header">
           <h2>📬 通知紀錄</h2>
         </div>
-        
-        <div class="hs-tabs" style="margin-bottom:20px; display:flex; gap:10px; border-bottom:1px solid var(--border); padding-bottom:10px;">
-          <button class="btn btn-primary" id="btn-tab-notif-current" onclick="switchNotifTab('current')">📅 目前及未來的通知</button>
+
+        <div class="hs-tabs"
+          style="margin-bottom:20px; display:flex; gap:10px; border-bottom:1px solid var(--border); padding-bottom:10px;">
+          <button class="btn btn-primary" id="btn-tab-notif-current" onclick="switchNotifTab('current')">📅
+            目前及未來的通知</button>
           <button class="btn btn-secondary" id="btn-tab-notif-past" onclick="switchNotifTab('past')">⏳ 過去的通知</button>
         </div>
-        
+
         <div class="table-wrap" style="max-height: 500px; overflow-y: auto;">
           <table>
             <thead style="position: sticky; top: 0; background: var(--bg-hover); z-index: 1;">

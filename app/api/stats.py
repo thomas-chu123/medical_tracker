@@ -6,6 +6,7 @@ import asyncio
 from app.database import get_supabase
 from app.auth import get_current_user
 from app.scheduler import run_tracked_appointments
+from app.core.timezone import today_tw_str, now_utc_str
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
 
@@ -17,31 +18,71 @@ class GlobalStats(BaseModel):
     notifications_today: int
 
 @router.get("/global", response_model=GlobalStats)
-async def get_global_stats():
+async def get_global_stats(hospital_id: str = None):
     supabase = get_supabase()
     
-    # Get counts
-    hosp_res = supabase.table("hospitals").select("count", count="exact").limit(1).execute()
-    dept_res = supabase.table("departments").select("count", count="exact").limit(1).execute()
-    doc_res = supabase.table("doctors").select("count", count="exact").limit(1).execute()
+    # 1. Hospitals count
+    if hospital_id:
+        hosp_res = supabase.table("hospitals").select("count", count="exact").eq("id", hospital_id).limit(1).execute()
+    else:
+        hosp_res = supabase.table("hospitals").select("count", count="exact").limit(1).execute()
+        
+    # 2. Departments count
+    dept_query = supabase.table("departments").select("count", count="exact")
+    if hospital_id:
+        dept_query = dept_query.eq("hospital_id", hospital_id)
+    dept_res = dept_query.limit(1).execute()
     
-    today = str(date.today())
-    snap_res = (
-        supabase.table("appointment_snapshots")
-        .select("count", count="exact")
-        .eq("session_date", today)
-        .limit(1)
-        .execute()
-    )
+    # 3. Doctors count
+    doc_query = supabase.table("doctors").select("count", count="exact")
+    if hospital_id:
+        doc_query = doc_query.eq("hospital_id", hospital_id)
+    doc_res = doc_query.limit(1).execute()
     
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    notif_res = (
-        supabase.table("notification_logs")
-        .select("count", count="exact")
-        .gte("sent_at", today_start)
-        .limit(1)
-        .execute()
-    )
+    # 4. Snapshots today
+    today_tw = today_tw_str()
+    snap_query = supabase.table("appointment_snapshots").select("count", count="exact").eq("session_date", today_tw)
+    if hospital_id:
+        # Join with departments to filter by hospital
+        snap_query = supabase.table("appointment_snapshots").select("count", count="exact", inner=True).eq("session_date", today_tw).filter("departments.hospital_id", "eq", hospital_id)
+        # Note: direct joining requires departments relation in PostgREST, let's use inner join syntax if possible or filter
+        # PostgREST style: select=count&session_date=eq.today&departments.hospital_id=eq.hospital_id
+        snap_res = (
+            supabase.table("appointment_snapshots")
+            .select("count", count="exact", inner=True)
+            .eq("session_date", today_tw)
+            .filter("departments.hospital_id", "eq", hospital_id)
+            .limit(1)
+            .execute()
+        )
+    else:
+        snap_res = snap_query.limit(1).execute()
+    
+    # 5. Notifications today
+    # Using 00:00:00 local Taiwan time converted to UTC string for comparison if needed, 
+    # but for simplicity we rely on 'sent_at' >= today date
+    today_date = today_tw
+    notif_query = supabase.table("notification_logs").select("count", count="exact").gte("sent_at", f"{today_date}T00:00:00Z")
+    if hospital_id:
+        # notification_logs -> tracking_subscriptions -> doctors -> hospital_id
+        # This join is complex for standard PostgREST table().filter()
+        # Alternative: get sub_ids for this hospital
+        sub_ids_res = supabase.table("tracking_subscriptions").select("id", inner=True).filter("doctors.hospital_id", "eq", hospital_id).execute()
+        sub_ids = [s["id"] for s in sub_ids_res.data]
+        if sub_ids:
+            notif_res = (
+                supabase.table("notification_logs")
+                .select("count", count="exact")
+                .in_("subscription_id", sub_ids)
+                .gte("sent_at", f"{today_date}T00:00:00Z")
+                .limit(1)
+                .execute()
+            )
+        else:
+            class Dummy: count = 0
+            notif_res = Dummy()
+    else:
+        notif_res = notif_query.limit(1).execute()
     
     return GlobalStats(
         hospitals=hosp_res.count or 0,
@@ -78,22 +119,19 @@ class DeptRankingItem(BaseModel):
     avg_registered: float
 
 @router.get("/crowd-analysis", response_model=CrowdAnalysisResult)
-async def get_crowd_analysis():
+async def get_crowd_analysis(hospital_id: str = None):
     """
     Returns average crowd metrics (current_registered) grouped by session type 
     (Morning, Afternoon, Evening) for visualization.
     """
     supabase = get_supabase()
     
-    # We fetch a sample of recent snapshots (e.g. up to 2000 records) to compute averages.
-    # In a production environment with massive data, this should be done via a SQL View or RPC.
-    res = (
-        supabase.table("appointment_snapshots")
-        .select("session_type, current_registered")
-        .order("scraped_at", desc=True)
-        .limit(2000)
-        .execute()
-    )
+    query = supabase.table("appointment_snapshots").select("session_type, current_registered")
+    if hospital_id:
+        # Filter snapshots where department belongs to the target hospital
+        query = query.filter("departments.hospital_id", "eq", hospital_id)
+        
+    res = query.order("scraped_at", desc=True).limit(2000).execute()
     
     snapshots = res.data or []
     

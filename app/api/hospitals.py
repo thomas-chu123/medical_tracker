@@ -4,7 +4,7 @@ from typing import Optional, List
 
 from app.database import get_supabase
 from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotOut
-from app.core.timezone import now_tw, today_tw, TAIWAN_TZ
+from app.core.timezone import now_tw, today_tw, today_tw_str, TAIWAN_TZ
 
 router = APIRouter(prefix="/api", tags=["Hospitals"])
 
@@ -229,10 +229,12 @@ async def get_doctor_snapshots(
     limit: int = Query(default=100, le=200),
 ):
     supabase = get_supabase()
+    today_str = today_tw().isoformat()
     result = (
         supabase.table("appointment_snapshots")
         .select("*")
         .eq("doctor_id", doctor_id)
+        .gte("session_date", today_str)
         .order("session_date", desc=False)
         .limit(limit)
         .execute()
@@ -280,12 +282,12 @@ async def get_doctor_latest_snapshot(doctor_id: str):
 async def get_doctor_schedules(doctor_id: str):
     """Return distinct session_date + session_type pairs available for this doctor."""
     supabase = get_supabase()
-    today = date.today()
+    today_str = today_tw().isoformat()
     result = (
         supabase.table("appointment_snapshots")
         .select("session_date, session_type")
         .eq("doctor_id", doctor_id)
-        .gte("session_date", today.isoformat())
+        .gte("session_date", today_str)
         .order("session_date", desc=False)
         .execute()
     )

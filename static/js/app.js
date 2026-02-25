@@ -6,6 +6,11 @@ const API = '';   // Same origin; change to http://localhost:8000 if needed
 let authToken = localStorage.getItem('auth_token') || null;
 let currentUser = null;
 
+// ── Global State ──────────────────────────────────────────────
+let _dashHospitals = [];
+let _selectedDashHospId = null;
+let _allDashboardSubs = [];
+
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
@@ -218,29 +223,91 @@ function navigate(btn, pageId, options = {}) {
 
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
-    // Fire requests in parallel including crowd-analysis
+    // 1. Initialize Hospital Filter if not done
+    if (!_dashHospitals.length) {
+        _dashHospitals = await apiFetch('/api/hospitals').catch(() => []) || [];
+        renderDashHospList();
+    }
+
+    // 2. Prepare query param
+    const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
+
+    // 3. Fire requests in parallel including crowd-analysis
     const [gStats, subs, crowdStats] = await Promise.all([
-        apiFetch('/api/stats/global').catch(() => null),
+        apiFetch(`/api/stats/global${qs}`).catch(() => null),
         apiFetch('/api/tracking').catch(() => []),
-        apiFetch('/api/stats/crowd-analysis').catch(() => null),
+        apiFetch(`/api/stats/crowd-analysis${qs}`).catch(() => null),
     ]);
 
+    // 4. Update Stats
     if (gStats) {
         document.getElementById('stat-hospitals').textContent = gStats.hospitals;
         document.getElementById('stat-doctors').textContent = gStats.doctors;
         document.getElementById('stat-alerts').textContent = gStats.notifications_today || '0';
     }
 
-    const activeSubs = (subs || []);
-    document.getElementById('stat-tracking').textContent = activeSubs.filter(s => s.is_active).length;
+    _allDashboardSubs = (subs || []).filter(s => s.is_active);
+    document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
     document.getElementById('last-update-label').textContent = `最後更新：${new Date().toLocaleString('zh-TW')}`;
 
+    // 5. Render Crowd Chart
     if (crowdStats) {
         renderCrowdChart(crowdStats);
     }
 
-    renderDashboardTracking(activeSubs);
+    // 6. Render Tracking Cards (filtered by selected hospital)
+    renderDashboardTracking();
 }
+
+/** Dashboard Hospital Filter Logic **/
+function renderDashHospList(filterText = '') {
+    const list = document.getElementById('dash-hosp-list');
+    const q = filterText.toLowerCase().trim();
+
+    // Add "All Hospitals" option
+    let items = [{ id: null, name: '全部醫院' }, ..._dashHospitals];
+    if (q) {
+        items = items.filter(h => h.name.toLowerCase().includes(q));
+    }
+
+    if (!items.length) {
+        list.innerHTML = '<div class="combo-opt no-result">無匹配醫院</div>';
+        return;
+    }
+
+    list.innerHTML = items.map(h => `
+        <div class="combo-opt" onclick="selectDashHosp('${h.id}', '${escHtml(h.name)}')">
+            ${h.id === null ? '🌐' : '🏥'} ${escHtml(h.name)}
+        </div>
+    `).join('');
+}
+
+function filterDashHosp(val) {
+    renderDashHospList(val);
+    document.getElementById('dash-hosp-combo').classList.add('open');
+}
+
+function showDashHospList() {
+    renderDashHospList(document.querySelector('#dash-hosp-combo input').value);
+    document.getElementById('dash-hosp-combo').classList.add('open');
+}
+
+function selectDashHosp(id, name) {
+    _selectedDashHospId = (id === 'null' || id === null) ? null : id;
+    const inp = document.querySelector('#dash-hosp-combo input');
+    inp.value = _selectedDashHospId ? name : '';
+    document.getElementById('dash-hosp-combo').classList.remove('open');
+
+    // Refresh data
+    loadDashboard();
+}
+
+// Close dash hospital combo when clicking outside
+document.addEventListener('click', e => {
+    if (!e.target.closest('#dash-hosp-combo')) {
+        document.getElementById('dash-hosp-combo')?.classList.remove('open');
+    }
+});
 
 let crowdChartInstance = null;
 function renderCrowdChart(stats) {
@@ -290,18 +357,24 @@ function renderCrowdChart(stats) {
     });
 }
 
-async function renderDashboardTracking(subs) {
+async function renderDashboardTracking() {
     const grid = document.getElementById('dashboard-tracking-grid');
-    const activeSubs = subs.filter(s => s.is_active);
-    if (!activeSubs.length) {
+
+    // Filter by selected hospital
+    let filtered = _allDashboardSubs;
+    if (_selectedDashHospId) {
+        filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
+    }
+
+    if (!filtered.length) {
         grid.innerHTML = `<div class="empty-state">
       <div class="empty-icon">🔔</div>
-      <p>尚未設定任何追蹤<br><a href="#" onclick="navigate(document.querySelector('[data-page=tracking]'), 'tracking')">新增第一個門診追蹤</a></p>
+      <p>目前無相關追蹤項目<br><a href="#" onclick="navigate(document.querySelector('[data-page=tracking]'), 'tracking')">前往追蹤清單</a></p>
     </div>`;
         return;
     }
 
-    const cards = activeSubs.map(sub => renderClinicCard(sub, null));
+    const cards = filtered.map(sub => renderClinicCard(sub, null));
     grid.innerHTML = cards.join('');
 }
 
