@@ -297,14 +297,14 @@
               <div class="form-group" style="margin:0; min-width:200px;">
                 <label>醫院</label>
                 <select id="analysis-sheet4-hosp-select"
-                  onchange="loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis()">
+                  onchange="(async()=>{ await loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis(); })()">
                   <option value="">所有醫院</option>
                 </select>
               </div>
               <div class="form-group" style="margin:0; min-width:200px;">
                 <label>科室類別</label>
                 <select id="analysis-sheet4-cat-select"
-                  onchange="loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis()">
+                  onchange="(async()=>{ await loadAnalysisDepts('analysis-sheet4-hosp-select','analysis-sheet4-cat-select','analysis-sheet4-dept-select'); loadDoctorSpeedAnalysis(); })()">
                   <option value="">所有類別</option>
                 </select>
               </div>

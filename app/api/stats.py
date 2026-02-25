@@ -367,7 +367,14 @@ async def get_doctor_speed(hospital_id: str = None, category: str = None, dept_i
     for s in snapshots:
         did = s.get("doctor_id")
         val = s.get("current_registered")
+        
+        # Robustly handle joined doctor info
         dinfo = s.get("doctors")
+        if isinstance(dinfo, list) and len(dinfo) > 0:
+            dinfo = dinfo[0]
+        elif not isinstance(dinfo, dict):
+            dinfo = {}
+            
         dname = dinfo.get("name") if dinfo else "未知醫師"
         
         if did and val is not None:
@@ -379,6 +386,7 @@ async def get_doctor_speed(hospital_id: str = None, category: str = None, dept_i
     # Calculate speed: average / 4 hours
     results = []
     for d in doc_data.values():
+        if d["count"] == 0: continue
         avg = d["sum"] / d["count"]
         speed = round(avg / 4, 2)
         results.append({"name": d["name"], "speed": speed})

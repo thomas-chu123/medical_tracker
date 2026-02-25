@@ -6,69 +6,69 @@ const API = '';   // Same origin; change to http://localhost:8000 if needed
 
 // ── Unified App State ──────────────────────────────────────────
 const AppState = {
-  // Auth
-  authToken: localStorage.getItem('auth_token') || null,
-  currentUser: null,
+    // Auth
+    authToken: localStorage.getItem('auth_token') || null,
+    currentUser: null,
 
-  // Dashboard
-  dashboard: {
-    hospitals: [],
-    selectedHospitalId: null,
-    subscriptions: [],
-  },
+    // Dashboard
+    dashboard: {
+        hospitals: [],
+        selectedHospitalId: null,
+        subscriptions: [],
+    },
 
-  // Hospital Search
-  hospitalSearch: {
-    selectedHospitalId: null,
-    selectedHospitalName: '',
-    selectedDepartmentId: null,
-    selectedDepartmentName: '',
-    allDepartments: [],
-    allDoctors: [],
-    doctorSearchTimer: null,
-    departmentData: { depts: [], hospName: '', cat: '' },
-  },
+    // Hospital Search
+    hospitalSearch: {
+        selectedHospitalId: null,
+        selectedHospitalName: '',
+        selectedDepartmentId: null,
+        selectedDepartmentName: '',
+        allDepartments: [],
+        allDoctors: [],
+        doctorSearchTimer: null,
+        departmentData: { depts: [], hospName: '', cat: '' },
+    },
 
-  // Add Tracking Stepper
-  stepper: {
-    step: 1,
-    hospitalId: '',
-    hospitalName: '',
-    category: '',
-    departmentId: '',
-    departmentName: '',
-    doctorId: '',
-    doctorName: '',
-    doctorSchedules: [],
-  },
+    // Add Tracking Stepper
+    stepper: {
+        step: 1,
+        hospitalId: '',
+        hospitalName: '',
+        category: '',
+        departmentId: '',
+        departmentName: '',
+        doctorId: '',
+        doctorName: '',
+        doctorSchedules: [],
+    },
 
-  // Tracking Management
-  tracking: {
-    subscriptions: [],
-    currentTab: 'current',
-  },
+    // Tracking Management
+    tracking: {
+        subscriptions: [],
+        currentTab: 'current',
+    },
 
-  // Notifications
-  notifications: {
-    logs: [],
-    currentTab: 'current',
-  },
+    // Notifications
+    notifications: {
+        logs: [],
+        currentTab: 'current',
+    },
 
-  // Charts
-  charts: {
-    crowdChart: null,
-    deptComparisonChart: null,
-    doctorComparisonChart: null,
-    doctorSpeedChart: null,
-  },
+    // Charts
+    charts: {
+        crowdChart: null,
+        deptComparisonChart: null,
+        doctorComparisonChart: null,
+        doctorSpeedChart: null,
+    },
 
-  // Analysis
-  analysis: {
-    ranking: [],
-  },
+    // Analysis
+    analysis: {
+        ranking: [],
+    },
 
-  // Components
-  combos: {},
+    // Components
+    combos: {},
 };
 
 // ── Utility: API fetch ────────────────────────────────────────
@@ -1852,7 +1852,11 @@ async function loadAnalysisDepts(hospSelectId, catSelectId, deptSelectId) {
         const depts = await apiFetch(url) || [];
         dSelect.innerHTML = '<option value="">所有科室</option>' +
             depts.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
-    } catch (e) { toast(e.message, 'error'); }
+        return depts; // Return for awaiting
+    } catch (e) {
+        toast(e.message, 'error');
+        return [];
+    }
 }
 
 async function refreshDoctorComparison() {
@@ -1896,30 +1900,36 @@ async function refreshDoctorComparison() {
 
 async function loadDoctorSpeedAnalysis() {
     const ctx = document.getElementById('doctor-speed-chart');
-    console.log('[loadDoctorSpeedAnalysis] Canvas element:', ctx);
-    if (!ctx) {
-        console.warn('[loadDoctorSpeedAnalysis] Canvas not found');
-        return;
-    }
+    if (!ctx) return;
 
     const hospId = document.getElementById('analysis-sheet4-hosp-select').value;
     const cat = document.getElementById('analysis-sheet4-cat-select').value;
     const deptId = document.getElementById('analysis-sheet4-dept-select')?.value || '';
-    console.log('[loadDoctorSpeedAnalysis] Filters:', { hospId, cat, deptId });
+
+    // Show loading state
+    const card = ctx.closest('.card');
+    let spinner = card.querySelector('.spinner-overlay');
+    if (!spinner) {
+        spinner = document.createElement('div');
+        spinner.className = 'spinner-overlay';
+        spinner.innerHTML = '<div class="spinner"></div>';
+        card.appendChild(spinner);
+    }
+    spinner.style.display = 'flex';
 
     try {
-        let url = `/api/stats/doctor-speed?`;
-        if (hospId) url += `hospital_id=${hospId}&`;
-        if (cat) url += `category=${encodeURIComponent(cat)}&`;
-        if (deptId) url += `dept_id=${deptId}`;
+        // Fix trailing ampersand and properly construct URL
+        const params = new URLSearchParams();
+        if (hospId) params.append('hospital_id', hospId);
+        if (cat) params.append('category', cat);
+        if (deptId) params.append('dept_id', deptId);
 
-        console.log('[loadDoctorSpeedAnalysis] API URL:', url);
+        const url = `/api/stats/doctor-speed${params.toString() ? '?' + params.toString() : ''}`;
+
         const stats = await apiFetch(url);
-        console.log('[loadDoctorSpeedAnalysis] API response:', stats);
-        if (!stats) {
-            console.warn('[loadDoctorSpeedAnalysis] No stats data returned');
-            return;
-        }
+        spinner.style.display = 'none';
+
+        if (!stats) return;
 
         if (AppState.charts.doctorSpeedChart) {
             console.log('[loadDoctorSpeedAnalysis] Destroying existing chart');
