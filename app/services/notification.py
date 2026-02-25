@@ -8,12 +8,20 @@ the FastAPI event loop.
 """
 
 import asyncio
-from datetime import date
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_supabase
 from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_service import send_line_notify, build_line_message
 from app.core.logger import logger as log
+
+# Taiwan timezone (UTC+8)
+_TW_TZ = timezone(timedelta(hours=8))
+
+
+def _tw_today() -> str:
+    """Return today's date string in Taiwan time (UTC+8), e.g. '2026-02-24'."""
+    return datetime.now(_TW_TZ).date().isoformat()
 
 
 def _run(fn):
@@ -24,7 +32,7 @@ def _run(fn):
 async def check_and_notify():
     """Main notification loop: called after each scrape cycle."""
     supabase = get_supabase()
-    today = str(date.today())
+    today = _tw_today()  # Use Taiwan timezone to get correct local date
     log.info(f"[Notification] Starting check_and_notify for {today}")
 
     # Fetch all active subscriptions for today (non-blocking)
@@ -50,12 +58,13 @@ async def _process_subscription(supabase, sub: dict):
     session_type = sub.get("session_type")
 
     # Build query for latest snapshot
+    tw_today = _tw_today()  # Taiwan date to match session_date format
     def _fetch_snap():
         q = (
             supabase.table("appointment_snapshots")
             .select("*")
             .eq("doctor_id", doctor_id)
-            .eq("session_date", str(date.today()))
+            .eq("session_date", tw_today)  # Use Taiwan date (not UTC date)
             .order("scraped_at", desc=True)
             .limit(1)
         )
@@ -97,7 +106,7 @@ async def _process_subscription(supabase, sub: dict):
     # Build context for notifications
     doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
     dept_name = (sub.get("departments") or {}).get("name", "未知科別")
-    session_date_str = str(date.today())
+    session_date_str = tw_today  # Use Taiwan date for display
     session_type_str = sub.get("session_type", "")
     clinic_room = snap.get("clinic_room", "未提供")
 
