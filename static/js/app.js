@@ -275,11 +275,11 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'admin') {
         switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, '_st BEFORE:', JSON.parse(JSON.stringify(_st)));
+        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(_st)));
         if (!options.skipReset) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
             Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
-            console.log('[navigate] _st RESET');
+            console.log('[navigate] stepper RESET');
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
             loadStepperHospitals();
@@ -969,7 +969,7 @@ function stepperNextFromStep4() {
     const dName = AppState.stepper.departmentName || '（未知科室）';
     const docName = AppState.stepper.doctorName || '（未知醫師）';
 
-    console.log('[stepperNextFromStep4] _st state:', JSON.parse(JSON.stringify(_st)));
+    console.log('[stepperNextFromStep4] stepper state:', JSON.parse(JSON.stringify(_st)));
     console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
 
     document.getElementById('confirm-summary').innerHTML = `
@@ -1034,7 +1034,7 @@ async function quickTrack(doctorId, doctorName) {
     document.getElementById('modal-doctor').value = AppState.stepper.doctorId;
     document.getElementById('modal-dept').value = AppState.stepper.departmentId;
 
-    console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
+    console.log('[quickTrack] stepper updated:', JSON.parse(JSON.stringify(_st)));
 
     // Go to "add-tracking" page WITHOUT resetting stepper state
     const page = document.querySelector('[data-page="add-tracking"]');
@@ -1205,9 +1205,9 @@ function renderTrackingCard(sub, isExpired = false) {
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNo = sub.appointment_number ? `${sub.appointment_number}` : '<span style="opacity:0.6">(未填寫)</span>';
 
-    const emailDisplay = sub.notify_email && currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
+    const emailDisplay = sub.notify_email && AppState.currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
     if (sub.notify_email) {
-        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', currentUser);
+        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', AppState.currentUser);
     }
     const lineDisplay = sub.notify_line ? '📲 LINE' : '';
 
@@ -1418,7 +1418,7 @@ async function loadProfile() {
     const profile = await apiFetch('/api/users/me');
     console.log('[loadProfile] fetched profile:', profile);
     if (profile) {
-        currentUser = profile;
+        AppState.currentUser = profile;
         const nameEl = document.getElementById('profile-name');
         const emailEl = document.getElementById('profile-email');
         const lineEl = document.getElementById('line-token');
@@ -1453,7 +1453,7 @@ async function loadAdminUsers() {
         const adminBtnClass = u.is_admin ? 'btn-danger' : 'btn-secondary';
         const verified = u.is_verified ? '✅' : '❌';
         const createdAt = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-TW') : '—';
-        const isSelf = currentUser && u.id === currentUser.id;
+        const isSelf = AppState.currentUser && u.id === AppState.currentUser.id;
         const displayName = escHtml(u.display_name || '—');
 
         const actions = isSelf
