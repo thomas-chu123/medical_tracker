@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     scrape_interval_minutes: int = 5
     request_timeout: int = 30
 
-    model_config = ConfigDict(env_file=".env", case_sensitive=False)
+    # Notion Integration (Optional)
+    notion_api: str = ""
+
+    model_config = ConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+
 
 
 @lru_cache()
