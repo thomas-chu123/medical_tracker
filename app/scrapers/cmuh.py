@@ -57,8 +57,8 @@ class CMUHScraper(BaseScraper):
     # Regular expression patterns
     DEPT_CODE_PATTERN = re.compile(r"table=([A-Za-z0-9]+)")
     DOC_NO_PATTERN = re.compile(r"DocNo=([A-Za-z0-9]+)")
-    DATE_PATTERN = re.compile(r"(\d{3})/(\d{2})/(\d{2})")
-    DATE_PATTERN_AD = re.compile(r"(\d{4})/(\d{2})/(\d{2})")
+    DATE_PATTERN = re.compile(r"(\d{3})[/-](\d{2})[/-](\d{2})")
+    DATE_PATTERN_AD = re.compile(r"(\d{4})[/-](\d{2})[/-](\d{2})")
     ROOM_PATTERN_FULL = re.compile(r"\((\d+)診\)")  # With 診 char
     ROOM_PATTERN_FALLBACK = re.compile(r"\((\d+)")  # Fallback
     REGISTERED_PATTERN = re.compile(r"已掛號[：:]\s*(\d+)")

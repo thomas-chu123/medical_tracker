@@ -67,7 +67,7 @@ async def _process_subscription(supabase, sub: dict):
 
     snap_res = await _run(_fetch_snap)
     sub_id_short = sub.get("id", "?")[:8]
-    doctor_id_short = doctor_id[:8]
+    doctor_id_short = str(doctor_id)[:8]
     if not snap_res.data:
         log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short} ({session_type}): no snapshot found for {tw_today}")
         return
