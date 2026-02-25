@@ -244,10 +244,25 @@ async function initApp(userFromLogin = null) {
 
 // ── Navigation ────────────────────────────────────────────────
 function navigate(btn, pageId, options = {}) {
+    console.log(`[navigate] pageId: ${pageId}, from btn:`, btn, 'options:', options);
+
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+    // If no btn provided (e.g. from script jump), try to find the matching nav button
+    if (!btn) {
+        btn = document.querySelector(`.nav-item[data-page="${pageId}"]`) ||
+            document.querySelector(`.nav-item[data-page=${pageId}]`);
+    }
+
     if (btn) btn.classList.add('active');
-    document.getElementById('page-' + pageId).classList.add('active');
+
+    const targetPage = document.getElementById('page-' + pageId);
+    if (!targetPage) {
+        console.error('[navigate] Target page not found:', 'page-' + pageId);
+        return;
+    }
+    targetPage.classList.add('active');
 
     // Show/hide add-tracking nav item
     const navAddTracking = document.getElementById('nav-add-tracking');
@@ -634,13 +649,18 @@ async function loadHospitalsPage() {
         if (deptSearchEl) deptSearchEl.value = '';
         _hsBreadcrumb([hospName]);
 
-        const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
-        if (cats.length) {
-            _hsRenderCategoryChips(hospId, hospName, cats);
-        } else {
-            // No categories — load all depts directly
-            const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
-            _hsRenderDeptGrid(hospId, hospName, null, depts);
+        try {
+            const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
+            if (cats.length) {
+                _hsRenderCategoryChips(hospId, hospName, cats);
+            } else {
+                // No categories \u2014 load all depts directly
+                const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
+                _hsRenderDeptGrid(hospId, hospName, null, depts);
+            }
+        } catch (e) {
+            console.error('[loadHospitalsPage] select error:', e);
+            document.getElementById('doctors-grid').innerHTML = '\u003cdiv class=\"empty-state\"\u003e\u003cp\u003e載入失敗，請重試\u003c/p\u003e\u003c/div\u003e';
         }
     });
 }
@@ -674,24 +694,37 @@ async function hsSelectCategory(hospId, hospName, cat) {
     const deptSearchEl = document.getElementById('dept-search');
     if (deptSearchEl) { deptSearchEl.value = ''; deptSearchEl.dataset.lastVal = ''; }
 
+    const url = `/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`;
+    console.log('[hsSelectCategory] Fetching:', url);
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-    const depts = await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [];
-    _hsRenderDeptGrid(hospId, hospName, cat, depts);
+    try {
+        const depts = await apiFetch(url) || [];
+        _hsRenderDeptGrid(hospId, hospName, cat, depts);
+        filterHospitalSearch();
+    } catch (e) {
+        console.error('[hsSelectCategory] error:', e);
+        document.getElementById('doctors-grid').innerHTML = `<div class="empty-state"><p>載入科室失敗: ${e.message}</p><p style="font-size:12px;color:var(--text-muted)">${url}</p></div>`;
+    }
+}
 
-    // Apply existing doctor/dept filters (if any) to the newly selected category
-    filterHospitalSearch();
+function _hsDeptButtons(depts, hospName, cat) {
+    return depts.map(d =>
+        `<button class="dept-btn" onclick="hsSelectDept('${d.id}','${escHtml(d.name)}','${escHtml(hospName)}','${escHtml(cat)}')">${escHtml(d.name)}</button>`
+    ).join('');
 }
 
 function _hsRenderDeptGrid(hospId, hospName, cat, depts) {
     const wrap = document.getElementById('hs-dept-wrap');
     const label = document.getElementById('hs-dept-label');
     const grid = document.getElementById('hs-dept-grid');
-    // Store for filter
-    _hsDeptAll = { depts, hospName, cat };
+
+    // Update state
+    AppState.hospitalSearch.departmentData = { depts, hospName, cat };
+
     label.textContent = cat ? `${cat} — 請選擇科室` : '請選擇科室';
     grid.innerHTML = depts.length
         ? _hsDeptButtons(depts, hospName, cat)
-        : '<div style="color:var(--text-muted);font-size:14px">此類別下無科室資料<\/div>';
+        : '<div style="color:var(--text-muted);font-size:14px">此類別下無科室資料</div>';
     wrap.style.display = 'block';
     document.getElementById('doctors-grid').innerHTML =
         '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
@@ -731,6 +764,9 @@ function filterHospitalSearch() {
                 : '<div style="color:var(--text-muted);font-size:14px">找不到符合的科室</div>';
             document.getElementById('hs-dept-grid').innerHTML = html;
             deptWrap.style.display = 'block';
+        }).catch(e => {
+            console.error('[filterHospitalSearch] dept search error:', e);
+            document.getElementById('hs-dept-grid').innerHTML = '<div style="color:var(--text-muted);font-size:14px">搜尋失敗</div>';
         });
     }
 
@@ -818,9 +854,14 @@ async function hsSelectDept(deptId, deptName, hospName, cat) {
     const parts = cat ? [hospName, cat, deptName] : [hospName, deptName];
     _hsBreadcrumb(parts);
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-    const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
-    AppState.hospitalSearch.allDoctors = docs;
-    renderDoctorCards(docs);
+    try {
+        const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
+        AppState.hospitalSearch.allDoctors = docs;
+        renderDoctorCards(docs);
+    } catch (e) {
+        console.error('[hsSelectDept] error:', e);
+        document.getElementById('doctors-grid').innerHTML = '<div class="empty-state"><p>載入醫師失敗</p></div>';
+    }
 }
 
 /**
@@ -847,10 +888,11 @@ async function hsSelectDeptFromSearch(deptId, deptName, hospName) {
     }
 
     // Fetch depts for that category and render them
-    const depts = cat
-        ? (await apiFetch(`/api/hospitals/${_hsHospitalId}/departments?category=${encodeURIComponent(cat)}`) || [])
+    const hospId = AppState.hospitalSearch.selectedHospitalId;
+    const depts = (cat && hospId)
+        ? (await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [])
         : [{ id: deptId, name: deptName }];
-    _hsRenderDeptGrid(_hsHospitalId, hospName, cat, depts);
+    _hsRenderDeptGrid(hospId, hospName, cat, depts);
 
     // Auto-highlight the dept button and load doctors
     await hsSelectDept(deptId, deptName, hospName, cat);
@@ -1008,19 +1050,28 @@ function _stepperBreadcrumb() {
 }
 
 function cancelAddTracking() {
-    navigate(document.querySelector('[data-page=tracking]'), 'tracking');
+    const btn = document.querySelector('.nav-item[data-page="tracking"]') ||
+        document.querySelector('.nav-item[data-page=tracking]');
+    navigate(btn, 'tracking');
+}
+
+function openAddTracking() {
+    const btn = document.querySelector('.nav-item[data-page="add-tracking"]') ||
+        document.querySelector('.nav-item[data-page=add-tracking]');
+    navigate(btn, 'add-tracking');
 }
 
 async function quickTrack(doctorId, doctorName) {
     // Collect context from existing selections if possible
-    AppState.stepper.hospitalId = _hsHospitalId;
-    AppState.stepper.hospitalName = _hsHospitalName;
+    AppState.stepper.hospitalId = AppState.hospitalSearch.selectedHospitalId;
+    AppState.stepper.hospitalName = AppState.hospitalSearch.selectedHospitalName;
     AppState.stepper.departmentId = '';
     AppState.stepper.departmentName = '';
     AppState.stepper.doctorId = doctorId;
     AppState.stepper.doctorName = doctorName;
 
     // Use the new info endpoint to get perfect context
+    console.log('[quickTrack] Fetching info for doctor:', doctorId);
     const info = await apiFetch(`/api/doctors/${doctorId}/info`);
     console.log('[quickTrack] doctor info from API:', info);
     if (info) {
@@ -1037,7 +1088,8 @@ async function quickTrack(doctorId, doctorName) {
     console.log('[quickTrack] stepper updated:', JSON.parse(JSON.stringify(AppState.stepper)));
 
     // Go to "add-tracking" page WITHOUT resetting stepper state
-    const page = document.querySelector('[data-page="add-tracking"]');
+    const page = document.querySelector('.nav-item[data-page="add-tracking"]') ||
+        document.querySelector('.nav-item[data-page=add-tracking]');
     navigate(page, 'add-tracking', { skipReset: true });
 
     // Ensure step-4 content is visible and breadcrumb updated
@@ -1056,27 +1108,44 @@ async function loadModalSchedules() {
     const docId = document.getElementById('modal-doctor').value;
     const dateSel = document.getElementById('modal-date');
     const sessionSel = document.getElementById('modal-session');
+
+    // Reset to loading state
     dateSel.innerHTML = '<option value="">— 載入中… —</option>';
     dateSel.disabled = true;
     sessionSel.innerHTML = '<option value="">— 請先選擇日期 —</option>';
     sessionSel.disabled = true;
-    if (!docId) return;
 
-    AppState.stepper.doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
-
-    if (!AppState.stepper.doctorSchedules.length) {
-        dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
+    if (!docId) {
+        console.warn('[loadModalSchedules] No doctor ID found');
+        dateSel.innerHTML = '<option value="">— 錯誤：找不到醫師ID —</option>';
         return;
     }
 
-    const dates = [...new Set(AppState.stepper.doctorSchedules.map(s => s.session_date))];
-    dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
-        dates.map(d => {
-            const label = new Date(d + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
-            return `<option value="${d}">${label}</option>`;
-        }).join('');
-    dateSel.disabled = false;
-    dateSel.onchange = loadModalSessionsFromDate;
+    try {
+        console.log('[loadModalSchedules] Fetching schedules for doc:', docId);
+        AppState.stepper.doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
+
+        if (!AppState.stepper.doctorSchedules.length) {
+            console.log('[loadModalSchedules] No schedules returned for doc:', docId);
+            dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
+            return;
+        }
+
+        const dates = [...new Set(AppState.stepper.doctorSchedules.map(s => s.session_date))];
+        console.log('[loadModalSchedules] Found dates:', dates);
+        dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
+            dates.map(d => {
+                // Cross-browser safe date parsing (Safari dislikes some ISO formats)
+                const parts = d.split('-');
+                const label = new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+                return `<option value="${d}">${label}</option>`;
+            }).join('');
+        dateSel.disabled = false;
+        dateSel.onchange = loadModalSessionsFromDate;
+    } catch (e) {
+        console.error('[loadModalSchedules] error:', e);
+        dateSel.innerHTML = `<option value="">— 載入失敗：${e.message} —</option>`;
+    }
 }
 
 function loadModalSessionsFromDate() {

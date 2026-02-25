@@ -4,7 +4,7 @@ from typing import Optional, List
 
 from app.database import get_supabase
 from app.models.hospital import HospitalOut, DepartmentOut, DoctorOut, SnapshotOut
-from app.core.timezone import now_tw, today_tw, today_tw_str, TAIWAN_TZ
+from app.core.timezone import now_tw, today_tw, TAIWAN_TZ
 
 router = APIRouter(prefix="/api", tags=["Hospitals"])
 
@@ -216,8 +216,14 @@ async def list_all_doctors(
     
     docs = []
     for d in result.data:
+        # Robustly handle joined department info
         dept = d.pop("departments", None)
-        d["department_name"] = dept.get("name") if isinstance(dept, dict) else None
+        if isinstance(dept, list) and len(dept) > 0:
+            dept = dept[0]
+        elif not isinstance(dept, dict):
+            dept = {}
+            
+        d["department_name"] = dept.get("name") if dept else None
         docs.append(d)
         
     return docs
