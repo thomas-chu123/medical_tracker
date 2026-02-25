@@ -969,7 +969,7 @@ function stepperNextFromStep4() {
     const dName = AppState.stepper.departmentName || '（未知科室）';
     const docName = AppState.stepper.doctorName || '（未知醫師）';
 
-    console.log('[stepperNextFromStep4] stepper state:', JSON.parse(JSON.stringify(_st)));
+    console.log('[stepperNextFromStep4] stepper state:', JSON.parse(JSON.stringify(AppState.stepper)));
     console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
 
     document.getElementById('confirm-summary').innerHTML = `
@@ -1034,7 +1034,7 @@ async function quickTrack(doctorId, doctorName) {
     document.getElementById('modal-doctor').value = AppState.stepper.doctorId;
     document.getElementById('modal-dept').value = AppState.stepper.departmentId;
 
-    console.log('[quickTrack] stepper updated:', JSON.parse(JSON.stringify(_st)));
+    console.log('[quickTrack] stepper updated:', JSON.parse(JSON.stringify(AppState.stepper)));
 
     // Go to "add-tracking" page WITHOUT resetting stepper state
     const page = document.querySelector('[data-page="add-tracking"]');
@@ -1541,7 +1541,7 @@ function escHtml(str) {
 
 // ── Boot ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    if (authToken) {
+    if (AppState.authToken) {
         await initApp();
     } else {
         document.getElementById('auth-page').classList.add('show');
