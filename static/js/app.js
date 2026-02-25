@@ -1169,37 +1169,76 @@ async function submitTracking(e) {
 // ── Notifications ─────────────────────────────────────────────
 
 
+let _allNotificationLogs = [];
+let _currentNotifTab = 'current';
+
 async function loadNotifications() {
-    const subs = await apiFetch('/api/tracking') || [];
+    const tbody = document.getElementById('notif-table-body');
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)"><div class="spinner"></div></td></tr>`;
+
+    // Always fetch from the new endpoint
+    const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
+    _allNotificationLogs = logs;
+
+    // Sort globally by sent_at descending
+    _allNotificationLogs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+
+    renderNotificationTable();
+}
+
+function switchNotifTab(tab) {
+    _currentNotifTab = tab;
+
+    // Update button styles
+    document.getElementById('btn-tab-notif-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
+    document.getElementById('btn-tab-notif-past').className = tab === 'past' ? 'btn btn-primary' : 'btn btn-secondary';
+
+    renderNotificationTable();
+}
+
+function renderNotificationTable() {
     const tbody = document.getElementById('notif-table-body');
 
-    if (!subs.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted)">尚無通知</td></tr>`;
+    if (!_allNotificationLogs.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)">尚無通知紀錄</td></tr>`;
         return;
     }
 
-    // Load logs for each sub
-    const allLogs = [];
-    for (const sub of subs.slice(0, 5)) {
-        const logs = await apiFetch(`/api/tracking/${sub.id}/logs`).catch(() => []) || [];
-        logs.forEach(l => { l._sub = sub; allLogs.push(l); });
-    }
-    allLogs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+    // Determine the boundary date: today string like 'YYYY-MM-DD'
+    const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    if (!allLogs.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted)">尚無通知紀錄</td></tr>`;
+    const filteredLogs = _allNotificationLogs.filter(l => {
+        const sessionDate = l.session_date || '1970-01-01'; // Fallback
+        if (_currentNotifTab === 'current') {
+            return sessionDate >= todayStr;
+        } else {
+            return sessionDate < todayStr;
+        }
+    });
+
+    if (!filteredLogs.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)">此分類下尚無紀錄</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = allLogs.map(l => `
+    tbody.innerHTML = filteredLogs.map(l => `
     <tr>
       <td style="color:var(--text-muted); font-size:13px">${new Date(l.sent_at).toLocaleString('zh-TW')}</td>
-      <td>${l._sub?.session_date || '—'} ${l._sub?.session_type || ''}</td>
+      <td>
+        <div style="font-weight:bold">${l.hospital_name ? escHtml(l.hospital_name) : '—'}</div>
+        <div style="font-size:12px;color:var(--text-muted)">${l.department_name ? escHtml(l.department_name) : '—'}</div>
+        <div style="font-size:12px;color:var(--text-muted)">${l.session_date || ''} ${l.session_type || ''}</div>
+      </td>
+      <td>
+        <div style="font-weight:bold">${l.doctor_name ? escHtml(l.doctor_name) : '—'}</div>
+        <div style="font-size:12px;color:var(--text-muted)">診間: ${l.clinic_room ? escHtml(l.clinic_room) : '—'}</div>
+      </td>
+      <td><span style="font-size:16px;font-weight:bold;color:var(--primary)">${l.current_number || '—'}</span></td>
       <td><span class="badge badge-warning">前 ${l.threshold} 號</span></td>
       <td>${l.channel === 'email' ? '📧 Email' : '📲 LINE'}</td>
       <td>${l.success
             ? '<span class="badge badge-success">成功</span>'
-            : '<span class="badge badge-danger">失敗</span>'}
+            : '<span class="badge badge-danger">失敗</span><br><span style="font-size:11px;color:var(--danger)">' + (l.error_message ? escHtml(l.error_message) : '') + '</span>'}
       </td>
     </tr>`).join('');
 }

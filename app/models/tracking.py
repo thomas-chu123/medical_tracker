@@ -85,3 +85,15 @@ class NotificationLogOut(BaseModel):
     error_message: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationLogRichOut(NotificationLogOut):
+    session_date: Optional[date] = None
+    session_type: Optional[str] = None
+    hospital_name: Optional[str] = None
+    doctor_name: Optional[str] = None
+    department_name: Optional[str] = None
+    clinic_room: Optional[str] = None
+    current_number: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)

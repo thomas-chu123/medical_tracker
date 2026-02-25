@@ -395,12 +395,20 @@
         <div class="section-header">
           <h2>📬 通知紀錄</h2>
         </div>
-        <div class="table-wrap">
+        
+        <div class="hs-tabs" style="margin-bottom:20px; display:flex; gap:10px; border-bottom:1px solid var(--border); padding-bottom:10px;">
+          <button class="btn btn-primary" id="btn-tab-notif-current" onclick="switchNotifTab('current')">📅 目前及未來的通知</button>
+          <button class="btn btn-secondary" id="btn-tab-notif-past" onclick="switchNotifTab('past')">⏳ 過去的通知</button>
+        </div>
+        
+        <div class="table-wrap" style="max-height: 500px; overflow-y: auto;">
           <table>
-            <thead>
+            <thead style="position: sticky; top: 0; background: var(--bg-hover); z-index: 1;">
               <tr>
                 <th>時間</th>
-                <th>門診</th>
+                <th>醫院 / 科室 / 日期</th>
+                <th>醫師 / 診間</th>
+                <th>目前號碼</th>
                 <th>門檻</th>
                 <th>管道</th>
                 <th>狀態</th>
@@ -408,7 +416,7 @@
             </thead>
             <tbody id="notif-table-body">
               <tr>
-                <td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted)">
+                <td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)">
                   <div class="spinner"></div>
                 </td>
               </tr>

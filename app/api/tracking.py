@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.database import get_supabase
-from app.models.tracking import TrackingCreate, TrackingUpdate, TrackingOut, TrackingRichOut, NotificationLogOut
+from app.models.tracking import TrackingCreate, TrackingUpdate, TrackingOut, TrackingRichOut, NotificationLogOut, NotificationLogRichOut
 from app.auth import get_current_user
 
 from app.core.timezone import today_tw_str
@@ -242,6 +242,113 @@ async def get_notification_logs(
         .execute()
     )
     return result.data
+
+@router.get("/logs/all", response_model=list[NotificationLogRichOut])
+async def get_all_notification_logs(current_user: dict = Depends(get_current_user)):
+    """獲取指定使用者的所有歷史與未來的通知紀錄，並附加詳細的門診資訊"""
+    supabase = get_supabase()
+    
+    # 1. First, find all subscriptions belonging to the user
+    subs_res = (
+        supabase.table("tracking_subscriptions")
+        .select("id, session_date, session_type, doctor_id, department_id")
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    user_subs = subs_res.data
+    
+    if not user_subs:
+        return []
+        
+    sub_map = {s["id"]: s for s in user_subs}
+    sub_ids = list(sub_map.keys())
+    
+    # 2. Fetch logs for these subscriptions
+    logs_res = (
+        supabase.table("notification_logs")
+        .select("*")
+        .in_("subscription_id", sub_ids)
+        .order("sent_at", desc=True)
+        .execute()
+    )
+    logs = logs_res.data
+    
+    if not logs:
+        return []
+
+    # 3. Enrich logs with hospital, doctor, department, and snapshot info
+    doctor_ids = list({s["doctor_id"] for s in user_subs if s.get("doctor_id")})
+    doctors_map = {}
+    if doctor_ids:
+        docs = supabase.table("doctors").select("id, name, hospital_id, department_id").in_("id", doctor_ids).execute()
+        doctors_map = {d["id"]: d for d in docs.data}
+        
+    dept_ids_set = {s["department_id"] for s in user_subs if s.get("department_id")}
+    for d in doctors_map.values():
+        if d.get("department_id"):
+            dept_ids_set.add(d["department_id"])
+    
+    depts_map = {}
+    if dept_ids_set:
+        depts = supabase.table("departments").select("id, name").in_("id", list(dept_ids_set)).execute()
+        depts_map = {d["id"]: d.get("name") for d in depts.data}
+        
+    hospital_ids = list({d.get("hospital_id") for d in doctors_map.values() if d.get("hospital_id")})
+    hospitals_map = {}
+    if hospital_ids:
+        hosps = supabase.table("hospitals").select("id, name").in_("id", hospital_ids).execute()
+        hospitals_map = {h["id"]: h["name"] for h in hosps.data}
+        
+    # Snapshots querying
+    ss_queries = []
+    for s in user_subs:
+        doc_id = s["doctor_id"]
+        s_date = s["session_date"]
+        # Only query snapshots if there's a doctor and date
+        if doc_id and s_date:
+            ss_queries.append(f"and(doctor_id.eq.{doc_id},session_date.eq.{s_date})")
+            
+    snapshots_map = {}
+    if ss_queries:
+        # Build an OR query to fetch relevant snapshots
+        or_filter = ",".join(ss_queries)
+        snaps = supabase.table("appointment_snapshots").select("*").or_(or_filter).execute()
+        for snap in snaps.data:
+            key = f"{snap['doctor_id']}_{snap['session_date']}"
+            if key not in snapshots_map:
+                snapshots_map[key] = snap
+            else:
+                # keep latest
+                if snap.get("scraped_at") and snapshots_map[key].get("scraped_at") and snap["scraped_at"] > snapshots_map[key]["scraped_at"]:
+                    snapshots_map[key] = snap
+                    
+    # 4. Assemble final data
+    enriched_logs = []
+    for log in logs:
+        sub = sub_map.get(log["subscription_id"], {})
+        doc = doctors_map.get(sub.get("doctor_id"), {})
+        
+        # determine dept
+        dept_id = sub.get("department_id") or doc.get("department_id")
+        dept_name = depts_map.get(dept_id)
+        hosp_name = hospitals_map.get(doc.get("hospital_id"))
+        
+        # get snapshot info
+        snap_key = f"{sub.get('doctor_id')}_{sub.get('session_date')}"
+        snap = snapshots_map.get(snap_key, {})
+        
+        log_obj = {**log}
+        log_obj["session_date"] = sub.get("session_date")
+        log_obj["session_type"] = sub.get("session_type")
+        log_obj["hospital_name"] = hosp_name
+        log_obj["doctor_name"] = doc.get("name")
+        log_obj["department_name"] = dept_name
+        log_obj["clinic_room"] = snap.get("clinic_room")
+        log_obj["current_number"] = snap.get("current_number")
+        enriched_logs.append(log_obj)
+
+    return enriched_logs
+
 @router.get("/debug/cmuh/{room}/{period}")
 async def debug_cmuh(room: str, period: str):
     from app.scrapers.cmuh import CMUHScraper
