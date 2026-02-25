@@ -1745,12 +1745,14 @@ async function switchAnalysisSheet(sheetId) {
     } else if (sheetId === 'sheet2') {
         await loadAnalysisHospitals('analysis-sheet2-hosp-select');
         await loadAnalysisCategories('analysis-sheet2-cat-select');
+        await loadAnalysisDepts('analysis-sheet2-hosp-select', 'analysis-sheet2-cat-select', 'analysis-sheet2-dept-select');
     } else if (sheetId === 'sheet3') {
         await loadAnalysisHospitals('rank-hosp-filter', true);
         await loadRankingTable();
     } else if (sheetId === 'sheet4') {
         await loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
         await loadAnalysisCategories('analysis-sheet4-cat-select');
+        await loadAnalysisDepts('analysis-sheet4-hosp-select', 'analysis-sheet4-cat-select', 'analysis-sheet4-dept-select');
         loadDoctorSpeedAnalysis();
     }
 }
