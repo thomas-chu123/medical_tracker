@@ -1205,7 +1205,7 @@ function renderTrackingCard(sub, isExpired = false) {
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNo = sub.appointment_number ? `${sub.appointment_number}` : '<span style="opacity:0.6">(未填寫)</span>';
 
-    const emailDisplay = sub.notify_email && AppState.currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
+    const emailDisplay = sub.notify_email && AppState.currentUser?.email ? `📧 Email (${AppState.currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
     if (sub.notify_email) {
         console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', AppState.currentUser);
     }
