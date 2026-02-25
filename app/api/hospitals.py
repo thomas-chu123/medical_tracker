@@ -275,10 +275,12 @@ async def get_doctor_latest_snapshot(doctor_id: str):
 async def get_doctor_schedules(doctor_id: str):
     """Return distinct session_date + session_type pairs available for this doctor."""
     supabase = get_supabase()
+    today = date.today()
     result = (
         supabase.table("appointment_snapshots")
         .select("session_date, session_type")
         .eq("doctor_id", doctor_id)
+        .gte("session_date", today.isoformat())
         .order("session_date", desc=False)
         .execute()
     )
