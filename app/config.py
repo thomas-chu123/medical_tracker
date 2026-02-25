@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     line_channel_secret: str = ""
 
     # Scraper
-    scrape_interval_minutes: int = 5
+    scrape_interval_minutes: int = 3
     request_timeout: int = 30
 
     # Notion Integration (Optional)
