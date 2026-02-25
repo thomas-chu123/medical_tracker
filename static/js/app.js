@@ -275,7 +275,7 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'admin') {
         switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(_st)));
+        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
         if (!options.skipReset) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
             Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
@@ -1739,18 +1739,18 @@ async function switchAnalysisSheet(sheetId) {
     }
 
     if (sheetId === 'sheet1') {
-        loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
-        loadAnalysisCategories('analysis-sheet1-cat-select');
+        await loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
+        await loadAnalysisCategories('analysis-sheet1-cat-select');
         loadDeptComparison();
     } else if (sheetId === 'sheet2') {
-        loadAnalysisHospitals('analysis-sheet2-hosp-select');
-        loadAnalysisCategories('analysis-sheet2-cat-select');
+        await loadAnalysisHospitals('analysis-sheet2-hosp-select');
+        await loadAnalysisCategories('analysis-sheet2-cat-select');
     } else if (sheetId === 'sheet3') {
-        loadAnalysisHospitals('rank-hosp-filter', true);
-        loadRankingTable();
+        await loadAnalysisHospitals('rank-hosp-filter', true);
+        await loadRankingTable();
     } else if (sheetId === 'sheet4') {
-        loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
-        loadAnalysisCategories('analysis-sheet4-cat-select');
+        await loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
+        await loadAnalysisCategories('analysis-sheet4-cat-select');
         loadDoctorSpeedAnalysis();
     }
 }
