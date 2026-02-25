@@ -57,9 +57,9 @@ const AppState = {
   // Charts
   charts: {
     crowdChart: null,
-    deptComparisonChart: null,
-    doctorComparisonChart: null,
-    doctorSpeedChart: null,
+    AppState.charts.deptComparisonChart: null,
+    AppState.charts.doctorComparisonChart: null,
+    AppState.charts.doctorSpeedChart: null,
   },
 
   // Analysis
@@ -259,7 +259,7 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'hospitals') {
         loadHospitalsPage();
     } else if (pageId === 'tracking') {
-        _currentTrackingTab = 'current';
+        AppState.tracking.currentTab = 'current';
         // Reset tab button styles
         const btnCurr = document.getElementById('btn-tab-tracking-current');
         const btnPast = document.getElementById('btn-tab-tracking-past');
@@ -278,7 +278,7 @@ function navigate(btn, pageId, options = {}) {
         console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, '_st BEFORE:', JSON.parse(JSON.stringify(_st)));
         if (!options.skipReset) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
-            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
             console.log('[navigate] _st RESET');
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
@@ -390,7 +390,6 @@ document.addEventListener('click', e => {
     }
 });
 
-let crowdChartInstance = null;
 function renderCrowdChart(stats) {
     const ctx = document.getElementById('crowd-chart');
     if (!ctx) return;
@@ -879,7 +878,6 @@ function renderDoctorCards(doctors) {
 }
 
 // ── Add Tracking Stepper ───────────────────────────────────────
-const _st = { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' };
 
 async function loadStepperHospitals() {
     const grid = document.getElementById('step1-hospital-grid');
@@ -891,8 +889,8 @@ async function loadStepperHospitals() {
 }
 
 async function stepperSelectHospital(hospId, hospName) {
-    _st.hospitalId = hospId; _st.hospitalName = hospName;
-    _st.cat = ''; _st.deptId = ''; _st.deptName = ''; _st.doctorId = ''; _st.doctorName = '';
+    AppState.stepper.hospitalId = hospId; AppState.stepper.hospitalName = hospName;
+    AppState.stepper.category = ''; AppState.stepper.departmentId = ''; AppState.stepper.departmentName = ''; AppState.stepper.doctorId = ''; AppState.stepper.doctorName = '';
     _stepperBreadcrumb();
     stepperGoTo(2);
     // Load categories or depts
@@ -913,12 +911,12 @@ async function stepperSelectHospital(hospId, hospName) {
 }
 
 async function stepperSelectCategory(cat) {
-    _st.cat = cat;
+    AppState.stepper.category = cat;
     document.querySelectorAll('#step2-category-chips .cat-chip').forEach(b =>
         b.classList.toggle('active', b.textContent === cat));
     const grid = document.getElementById('step2-dept-grid');
     grid.innerHTML = '<div class="spinner"></div>';
-    const depts = await apiFetch(`/api/hospitals/${_st.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
+    const depts = await apiFetch(`/api/hospitals/${AppState.stepper.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
     grid.innerHTML = _stepperDeptButtons(depts);
     _stepperBreadcrumb();
 }
@@ -930,7 +928,7 @@ function _stepperDeptButtons(depts) {
 }
 
 async function stepperSelectDept(deptId, deptName) {
-    _st.deptId = deptId; _st.deptName = deptName;
+    AppState.stepper.departmentId = deptId; AppState.stepper.departmentName = deptName;
     document.getElementById('modal-dept').value = deptId;
     _stepperBreadcrumb();
     stepperGoTo(3);
@@ -946,7 +944,7 @@ async function stepperSelectDept(deptId, deptName) {
 }
 
 async function stepperSelectDoctor(docId, docName) {
-    _st.doctorId = docId; _st.doctorName = docName;
+    AppState.stepper.doctorId = docId; AppState.stepper.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
     stepperGoTo(4);
@@ -967,16 +965,16 @@ function stepperNextFromStep4() {
         document.getElementById('notify-5').checked ? '前5號' : ''
     ].filter(Boolean).join('、');
 
-    const hName = _st.hospitalName || '（未知醫院）';
-    const dName = _st.deptName || '（未知科室）';
-    const docName = _st.doctorName || '（未知醫師）';
+    const hName = AppState.stepper.hospitalName || '（未知醫院）';
+    const dName = AppState.stepper.departmentName || '（未知科室）';
+    const docName = AppState.stepper.doctorName || '（未知醫師）';
 
     console.log('[stepperNextFromStep4] _st state:', JSON.parse(JSON.stringify(_st)));
     console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
 
     document.getElementById('confirm-summary').innerHTML = `
       <div>🏥 <b>醫院：</b>${escHtml(hName)}</div>
-      ${_st.cat ? `<div>🏷️ <b>類別：</b>${escHtml(_st.cat)}</div>` : ''}
+      ${AppState.stepper.category ? `<div>🏷️ <b>類別：</b>${escHtml(AppState.stepper.category)}</div>` : ''}
       <div>🩺 <b>科室：</b>${escHtml(dName)}</div>
       <div>👨‍⚕️ <b>醫師：</b>${escHtml(docName)}</div>
       <div>📅 <b>日期：</b>${date} ${session}診</div>
@@ -987,7 +985,7 @@ function stepperNextFromStep4() {
 }
 
 function stepperGoTo(step) {
-    _st.step = step;
+    AppState.stepper.step = step;
     for (let i = 1; i <= 5; i++) {
         document.getElementById(`step-${i}-content`).style.display = i === step ? '' : 'none';
     }
@@ -1002,7 +1000,7 @@ function stepperGoTo(step) {
 }
 
 function _stepperBreadcrumb() {
-    const parts = [_st.hospitalName, _st.cat, _st.deptName, _st.doctorName].filter(Boolean);
+    const parts = [AppState.stepper.hospitalName, AppState.stepper.category, AppState.stepper.departmentName, AppState.stepper.doctorName].filter(Boolean);
     const el = document.getElementById('stepper-breadcrumb');
     el.innerHTML = parts.map((p, i) => i < parts.length - 1
         ? `<span class="bc-link">${escHtml(p)}</span><span class="bc-sep">›</span>`
@@ -1015,26 +1013,26 @@ function cancelAddTracking() {
 
 async function quickTrack(doctorId, doctorName) {
     // Collect context from existing selections if possible
-    _st.hospitalId = _hsHospitalId;
-    _st.hospitalName = _hsHospitalName;
-    _st.deptId = '';
-    _st.deptName = '';
-    _st.doctorId = doctorId;
-    _st.doctorName = doctorName;
+    AppState.stepper.hospitalId = _hsHospitalId;
+    AppState.stepper.hospitalName = _hsHospitalName;
+    AppState.stepper.departmentId = '';
+    AppState.stepper.departmentName = '';
+    AppState.stepper.doctorId = doctorId;
+    AppState.stepper.doctorName = doctorName;
 
     // Use the new info endpoint to get perfect context
     const info = await apiFetch(`/api/doctors/${doctorId}/info`);
     console.log('[quickTrack] doctor info from API:', info);
     if (info) {
-        _st.hospitalId = info.hospital_id || info.hospitalId || _st.hospitalId;
-        _st.hospitalName = info.hospital_name || info.hospitalName || _st.hospitalName;
-        _st.deptId = info.department_id || info.deptId || _st.deptId;
-        _st.deptName = info.department_name || info.deptName || _st.deptName;
-        _st.doctorName = info.name || _st.doctorName;
+        AppState.stepper.hospitalId = info.hospital_id || info.hospitalId || AppState.stepper.hospitalId;
+        AppState.stepper.hospitalName = info.hospital_name || info.hospitalName || AppState.stepper.hospitalName;
+        AppState.stepper.departmentId = info.department_id || info.deptId || AppState.stepper.departmentId;
+        AppState.stepper.departmentName = info.department_name || info.deptName || AppState.stepper.departmentName;
+        AppState.stepper.doctorName = info.name || AppState.stepper.doctorName;
     }
 
-    document.getElementById('modal-doctor').value = _st.doctorId;
-    document.getElementById('modal-dept').value = _st.deptId;
+    document.getElementById('modal-doctor').value = AppState.stepper.doctorId;
+    document.getElementById('modal-dept').value = AppState.stepper.departmentId;
 
     console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
 
@@ -1053,7 +1051,6 @@ function openTrackingModal() { openAddTracking(); }
 function closeTrackingModal() { cancelAddTracking(); }
 
 // 醫師數據 – 傳給日期選單
-let _doctorSchedules = [];
 
 async function loadModalSchedules() {
     const docId = document.getElementById('modal-doctor').value;
@@ -1065,14 +1062,14 @@ async function loadModalSchedules() {
     sessionSel.disabled = true;
     if (!docId) return;
 
-    _doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
+    AppState.stepper.doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
 
-    if (!_doctorSchedules.length) {
+    if (!AppState.stepper.doctorSchedules.length) {
         dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
         return;
     }
 
-    const dates = [...new Set(_doctorSchedules.map(s => s.session_date))];
+    const dates = [...new Set(AppState.stepper.doctorSchedules.map(s => s.session_date))];
     dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
         dates.map(d => {
             const label = new Date(d + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
@@ -1088,7 +1085,7 @@ function loadModalSessionsFromDate() {
     sessionSel.innerHTML = '<option value="">— 選擇診次 —</option>';
     sessionSel.disabled = true;
     if (!date) return;
-    const sessions = _doctorSchedules
+    const sessions = AppState.stepper.doctorSchedules
         .filter(s => s.session_date === date && s.session_type)
         .map(s => s.session_type);
     const unique = [...new Set(sessions)];
@@ -1148,17 +1145,15 @@ async function showDoctorDetail(doctorId, name) {
 
 
 // ── Tracking list ─────────────────────────────────────────────
-let _allTrackingSubs = [];
-let _currentTrackingTab = 'current';
 
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking') || [];
-    _allTrackingSubs = subs;
+    AppState.tracking.subscriptions = subs;
     renderTrackingList();
 }
 
 function switchTrackingTab(tab) {
-    _currentTrackingTab = tab;
+    AppState.tracking.currentTab = tab;
     document.getElementById('btn-tab-tracking-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
     document.getElementById('btn-tab-tracking-past').className = tab === 'past' ? 'btn btn-primary' : 'btn btn-secondary';
     renderTrackingList();
@@ -1167,7 +1162,7 @@ function switchTrackingTab(tab) {
 function renderTrackingList() {
     const list = document.getElementById('tracking-list');
 
-    if (!_allTrackingSubs.length) {
+    if (!AppState.tracking.subscriptions.length) {
         list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
       <div class="empty-icon">🔔</div>
       <p>尚無追蹤設定<br><button class="btn btn-primary" onclick="openTrackingModal()" style="margin-top:12px">新增追蹤</button></p>
@@ -1178,13 +1173,13 @@ function renderTrackingList() {
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
     let subs;
-    if (_currentTrackingTab === 'current') {
-        subs = _allTrackingSubs.filter(s => (s.session_date || '') >= todayStr);
+    if (AppState.tracking.currentTab === 'current') {
+        subs = AppState.tracking.subscriptions.filter(s => (s.session_date || '') >= todayStr);
     } else {
-        subs = _allTrackingSubs.filter(s => (s.session_date || '') < todayStr);
+        subs = AppState.tracking.subscriptions.filter(s => (s.session_date || '') < todayStr);
     }
 
-    const isExpiredTab = _currentTrackingTab === 'past';
+    const isExpiredTab = AppState.tracking.currentTab === 'past';
 
     if (!subs.length) {
         list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
@@ -1327,8 +1322,6 @@ async function submitTracking(e) {
 // ── Notifications ─────────────────────────────────────────────
 
 
-let _allNotificationLogs = [];
-let _currentNotifTab = 'current';
 
 async function loadNotifications() {
     const tbody = document.getElementById('notif-table-body');
@@ -1336,16 +1329,16 @@ async function loadNotifications() {
 
     // Always fetch from the new endpoint
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
-    _allNotificationLogs = logs;
+    AppState.notifications.logs = logs;
 
     // Sort globally by sent_at descending
-    _allNotificationLogs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+    AppState.notifications.logs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
 
     renderNotificationTable();
 }
 
 function switchNotifTab(tab) {
-    _currentNotifTab = tab;
+    AppState.notifications.currentTab = tab;
 
     // Update button styles
     document.getElementById('btn-tab-notif-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
@@ -1357,7 +1350,7 @@ function switchNotifTab(tab) {
 function renderNotificationTable() {
     const tbody = document.getElementById('notif-table-body');
 
-    if (!_allNotificationLogs.length) {
+    if (!AppState.notifications.logs.length) {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)">尚無通知紀錄</td></tr>`;
         return;
     }
@@ -1365,9 +1358,9 @@ function renderNotificationTable() {
     // Determine the boundary date: today string like 'YYYY-MM-DD'
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    const filteredLogs = _allNotificationLogs.filter(l => {
+    const filteredLogs = AppState.notifications.logs.filter(l => {
         const sessionDate = l.session_date || '1970-01-01'; // Fallback
-        if (_currentNotifTab === 'current') {
+        if (AppState.notifications.currentTab === 'current') {
             return sessionDate >= todayStr;
         } else {
             return sessionDate < todayStr;
@@ -1730,10 +1723,6 @@ async function deleteAdminTracking(id) {
 }
 
 /* ── Chart Analysis ─────────────────────────────────────────── */
-let deptComparisonChart = null;
-let doctorComparisonChart = null;
-let doctorSpeedChart = null;
-let allRankingData = [];
 
 async function switchAnalysisSheet(sheetId) {
     document.querySelectorAll('.analysis-tab-content').forEach(el => el.style.display = 'none');
@@ -1777,8 +1766,8 @@ async function loadDeptComparison() {
         const stats = await apiFetch(`/api/stats/dept-comparison?hospital_id=${hospId}&category=${encodeURIComponent(cat)}`);
         if (!stats) return;
 
-        if (deptComparisonChart) deptComparisonChart.destroy();
-        deptComparisonChart = new Chart(ctx, {
+        if (AppState.charts.deptComparisonChart) AppState.charts.deptComparisonChart.destroy();
+        AppState.charts.deptComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -1871,8 +1860,8 @@ async function refreshDoctorComparison() {
         const stats = await apiFetch(url);
         if (!stats) return;
 
-        if (doctorComparisonChart) doctorComparisonChart.destroy();
-        doctorComparisonChart = new Chart(ctx, {
+        if (AppState.charts.doctorComparisonChart) AppState.charts.doctorComparisonChart.destroy();
+        AppState.charts.doctorComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -1911,8 +1900,8 @@ async function loadDoctorSpeedAnalysis() {
         const stats = await apiFetch(url);
         if (!stats) return;
 
-        if (doctorSpeedChart) doctorSpeedChart.destroy();
-        doctorSpeedChart = new Chart(ctx, {
+        if (AppState.charts.doctorSpeedChart) AppState.charts.doctorSpeedChart.destroy();
+        AppState.charts.doctorSpeedChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -1944,8 +1933,8 @@ async function loadDoctorSpeedAnalysis() {
 async function loadRankingTable() {
     const tbody = document.getElementById('ranking-table-body');
     try {
-        allRankingData = await apiFetch('/api/stats/dept-ranking') || [];
-        renderRankingTable(allRankingData);
+        AppState.analysis.ranking = await apiFetch('/api/stats/dept-ranking') || [];
+        renderRankingTable(AppState.analysis.ranking);
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger)">載入失敗: ${e.message}</td></tr>`;
     }
@@ -1973,7 +1962,7 @@ function filterRankingTable() {
     const hospName = hospId ? hospSelect.options[hospSelect.selectedIndex].text : '';
     const deptQ = document.getElementById('rank-dept-filter').value.toLowerCase();
 
-    const filtered = allRankingData.filter(v => {
+    const filtered = AppState.analysis.ranking.filter(v => {
         const matchHosp = !hospName || v.hospital_name === hospName;
         const matchDept = !deptQ || v.dept_name.toLowerCase().includes(deptQ);
         return matchHosp && matchDept;
