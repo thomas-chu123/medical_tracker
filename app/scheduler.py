@@ -385,6 +385,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         total_quota = slot.total_quota
         status = slot.status
         waiting_list = []
+        clinic_queue_details = []
 
         # User's dynamic time gates for real-time progress (current_number):
         # 上午診: 08:00, 下午診: 13:30, 晚上診: 18:00
@@ -403,14 +404,15 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             elif slot.session_type == "晚上" and now.hour >= 18:
                 should_fetch_realtime = True
 
-
         # If it's time to fetch real-time progress
         if should_fetch_realtime and slot.clinic_room:
             period_map = {"上午": "1", "下午": "2", "晚上": "3"}
             period = period_map.get(slot.session_type, "1")
             try:
+                logger.debug(f"[Scheduler] Fetching realtime for {slot.clinic_room}診 period={period}")
                 progress = await scraper.fetch_clinic_progress(slot.clinic_room, period)
                 if progress:
+                    logger.debug(f"[Scheduler] Got progress: current_number={progress.current_number}, queue_items={len(progress.clinic_queue_details) if progress.clinic_queue_details else 0}")
                     current_number = progress.current_number
                     # Standardized: registered_count = Headcount (人數), total_quota = Max Number (總號)
                     if progress.registered_count:
@@ -421,8 +423,11 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         status = progress.status
                     if progress.waiting_list:
                         waiting_list = progress.waiting_list
-            except Exception:
-                pass
+                    if progress.clinic_queue_details:
+                        clinic_queue_details = progress.clinic_queue_details
+                        logger.debug(f"[Scheduler] Set clinic_queue_details: {len(clinic_queue_details)} items")
+            except Exception as e:
+                logger.error(f"[Scheduler] Error fetching realtime for {slot.clinic_room}診: {e}")
 
 
         row = {
@@ -436,7 +441,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "status": status,
             "scraped_at": now_utc_str(),
         }
-        # Only write current_number / total_quota / waiting_list if we actually have values.
+        # Only write current_number / total_quota / waiting_list / clinic_queue_details if we actually have values.
         # This prevents the排班 (schedule) UPSERT from overwriting previously scraped
         # real-time progress data with null values when the clinic hasn't opened yet.
         if current_number is not None:
@@ -445,6 +450,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             row["total_quota"] = total_quota
         if waiting_list:
             row["waiting_list"] = waiting_list
+        if clinic_queue_details:
+            row["clinic_queue_details"] = clinic_queue_details
         return row
 
     except Exception as e:

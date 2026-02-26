@@ -745,6 +745,22 @@
     </div>
   </div>
 
+  <!-- Clinic Waiting List Modal -->
+  <div class="modal-overlay" id="clinic-waiting-modal" onclick="closeModalIfOverlay(event)">
+    <div class="modal" style="max-width:600px; max-height:80vh; overflow-y:auto">
+      <div class="modal-header">
+        <div>
+          <h3 id="clinic-waiting-title">診間等候列表</h3>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px" id="clinic-waiting-subtitle">—</div>
+        </div>
+        <button class="modal-close" onclick="document.getElementById('clinic-waiting-modal').classList.remove('open')">✕</button>
+      </div>
+      <div id="clinic-waiting-body" class="modal-body">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Doctor snapshot modal -->
   <div class="modal-overlay" id="doctor-modal" onclick="closeModalIfOverlay(event)">
     <div class="modal">

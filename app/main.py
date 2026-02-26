@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, users, hospitals, tracking, stats, admin, webhooks
+from app.api import auth, users, hospitals, tracking, stats, admin, webhooks, snapshots
 from app.scheduler import start_scheduler, stop_scheduler
 from app.config import get_settings
 from app.auth import seed_super_user
@@ -63,6 +63,7 @@ app.include_router(users.router)
 app.include_router(hospitals.router)
 app.include_router(tracking.router)
 app.include_router(stats.router)
+app.include_router(snapshots.router)
 app.include_router(admin.router)
 app.include_router(webhooks.router)  # LINE Message API webhook
 

@@ -452,8 +452,13 @@ function renderClinicCard(sub, snap) {
     // 6. ETA Display
     const etaHtml = eta ? `<div style="font-size:12px; color:var(--primary); margin-top:4px">⏱️ 預計看診：<strong>${eta}</strong></div>` : '';
 
+    // Create onclick handler - show waiting list when clicked
+    const clinicRoom = sub.clinic_room || snap?.clinic_room;
+    const onclickHandler = clinicRoom ? `onclick="showClinicWaitingList('${escHtml(sub.doctor_name || 'N/A')}', '${escHtml(clinicRoom)}', '${sub.doctor_id}')"` : '';
+    const cursorStyle = clinicRoom ? 'cursor:pointer;' : '';
+
     return `
-  <div class="clinic-card ${isFinished ? 'status-finished' : ''}">
+  <div class="clinic-card ${isFinished ? 'status-finished' : ''}" style="${cursorStyle}" ${onclickHandler}>
     <div class="doctor-name">👨‍⚕️ ${escHtml(doctorLabel)} ${statusBadge}</div>
     ${deptLabel ? `<div style="font-size:12px; color:var(--text-muted); margin-bottom:2px">🏥 ${escHtml(hospLabel)}｜${escHtml(deptLabel)}</div>` : ''}
     <div style="margin-bottom: 8px;">
@@ -491,6 +496,108 @@ async function refreshAll() {
         toast('更新失敗', 'error');
     }
 }
+
+async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
+    const modal = document.getElementById('clinic-waiting-modal');
+    document.getElementById('clinic-waiting-title').textContent = `🚪 診間 ${escHtml(clinicRoom)}診 - ${escHtml(doctorName)}`;
+    document.getElementById('clinic-waiting-body').innerHTML = '<div class="spinner"></div>';
+    
+    modal.classList.add('open');
+    
+    try {
+        // Fetch latest snapshot for this doctor's clinic room
+        const snap = await apiFetch(`/api/snapshots/doctor/${doctorId}/current?clinic_room=${encodeURIComponent(clinicRoom)}`);
+        if (!snap) {
+            document.getElementById('clinic-waiting-body').innerHTML = 
+                '<div class="empty-state"><p>無法獲取候診列表資料</p></div>';
+            return;
+        }
+        
+        // Get today's date (Taiwan timezone)
+        const today = new Date();
+        today.setMilliseconds(0);
+        const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+        const sessionDate = snap.session_date || '';
+        const isToday = sessionDate === todayStr;
+        
+        // Update subtitle based on whether it's today
+        if (isToday) {
+            document.getElementById('clinic-waiting-subtitle').textContent = `原生候診列表 (每3分鐘更新)`;
+        } else {
+            document.getElementById('clinic-waiting-subtitle').textContent = `${sessionDate} 排班信息（未來日期，無實時進度）`;
+        }
+        
+        const queueDetails = snap.clinic_queue_details || [];
+        
+        // Build statistics section
+        let html = `
+            <div style="padding:16px">
+                <div style="background:var(--bg-elevated); padding:16px; border-radius:8px; margin-bottom:16px">
+                    <div style="font-weight:600; margin-bottom:12px">📊 統計資訊</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:13px">
+                        <div><span style="color:var(--text-muted)">目前號碼：</span><strong style="font-size:16px">${snap.current_number || '—'}</strong></div>
+                        <div><span style="color:var(--text-muted)">已掛號人數：</span><strong>${snap.current_registered || '—'}</strong></div>
+                        <div><span style="color:var(--text-muted)">總名額：</span><strong>${snap.total_quota || '—'}</strong></div>
+                        ${isToday ? `<div><span style="color:var(--text-muted)">等候人數：</span><strong>${queueDetails.filter(q => q.status === '未看診').length}</strong></div>` : ''}
+                    </div>
+                </div>
+        `;
+        
+        // Only show queue details if it's today
+        if (!isToday) {
+            document.getElementById('clinic-waiting-body').innerHTML = html + '<div class="empty-state"><p>⏳ 該日期為未來排班，醫院只提供當日的實時進度資料</p></div></div>';
+            return;
+        }
+        
+        // If no queue details, show simple message
+        if (!queueDetails || queueDetails.length === 0) {
+            html += '<div class="empty-state"><p>目前無候診資料</p></div>';
+            document.getElementById('clinic-waiting-body').innerHTML = html + '</div>';
+            return;
+        }
+        
+        // Build scrollable table
+        html += `
+                <div style="border-radius:8px; border:1px solid var(--border-subtle); overflow:hidden; max-height:400px; overflow-y:auto">
+                    <table style="width:100%; border-collapse:collapse; font-size:13px">
+                        <thead style="position:sticky; top:0; background:var(--bg-elevated); z-index:10">
+                            <tr style="border-bottom:1px solid var(--border-subtle)">
+                                <th style="padding:12px; text-align:center; font-weight:600; width:40%">看診號</th>
+                                <th style="padding:12px; text-align:center; font-weight:600; width:60%">目前看診情形</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+        
+        queueDetails.forEach((item, idx) => {
+            const isCurrent = item.number === snap.current_number;
+            const rowBg = isCurrent ? 'background:var(--danger); color:white' : 
+                         item.status === '完成' ? 'background:var(--bg-elevated)' : '';
+            const rowStyle = rowBg ? `style="${rowBg}"` : '';
+            
+            html += `
+                            <tr ${rowStyle} style="border-bottom:1px solid var(--border-subtle)">
+                                <td style="padding:12px; text-align:center; font-weight:600">${item.number}</td>
+                                <td style="padding:12px; text-align:center">${item.status}</td>
+                            </tr>
+            `;
+        });
+        
+        html += `
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('clinic-waiting-body').innerHTML = html;
+    } catch (err) {
+        console.error('Error loading waiting list:', err);
+        document.getElementById('clinic-waiting-body').innerHTML = 
+            '<div class="empty-state"><p>載入失敗，請稍後重試</p></div>';
+    }
+}
+
 
 // ── Combobox engine ───────────────────────────────────────────
 // Each combobox: { cbId, items: [{value, label}], onSelect, inputId }

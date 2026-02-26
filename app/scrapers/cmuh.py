@@ -388,6 +388,7 @@ class CMUHScraper(BaseScraper):
         # 2. Extract Quota and Registered Count from table
         numbers = []
         waiting_list = []
+        clinic_queue_details = []  # Store [{"number": X, "status": "Y"}, ...]
         patient_rows = 0
         rows = soup.find_all("tr")
         for row in rows:
@@ -400,6 +401,8 @@ class CMUHScraper(BaseScraper):
                 if val is not None and val_str.isdigit():
                     numbers.append(val)
                     patient_rows += 1
+                    # Store queue detail with number and status
+                    clinic_queue_details.append({"number": val, "status": val_status})
                     if val_status == "未看診":
                         waiting_list.append(val)
 
@@ -418,7 +421,8 @@ class CMUHScraper(BaseScraper):
             total_quota=max_num,        # Maximum Number
             registered_count=headcount, # Headcount
             status=status,
-            waiting_list=waiting_list
+            waiting_list=waiting_list,
+            clinic_queue_details=clinic_queue_details  # Pass queue details
         )
 
     # ─────────────────────────────────────────────────────────

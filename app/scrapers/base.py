@@ -37,6 +37,7 @@ class ClinicProgress:
     registered_count: Optional[int] = None
     status: Optional[str] = None
     waiting_list: list[int] = field(default_factory=list)
+    clinic_queue_details: list[dict] = field(default_factory=list)  # [{"number": 1, "status": "完成"}, ...]
 
 
 class BaseScraper(ABC):
