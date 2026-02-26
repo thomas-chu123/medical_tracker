@@ -119,6 +119,7 @@ async def test_sends_notification_when_threshold_crossed(
         current_number=5,
         remaining=9,
         threshold=10,
+        appointment_number=15,
     )
     assert mock_run.call_count >= 4
 
@@ -226,4 +227,5 @@ async def test_multiple_thresholds_trigger_once(
         current_number=5,
         remaining=4,
         threshold=20,
+        appointment_number=10,
     )
