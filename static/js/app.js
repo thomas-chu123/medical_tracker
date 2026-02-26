@@ -1176,7 +1176,7 @@ async function openQuickTrackModal(qtState) {
     document.getElementById('qt-notify-10').checked = true;
     document.getElementById('qt-notify-5').checked = true;
     document.getElementById('qt-notify-email').checked = true;
-    document.getElementById('qt-notify-line').checked = false;
+    document.getElementById('qt-notify-line').checked = true;
     
     // Load schedules
     document.getElementById('qt-date').innerHTML = '<option value="">— 載入中… —</option>';
