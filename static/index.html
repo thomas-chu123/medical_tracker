@@ -62,11 +62,6 @@
           <input type="text" id="reg-line-user-id" placeholder="例：U92a007fe0868a7feec8691d6e8c8172f">
           <small style="color: var(--text-muted); font-size: 12px;">可在註冊後於設定頁面添加</small>
         </div>
-        <div class="form-group">
-          <label>LINE Notify Token（可選）</label>
-          <input type="text" id="reg-line-token" placeholder="您的 LINE Notify Token">
-          <small style="color: var(--text-muted); font-size: 12px;">可在註冊後於設定頁面添加</small>
-        </div>
         <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; margin-top:4px;"
           id="register-btn">
           建立帳號
@@ -595,20 +590,13 @@
           <div class="card">
             <h3 style="margin-bottom:8px; font-size:16px">📲 LINE 設定</h3>
             <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px">
-              設定 LINE User ID 或 LINE Notify Token 以接收通知
+              設定 LINE User ID 以接收通知
             </p>
             <form onsubmit="saveLineSettings(event)">
               <div class="form-group">
-                <label>LINE User ID（推薦）</label>
+                <label>LINE User ID</label>
                 <input type="text" id="line-user-id" placeholder="例：U92a007fe0868a7feec8691d6e8c8172f">
                 <small style="color: var(--text-muted); font-size: 12px;">自動從 LINE Bot 收集，或手動輸入</small>
-              </div>
-              <div class="form-group">
-                <label>LINE Notify Token（已淘汰）</label>
-                <input type="text" id="line-token" placeholder="輸入您的 LINE Notify Token">
-                <small style="color: var(--text-muted); font-size: 12px;">
-                  前往 <a href="https://notify-bot.line.me/zh_TW/" target="_blank">LINE Notify</a> 申請權杖後填入
-                </small>
               </div>
               <button type="submit" class="btn btn-primary">儲存</button>
             </form>
