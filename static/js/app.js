@@ -114,6 +114,8 @@ async function handleRegister(e) {
             email: document.getElementById('reg-email').value,
             password: document.getElementById('reg-password').value,
             display_name: document.getElementById('reg-name').value,
+            line_user_id: document.getElementById('reg-line-user-id').value || undefined,
+            line_notify_token: document.getElementById('reg-line-token').value || undefined,
         });
         toast(res.message || '帳號建立成功！請登入', 'success', 8000);
         switchTab('login');
@@ -163,6 +165,8 @@ async function initApp(userFromLogin = null) {
     document.getElementById('user-name-display').textContent = name;
     document.getElementById('user-avatar').textContent = name[0].toUpperCase();
     document.getElementById('profile-name').value = name;
+    if (currentUser.line_user_id)
+        document.getElementById('line-user-id').value = currentUser.line_user_id;
     if (currentUser.line_notify_token)
         document.getElementById('line-token').value = currentUser.line_notify_token;
 
@@ -1662,11 +1666,17 @@ async function saveProfile(e) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function saveLineToken(e) {
+async function saveLineSettings(e) {
     e.preventDefault();
     try {
-        await apiPatch('/api/users/me', { line_notify_token: document.getElementById('line-token').value });
-        toast('LINE Notify Token 已儲存', 'success');
+        const lineUserId = document.getElementById('line-user-id').value.trim();
+        const lineNotifyToken = document.getElementById('line-token').value.trim();
+        
+        await apiPatch('/api/users/me', {
+            line_user_id: lineUserId || null,
+            line_notify_token: lineNotifyToken || null
+        });
+        toast('LINE 設定已儲存', 'success');
     } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -1678,11 +1688,13 @@ async function loadProfile() {
         currentUser = profile;
         const nameEl = document.getElementById('profile-name');
         const emailEl = document.getElementById('profile-email');
-        const lineEl = document.getElementById('line-token');
+        const lineUserIdEl = document.getElementById('line-user-id');
+        const lineTokenEl = document.getElementById('line-token');
 
         if (nameEl) nameEl.value = profile.display_name || '';
         if (emailEl) emailEl.value = profile.email || '（未提供）';
-        if (lineEl) lineEl.value = profile.line_notify_token || '';
+        if (lineUserIdEl) lineUserIdEl.value = profile.line_user_id || '';
+        if (lineTokenEl) lineTokenEl.value = profile.line_notify_token || '';
     }
 }
 

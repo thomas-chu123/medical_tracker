@@ -28,6 +28,12 @@ async def register(data: UserRegister):
         "verification_token": v_token,
         "is_verified": False
     }
+    
+    # Add LINE identifiers if provided
+    if data.line_user_id:
+        user_payload["line_user_id"] = data.line_user_id
+    if data.line_notify_token:
+        user_payload["line_notify_token"] = data.line_notify_token
 
     try:
         res = supabase.table("users_local").insert(user_payload).execute()

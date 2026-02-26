@@ -9,6 +9,8 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str
     display_name: Optional[str] = None
+    line_user_id: Optional[str] = None
+    line_notify_token: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -37,6 +39,7 @@ class UserProfile(BaseModel):
     id: UUID
     email: str
     display_name: Optional[str] = None
+    line_user_id: Optional[str] = None
     line_notify_token: Optional[str] = None
     is_admin: bool = False
     is_verified: bool = False
@@ -49,6 +52,7 @@ class UserProfileOut(BaseModel):
     id: UUID
     email: str
     display_name: Optional[str] = None
+    line_user_id: Optional[str] = None
     line_notify_token: Optional[str] = None
     is_admin: bool = False
     created_at: datetime
@@ -58,6 +62,7 @@ class UserProfileOut(BaseModel):
 
 class UserProfileUpdate(BaseModel):
     display_name: Optional[str] = None
+    line_user_id: Optional[str] = None
     line_notify_token: Optional[str] = None
 
 
