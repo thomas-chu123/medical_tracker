@@ -248,7 +248,7 @@ async function loadDashboard() {
     // 3. Fire requests in parallel including crowd-analysis
     const [gStats, subs, crowdStats] = await Promise.all([
         apiFetch(`/api/stats/global${qs}`).catch(() => null),
-        apiFetch('/api/tracking').catch(() => []),
+        apiFetch('/api/tracking/').catch(() => []),
         apiFetch(`/api/stats/crowd-analysis${qs}`).catch(() => null),
     ]);
 
@@ -1274,7 +1274,7 @@ async function submitQuickTrack() {
     };
     
     try {
-        const result = await apiFetch('/api/tracking', { method: 'POST', body: payload });
+        const result = await apiFetch('/api/tracking/', { method: 'POST', body: payload });
         closeQuickTrackModal();
         toast(`成功追蹤 ${escHtml(_qtState.doctorName)} 的門診`, 'success');
         // Refresh tracking list if on tracking page
@@ -1409,7 +1409,7 @@ let _allTrackingSubs = [];
 let _currentTrackingTab = 'current';
 
 async function loadTracking() {
-    const subs = await apiFetch('/api/tracking') || [];
+    const subs = await apiFetch('/api/tracking/') || [];
     _allTrackingSubs = subs;
     renderTrackingList();
 }
@@ -1562,7 +1562,7 @@ async function submitTracking(e) {
     const apptNum = apptNumValue ? parseInt(apptNumValue, 10) : null;
 
     try {
-        await apiPost('/api/tracking', {
+        await apiPost('/api/tracking/', {
             doctor_id: docId,
             department_id: deptId || undefined,
             session_date: sessionDate,
