@@ -575,6 +575,9 @@ async function loadHospitalsPage() {
     buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name })), async (hospId, hospName) => {
         _hsHospitalId = hospId;
         _hsHospitalName = hospName;
+        // 🔴 FIX: Clear previous state when switching hospitals
+        _currentHsDeptId = null;
+        allDoctors = [];
         document.getElementById('hs-category-wrap').style.display = 'none';
         document.getElementById('hs-dept-wrap').style.display = 'none';
         document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
@@ -624,6 +627,14 @@ async function hsSelectCategory(hospId, hospName, cat) {
     // Reset dept search when switching category
     const deptSearchEl = document.getElementById('dept-search');
     if (deptSearchEl) { deptSearchEl.value = ''; deptSearchEl.dataset.lastVal = ''; }
+    
+    // Reset doctor search
+    const docSearchEl = document.getElementById('doctor-search');
+    if (docSearchEl) { docSearchEl.value = ''; }
+    
+    // 🔴 FIX: Clear state when switching categories
+    _currentHsDeptId = null;
+    allDoctors = [];
 
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
     const depts = await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [];
@@ -647,6 +658,8 @@ function _hsRenderDeptGrid(hospId, hospName, cat, depts) {
     const grid = document.getElementById('hs-dept-grid');
     // Store for filter
     _hsDeptAll = { depts, hospName, cat };
+    _currentHsDeptId = null; // 🔴 FIX: Clear dept selection
+    allDoctors = []; // 🔴 FIX: Clear doctors list when switching categories
     label.textContent = cat ? `${cat} — 請選擇科室` : '請選擇科室';
     grid.innerHTML = depts.length
         ? _hsDeptButtons(depts, hospName, cat)
@@ -669,6 +682,7 @@ function filterHospitalSearch() {
     const prevDq = dsNode?.dataset.lastVal || '';
     if (dq !== prevDq && dsNode) {
         _currentHsDeptId = null; // Unselect dept if user manually edits dept-search
+        allDoctors = []; // 🔴 FIX: Clear doctors when dept is unselected
         dsNode.dataset.lastVal = dq;
     }
 
@@ -703,6 +717,7 @@ function filterHospitalSearch() {
 
         if (!docq && !_currentHsDeptId) {
             // Revert to empty state if no search text and no department selected
+            allDoctors = []; // 🔴 FIX: Additional safeguard to clear doctors in empty state
             document.getElementById('doctors-grid').innerHTML =
                 '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
             return;
