@@ -411,9 +411,41 @@ async def get_categories():
 # Background Cache Refresher
 async def refresh_stats_cache_task():
     """Periodically refreshes the global and crowd statistics cache."""
-    await asyncio.sleep(5) # Give some time for app startup
+    # Immediately fill cache on startup (no sleep)
+    try:
+        logger.info("🔄 Initializing dashboard stats cache on startup...")
+        supabase = get_supabase()
+        
+        # 1. Get all hospitals
+        hospitals_res = supabase.table("hospitals").select("id").execute()
+        hosp_ids = [h["id"] for h in hospitals_res.data]
+        
+        # 2. Add 'None' for 'All Hospitals'
+        target_hids = [None] + hosp_ids
+        
+        for hid in target_hids:
+            cache_key = hid or "all"
+            
+            # Global Stats
+            g_stats = await calculate_global_stats(hid)
+            _STATS_CACHE["global"][cache_key] = g_stats
+            
+            # Crowd Analysis
+            c_stats = await calculate_crowd_analysis(hid)
+            _STATS_CACHE["crowd"][cache_key] = c_stats
+            
+            # Small sleep to be nice to DB during background refresh
+            await asyncio.sleep(0.5)
+            
+        logger.info(f"✅ Dashboard stats cache initialized for {len(target_hids)} targets.")
+        
+    except Exception as e:
+        logger.error(f"❌ Error initializing stats cache: {e}")
+    
+    # Then refresh every hour
     while True:
         try:
+            await asyncio.sleep(3600)  # Sleep first
             logger.info("🔄 Refreshing dashboard stats cache...")
             supabase = get_supabase()
             
@@ -442,9 +474,6 @@ async def refresh_stats_cache_task():
             
         except Exception as e:
             logger.error(f"❌ Error refreshing stats cache: {e}")
-            
-        # Refresh every hour
-        await asyncio.sleep(3600)
 
 def start_stats_refresher():
     """Initiates the background stats refresher task."""
