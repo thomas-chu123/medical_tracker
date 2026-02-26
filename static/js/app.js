@@ -915,9 +915,14 @@ async function stepperSelectDept(deptId, deptName) {
     const grid = document.getElementById('step3-doctor-grid');
     grid.innerHTML = docs.length
         ? docs.map(d => `
-            <div class="card" style="cursor:pointer" onclick="stepperSelectDoctor('${d.id}','${escHtml(d.name)}')">
-              <div style="font-weight:600">👨‍⚕️ ${escHtml(d.name)}</div>
-              <div style="font-size:12px;color:var(--text-muted)">${escHtml(d.specialty || '')}</div>
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer" onclick="stepperSelectDoctor('${d.id}','${escHtml(d.name)}')">
+                <div style="flex:1">
+                  <div style="font-weight:600">👨‍⚕️ ${escHtml(d.name)}</div>
+                  <div style="font-size:12px;color:var(--text-muted)">${escHtml(d.specialty || '')}</div>
+                </div>
+                <button class="btn btn-primary" onclick="event.stopPropagation(); quickTrack('${d.id}','${escHtml(d.name)}')" style="margin-left:12px; white-space:nowrap; padding:4px 8px; font-size:11px;">＋ 追蹤</button>
+              </div>
             </div>`).join('')
         : '<div class="empty-state"><p>此科室無醫師</p></div>';
 }
@@ -926,8 +931,9 @@ async function stepperSelectDoctor(docId, docName) {
     _st.doctorId = docId; _st.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
-    stepperGoTo(4);
-    await loadModalSchedules();
+    
+    // Show doctor detail (clinic schedule) in modal first
+    await showDoctorDetail(docId, docName);
 }
 
 function stepperNextFromStep4() {
@@ -975,7 +981,31 @@ function stepperGoTo(step) {
     });
     const subtitles = ['選擇醫院', '選擇科室', '選擇醫師', '選擇日期與設定通知', '確認並送出'];
     document.getElementById('stepper-subtitle').textContent = subtitles[step - 1] || '';
+    
+    // Show/hide back button (hide on first step)
+    const backBtn = document.getElementById('stepper-back-btn');
+    if (backBtn) {
+        backBtn.style.display = step > 1 ? '' : 'none';
+    }
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function stepperPrevious() {
+    if (_st.step > 1) {
+        // Handle cleanup based on current step
+        if (_st.step === 3) {
+            // Going back from doctor selection
+            _st.doctorId = '';
+            _st.doctorName = '';
+        } else if (_st.step === 4) {
+            // Going back from date/settings
+            document.getElementById('modal-date').value = '';
+            document.getElementById('modal-session').value = '';
+            document.getElementById('modal-appointment-number').value = '';
+        }
+        stepperGoTo(_st.step - 1);
+    }
 }
 
 function _stepperBreadcrumb() {
@@ -991,38 +1021,156 @@ function cancelAddTracking() {
 }
 
 async function quickTrack(doctorId, doctorName) {
-    // Collect context from existing selections if possible
-    _st.hospitalId = _hsHospitalId;
-    _st.hospitalName = _hsHospitalName;
-    _st.deptId = '';
-    _st.deptName = '';
-    _st.doctorId = doctorId;
-    _st.doctorName = doctorName;
-
-    // Use the new info endpoint to get perfect context
+    // Fetch doctor info
     const info = await apiFetch(`/api/doctors/${doctorId}/info`);
-    console.log('[quickTrack] doctor info from API:', info);
-    if (info) {
-        _st.hospitalId = info.hospital_id || info.hospitalId || _st.hospitalId;
-        _st.hospitalName = info.hospital_name || info.hospitalName || _st.hospitalName;
-        _st.deptId = info.department_id || info.deptId || _st.deptId;
-        _st.deptName = info.department_name || info.deptName || _st.deptName;
-        _st.doctorName = info.name || _st.doctorName;
+    if (!info) {
+        toast('無法獲取醫生信息', 'error');
+        return;
     }
 
-    document.getElementById('modal-doctor').value = _st.doctorId;
-    document.getElementById('modal-dept').value = _st.deptId;
+    // Store context
+    const qtState = {
+        doctorId: doctorId,
+        doctorName: doctorName,
+        hospitalId: info.hospital_id,
+        hospitalName: info.hospital_name,
+        departmentId: info.department_id,
+        departmentName: info.department_name
+    };
 
-    console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
+    // Open modal with doctor info
+    openQuickTrackModal(qtState);
+}
 
-    // Go to "add-tracking" page WITHOUT resetting stepper state
-    const page = document.querySelector('[data-page="add-tracking"]');
-    navigate(page, 'add-tracking', { skipReset: true });
+// ── Quick Track Modal ────────────────────────────────────────
+let _qtState = null;
+let _qtSchedules = [];
 
-    // Ensure step-4 content is visible and breadcrumb updated
-    _stepperBreadcrumb();
-    stepperGoTo(4);
-    await loadModalSchedules();
+async function openQuickTrackModal(qtState) {
+    _qtState = qtState;
+    
+    // Update modal header and doctor info
+    document.getElementById('quick-track-title').textContent = `快速追蹤 - ${escHtml(qtState.doctorName)}`;
+    document.getElementById('qt-doctor-name').textContent = escHtml(qtState.doctorName);
+    document.getElementById('qt-hospital-dept').textContent = `${escHtml(qtState.hospitalName)} / ${escHtml(qtState.departmentName || '—')}`;
+    
+    // Reset form
+    document.getElementById('qt-date').value = '';
+    document.getElementById('qt-session').value = '';
+    document.getElementById('qt-appointment-number').value = '';
+    document.getElementById('qt-notify-20').checked = true;
+    document.getElementById('qt-notify-10').checked = true;
+    document.getElementById('qt-notify-5').checked = true;
+    document.getElementById('qt-notify-email').checked = true;
+    document.getElementById('qt-notify-line').checked = false;
+    
+    // Load schedules
+    document.getElementById('qt-date').innerHTML = '<option value="">— 載入中… —</option>';
+    document.getElementById('qt-date').disabled = true;
+    await loadQuickTrackSchedules();
+    
+    // Show modal
+    document.getElementById('quick-track-modal').classList.add('open');
+}
+
+function closeQuickTrackModal() {
+    document.getElementById('quick-track-modal').classList.remove('open');
+    _qtState = null;
+    _qtSchedules = [];
+}
+
+async function loadQuickTrackSchedules() {
+    if (!_qtState?.doctorId) return;
+    
+    const dateSel = document.getElementById('qt-date');
+    const sessionSel = document.getElementById('qt-session');
+    
+    _qtSchedules = await apiFetch(`/api/doctors/${_qtState.doctorId}/schedules`) || [];
+    
+    if (!_qtSchedules.length) {
+        dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
+        dateSel.disabled = true;
+        return;
+    }
+    
+    const dates = [...new Set(_qtSchedules.map(s => s.session_date))];
+    dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
+        dates.map(d => {
+            const label = new Date(d + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+            return `<option value="${d}">${label}</option>`;
+        }).join('');
+    dateSel.disabled = false;
+    dateSel.onchange = loadQuickTrackSessions;
+}
+
+function loadQuickTrackSessions() {
+    const date = document.getElementById('qt-date').value;
+    const sessionSel = document.getElementById('qt-session');
+    sessionSel.innerHTML = '<option value="">— 選擇診次 —</option>';
+    sessionSel.disabled = true;
+    if (!date) return;
+    
+    const sessions = _qtSchedules
+        .filter(s => s.session_date === date && s.session_type)
+        .map(s => s.session_type);
+    const unique = [...new Set(sessions)];
+    
+    if (!unique.length) {
+        sessionSel.innerHTML = '<option value="上午">上午</option><option value="下午">下午</option><option value="晚上">晚上</option>';
+    } else {
+        sessionSel.innerHTML = unique.map(s => `<option value="${s}">${s}</option>`).join('');
+    }
+    sessionSel.disabled = false;
+}
+
+async function submitQuickTrack() {
+    const date = document.getElementById('qt-date').value;
+    const session = document.getElementById('qt-session').value;
+    
+    if (!date) {
+        toast('請選擇就診日期', 'warning');
+        return;
+    }
+    if (!session) {
+        toast('請選擇診次', 'warning');
+        return;
+    }
+    
+    const apptNum = document.getElementById('qt-appointment-number').value;
+    const notify = {
+        notify_20: document.getElementById('qt-notify-20').checked,
+        notify_10: document.getElementById('qt-notify-10').checked,
+        notify_5: document.getElementById('qt-notify-5').checked,
+        notify_email: document.getElementById('qt-notify-email').checked,
+        notify_line: document.getElementById('qt-notify-line').checked
+    };
+    
+    // Prepare payload
+    const payload = {
+        doctor_id: _qtState.doctorId,
+        hospital_id: _qtState.hospitalId,
+        department_id: _qtState.departmentId,
+        session_date: date,
+        session_type: session,
+        appointment_number: apptNum ? parseInt(apptNum) : null,
+        notification_thresholds: [20, 10, 5],
+        notify_email: notify.notify_email,
+        notify_line: notify.notify_line,
+        is_active: true
+    };
+    
+    try {
+        const result = await apiFetch('/api/tracking', { method: 'POST', body: payload });
+        closeQuickTrackModal();
+        toast(`成功追蹤 ${escHtml(_qtState.doctorName)} 的門診`, 'success');
+        // Refresh tracking list if on tracking page
+        if (document.querySelector('[data-page="tracking"]').classList.contains('active')) {
+            loadTracking();
+        }
+    } catch (e) {
+        console.error('Error creating tracking:', e);
+        toast('追蹤失敗，請重試', 'error');
+    }
 }
 
 // Keep as noop stubs so old call-sites don't crash
@@ -1033,7 +1181,13 @@ function closeTrackingModal() { cancelAddTracking(); }
 let _doctorSchedules = [];
 
 async function loadModalSchedules() {
-    const docId = document.getElementById('modal-doctor').value;
+    let docId = document.getElementById('modal-doctor').value;
+    // 🔴 FIX: Fallback to _st.doctorId if element value is empty
+    if (!docId && _st.doctorId) {
+        docId = _st.doctorId;
+        document.getElementById('modal-doctor').value = docId;
+    }
+    
     const dateSel = document.getElementById('modal-date');
     const sessionSel = document.getElementById('modal-session');
     dateSel.innerHTML = '<option value="">— 載入中… —</option>';
@@ -1098,6 +1252,17 @@ async function showDoctorDetail(doctorId, name) {
         return (sessionOrder[a.session_type] || 99) - (sessionOrder[b.session_type] || 99);
     });
 
+    // Check if we're in stepper mode (adding tracking) or just viewing
+    // Show action buttons only if in stepper step 3 (doctor selection)
+    const isInStepper = _st && _st.step === 3;
+    const actionButtons = isInStepper 
+        ? `<div style="display:flex; gap:8px; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-subtle)">
+             <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open'); stepperGoTo(3)" style="flex:1">上一步</button>
+             <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open')" style="flex:1">取消</button>
+             <button class="btn btn-primary" onclick="document.getElementById('doctor-modal').classList.remove('open'); quickTrack('${doctorId}','${escHtml(name)}')" style="flex:1">＋ 追蹤</button>
+           </div>`
+        : '';
+
     document.getElementById('doctor-modal-body').innerHTML = `
     <div class="table-wrap">
       <table>
@@ -1119,7 +1284,8 @@ async function showDoctorDetail(doctorId, name) {
           </tr>`).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${actionButtons}`;
 }
 
 

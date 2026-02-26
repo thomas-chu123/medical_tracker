@@ -605,7 +605,10 @@
             <h2>➕ 新增門診追蹤</h2>
             <div class="subtitle" id="stepper-subtitle">選擇醫院開始</div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="cancelAddTracking()">✕ 取消</button>
+          <div style="display:flex; gap:8px">
+            <button class="btn btn-secondary btn-sm" id="stepper-back-btn" onclick="stepperPrevious()" style="display:none">← 上一步</button>
+            <button class="btn btn-secondary btn-sm" onclick="cancelAddTracking()">✕ 取消</button>
+          </div>
         </div>
 
         <!-- Step progress bar -->
@@ -689,6 +692,58 @@
   </div>
 
   <!-- Old tracking modal removed; replaced by #page-add-tracking stepper -->
+
+  <!-- Quick Track Modal (from hospital search) -->
+  <div class="modal-overlay" id="quick-track-modal" onclick="closeModalIfOverlay(event)">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3 id="quick-track-title">快速追蹤</h3>
+        <button class="modal-close"
+          onclick="closeQuickTrackModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="quick-track-doctor-info" style="padding:12px; background:var(--bg-hover); border-radius:8px; margin-bottom:16px">
+          <div style="font-weight:600">👨‍⚕️ <span id="qt-doctor-name">—</span></div>
+          <div style="font-size:12px; color:var(--text-muted)"><span id="qt-hospital-dept">—</span></div>
+        </div>
+        <div class="form-group">
+          <label>就診日期</label>
+          <select id="qt-date" disabled>
+            <option value="">— 載入中… —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>診次</label>
+          <select id="qt-session" disabled>
+            <option value="">— 請先選擇日期 —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>我的掛號號碼 <span style="color:var(--text-muted); font-weight:normal">(選填)</span></label>
+          <input type="number" id="qt-appointment-number" placeholder="例如：45" min="1" max="999">
+        </div>
+        <div class="form-group">
+          <label>通知門檻</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" id="qt-notify-20" checked> 前 20 位等候人士</label>
+            <label class="checkbox-item"><input type="checkbox" id="qt-notify-10" checked> 前 10 位等候人士</label>
+            <label class="checkbox-item"><input type="checkbox" id="qt-notify-5" checked> 前 5 位等候人士</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>通知管道</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" id="qt-notify-email" checked> 📧 Email</label>
+            <label class="checkbox-item"><input type="checkbox" id="qt-notify-line"> 📲 LINE Notify</label>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:20px">
+          <button class="btn btn-secondary" onclick="closeQuickTrackModal()" style="flex:1">取消</button>
+          <button class="btn btn-primary" onclick="submitQuickTrack()" style="flex:1">確認追蹤</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Doctor snapshot modal -->
   <div class="modal-overlay" id="doctor-modal" onclick="closeModalIfOverlay(event)">
