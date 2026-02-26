@@ -1275,10 +1275,12 @@ async function submitQuickTrack() {
     
     try {
         const result = await apiFetch('/api/tracking/', { method: 'POST', body: JSON.stringify(payload) });
+        const doctorName = _qtState.doctorName;
         closeQuickTrackModal();
-        toast(`成功追蹤 ${escHtml(_qtState.doctorName)} 的門診`, 'success');
+        toast(`成功追蹤 ${escHtml(doctorName)} 的門診`, 'success');
         // Refresh tracking list if on tracking page
-        if (document.querySelector('[data-page="tracking"]').classList.contains('active')) {
+        const trackingPage = document.querySelector('[data-page="tracking"]');
+        if (trackingPage?.classList.contains('active')) {
             loadTracking();
         }
     } catch (e) {
