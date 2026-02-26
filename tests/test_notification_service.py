@@ -14,8 +14,8 @@ def mock_send_email(mocker):
 
 @pytest.fixture
 def mock_send_line_notify(mocker):
-    """Fixture to mock the send_line_notify function."""
-    return mocker.patch("app.services.notification.send_line_notify", new_callable=AsyncMock)
+    """Fixture to mock the send_line_message function."""
+    return mocker.patch("app.services.notification.send_line_message", new_callable=AsyncMock)
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ async def test_sends_notification_when_threshold_crossed(
     # Mock the sequence of results from _run
     mock_snap_res = MagicMock(); mock_snap_res.data = [snapshot_data]
     mock_hosp_res = MagicMock(); mock_hosp_res.data = {"name": "General Hospital"}
-    mock_profile_res = MagicMock(); mock_profile_res.data = [{"line_notify_token": "fake_line_token"}]
+    mock_profile_res = MagicMock(); mock_profile_res.data = [{"line_user_id": "U92a007fe0868a7feec8691d6e8c8172f"}]
     mock_log_res = MagicMock(); mock_log_res.data = [{"id": 99}]
     # The last _run call is for the update, which we don't need to mock data for
     mock_update_res = MagicMock()

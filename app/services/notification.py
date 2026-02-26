@@ -11,7 +11,7 @@ import asyncio
 
 from app.database import get_supabase
 from app.services.email_service import send_email, build_clinic_alert_email
-from app.services.line_service import send_line_notify, build_line_message
+from app.services.line_message_api import send_line_message, build_line_message
 from app.core.logger import logger as log
 from app.core.timezone import today_tw_str
 
@@ -117,19 +117,19 @@ async def _process_subscription(supabase, sub: dict):
         if hosp_res.data:
             hospital_name = hosp_res.data.get("name", "未知醫院")
 
-    # Fetch user's LINE Notify token from users_local
+    # Fetch user's LINE User ID and notification settings from users_local
     try:
         user_res = await _run(
             lambda: supabase.table("users_local")
-            .select("line_notify_token")
+            .select("line_user_id")
             .eq("id", sub["user_id"])
             .execute()
         )
         user_data = user_res.data[0] if user_res.data else {}
-        line_notify_token = user_data.get("line_notify_token", "")
+        line_user_id = user_data.get("line_user_id", "")
     except Exception as e:
-        log.warning(f"Failed to fetch line_notify_token: {e}. Column may not exist in database.")
-        line_notify_token = ""
+        log.warning(f"Failed to fetch line_user_id: {e}. Column may not exist in database.")
+        line_user_id = ""
 
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
@@ -166,7 +166,7 @@ async def _process_subscription(supabase, sub: dict):
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
                 email=user_email,
-                line_notify_token=line_notify_token,
+                line_user_id=line_user_id,
                 notify_email=sub.get("notify_email", True),
                 notify_line=sub.get("notify_line", False),
                 hospital_name=hospital_name,
@@ -197,7 +197,7 @@ async def _send_alerts(
     sub_id: str,
     user_id: str,
     email: str | None,
-    line_notify_token: str,
+    line_user_id: str,
     notify_email: bool,
     notify_line: bool,
     hospital_name: str,
@@ -232,7 +232,7 @@ async def _send_alerts(
             send_email(email, subject, body)
         ))
 
-    if notify_line and line_notify_token:
+    if notify_line and line_user_id:
         message = build_line_message(
             doctor_name=doctor_name,
             department_name=dept_name,
@@ -244,7 +244,7 @@ async def _send_alerts(
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "line", "",
-            send_line_notify(line_notify_token, message)
+            send_line_message(line_user_id, message)
         ))
 
     if send_tasks:
@@ -260,7 +260,7 @@ async def _send_alerts(
         )
         log.info(f"[Notification] Updated {notified_flag} flag for sub {sub_id}")
     else:
-         log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineToken: {'set' if line_notify_token else 'not set'}")
+         log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineUserID: {'set' if line_user_id else 'not set'}")
 
 
 async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
