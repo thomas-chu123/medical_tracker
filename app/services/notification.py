@@ -179,6 +179,7 @@ async def _process_subscription(supabase, sub: dict):
                 remaining=remaining,
                 threshold=threshold,
                 notified_flag=notified_flag,
+                appointment_number=sub.get("appointment_number"),
             )
         )
         break
@@ -209,6 +210,7 @@ async def _send_alerts(
     remaining: int,
     threshold: int,
     notified_flag: str,
+    appointment_number: int | None = None,
 ):
     send_tasks = []
 
@@ -223,6 +225,7 @@ async def _send_alerts(
             current_number=current_number,
             remaining=remaining,
             threshold=threshold,
+            appointment_number=appointment_number,
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "email", email,

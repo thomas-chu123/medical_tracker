@@ -51,6 +51,7 @@ def build_clinic_alert_email(
     current_number: int,
     remaining: int,
     threshold: int,
+    appointment_number: int | None = None,
 ) -> tuple[str, str]:
     """Build subject and HTML body for clinic alert with a premium design."""
     subject = f"🔔 門診進度提醒：{doctor_name} 醫師 (剩餘 {remaining} 位看診人數)"
@@ -102,6 +103,7 @@ def build_clinic_alert_email(
                             <td style="padding: 8px 0; color: {secondary_color}; font-size: 14px;">看診時段</td>
                             <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #202124;">{session_date} ({session_type})</td>
                         </tr>
+                        {f'<tr><td style="padding: 8px 0; color: {secondary_color}; font-size: 14px;">看診號碼</td><td style="padding: 8px 0; text-align: right; font-weight: 600; color: #202124;">{appointment_number}</td></tr>' if appointment_number else ''}
                         <tr>
                             <td colspan="2" style="padding: 20px 0 10px 0; border-top: 1px solid #dadce0; margin-top: 10px;">
                                 <table style="width: 100%;">
