@@ -1262,19 +1262,19 @@ async function submitQuickTrack() {
     // Prepare payload
     const payload = {
         doctor_id: _qtState.doctorId,
-        hospital_id: _qtState.hospitalId,
         department_id: _qtState.departmentId,
         session_date: date,
         session_type: session,
         appointment_number: apptNum ? parseInt(apptNum) : null,
-        notification_thresholds: [20, 10, 5],
+        notify_at_20: notify.notify_20,
+        notify_at_10: notify.notify_10,
+        notify_at_5: notify.notify_5,
         notify_email: notify.notify_email,
         notify_line: notify.notify_line,
-        is_active: true
     };
     
     try {
-        const result = await apiFetch('/api/tracking/', { method: 'POST', body: payload });
+        const result = await apiFetch('/api/tracking/', { method: 'POST', body: JSON.stringify(payload) });
         closeQuickTrackModal();
         toast(`成功追蹤 ${escHtml(_qtState.doctorName)} 的門診`, 'success');
         // Refresh tracking list if on tracking page
