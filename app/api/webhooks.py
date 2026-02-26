@@ -26,25 +26,32 @@ async def line_webhook(request: Request):
     # Get request body
     body = await request.body()
     
-    # Verify signature
+    # Log everything
     signature = request.headers.get("x-line-signature")
-    print(f"[LINE Webhook] Signature header: {signature[:20] if signature else 'MISSING'}...")
-    print(f"[LINE Webhook] Body length: {len(body)}")
-    print(f"[LINE Webhook] Body: {body[:100]}")
+    print(f"\n{'='*60}")
+    print(f"[LINE WEBHOOK] POST /api/webhooks/line received")
+    print(f"[LINE WEBHOOK] Signature header present: {signature is not None}")
+    if signature:
+        print(f"[LINE WEBHOOK] Signature (first 20 chars): {signature[:20]}")
+    print(f"[LINE WEBHOOK] Body length: {len(body)}")
+    print(f"[LINE WEBHOOK] Body preview: {body[:200]}")
+    print(f"{'='*60}\n")
     
+    # Verify signature
     if not signature:
-        print("[LINE Webhook] ERROR: Missing X-LINE-Signature header")
+        print("[LINE WEBHOOK] ERROR: Missing X-LINE-Signature header")
         raise HTTPException(status_code=403, detail="Missing X-LINE-Signature header")
     
     is_valid = _verify_signature(body, signature)
-    print(f"[LINE Webhook] Signature valid: {is_valid}")
+    print(f"[LINE WEBHOOK] Signature verification result: {is_valid}")
     
     if not is_valid:
-        print("[LINE Webhook] ERROR: Invalid signature")
+        print("[LINE WEBHOOK] ERROR: Invalid signature - rejecting request")
         raise HTTPException(status_code=403, detail="Invalid signature")
     
     # Parse events
     data = json.loads(body)
+    print(f"[LINE WEBHOOK] Processing {len(data.get('events', []))} events")
     
     for event in data.get("events", []):
         try:
@@ -65,16 +72,20 @@ async def line_webhook(request: Request):
             print(f"[LINE Webhook] Error processing event: {e}")
             # Continue processing other events
     
+    print("[LINE WEBHOOK] Response: OK")
     return {"status": "ok"}
 
 
 def _verify_signature(body: bytes, signature: str) -> bool:
     """Verify LINE webhook signature."""
+    print(f"\n[SIGNATURE VERIFY] Starting verification")
+    print(f"[SIGNATURE VERIFY] Channel Secret configured: {bool(settings.line_channel_secret)}")
+    
     if not settings.line_channel_secret:
-        print("[LINE] ERROR: No Channel Secret configured")
+        print("[SIGNATURE VERIFY] ERROR: No Channel Secret configured")
         return False
     
-    print(f"[LINE] Channel Secret: {settings.line_channel_secret[:10]}...")
+    print(f"[SIGNATURE VERIFY] Channel Secret (first 10): {settings.line_channel_secret[:10]}")
     
     hash_object = hmac.new(
         settings.line_channel_secret.encode('utf-8'),
@@ -83,11 +94,19 @@ def _verify_signature(body: bytes, signature: str) -> bool:
     )
     expected_signature = base64.b64encode(hash_object.digest()).decode()
     
-    print(f"[LINE] Expected signature: {expected_signature[:20]}...")
-    print(f"[LINE] Received signature: {signature[:20]}...")
-    print(f"[LINE] Signatures match: {signature == expected_signature}")
+    print(f"[SIGNATURE VERIFY] Expected (first 20): {expected_signature[:20]}")
+    print(f"[SIGNATURE VERIFY] Received (first 20): {signature[:20]}")
     
-    return signature == expected_signature
+    match = signature == expected_signature
+    print(f"[SIGNATURE VERIFY] Match: {match}")
+    print(f"[SIGNATURE VERIFY] Expected length: {len(expected_signature)}, Received length: {len(signature)}")
+    
+    if not match:
+        print(f"[SIGNATURE VERIFY] FULL Expected: {expected_signature}")
+        print(f"[SIGNATURE VERIFY] FULL Received: {signature}")
+    
+    print()
+    return match
 
 
 async def _handle_user_follow(user_id: str):
