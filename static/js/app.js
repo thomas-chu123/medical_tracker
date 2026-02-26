@@ -74,7 +74,7 @@ function switchTab(tab) {
     event.target.classList.add('active');
     document.getElementById('login-form').style.display = tab === 'login' ? '' : 'none';
     document.getElementById('register-form').style.display = tab === 'register' ? '' : 'none';
-    
+
     // 控制 QR Code 顯示
     const qrContainer = document.getElementById('line-qr-container');
     if (qrContainer) {
@@ -103,7 +103,7 @@ async function handleLogin(e) {
         // Wait for toast to be visible, then reload to clear cached UI state
         setTimeout(() => {
             window.location.reload();
-        }, 2000);
+        }, 500);
     } catch (err) {
         toast(err.message, 'error');
     } finally {
@@ -146,24 +146,23 @@ function handleLogout() {
 
 // ── App init ──────────────────────────────────────────────────
 async function initApp(userFromLogin = null) {
+    // Show app shell IMMEDIATELY for better perceived performance
+    document.getElementById('auth-page').classList.remove('show');
+    document.getElementById('app').style.display = 'grid';
+
     if (userFromLogin) {
-        // Fresh login: use profile from login response, no extra API call needed
+        // Fresh login: use profile from login response
         currentUser = userFromLogin;
     } else {
         // Page reload: fetch profile with stored token
         try {
             currentUser = await apiFetch('/api/users/me');
-            console.log('[initApp] currentUser loaded:', currentUser);
             if (!currentUser) return;
         } catch (e) {
             console.error('[initApp] Failed to load profile:', e);
             handleLogout(); return;
         }
     }
-
-    // Show app
-    document.getElementById('auth-page').classList.remove('show');
-    document.getElementById('app').style.display = 'grid';
 
     // Set user info
     const name = currentUser.display_name || 'User';
@@ -236,21 +235,22 @@ function navigate(btn, pageId, options = {}) {
 
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
-    // 1. Initialize Hospital Filter if not done
-    if (!_dashHospitals.length) {
-        _dashHospitals = await apiFetch('/api/hospitals').catch(() => []) || [];
-        renderDashHospList();
-    }
-
-    // 2. Prepare query param
+    // 2. Fire all dashboard requests in parallel for maximum speed
     const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
 
-    // 3. Fire requests in parallel including crowd-analysis
-    const [gStats, subs, crowdStats] = await Promise.all([
+    const [hospList, gStats, subs, crowdStats] = await Promise.all([
+        // Only fetch hospitals if list is empty
+        !_dashHospitals.length ? apiFetch('/api/hospitals').catch(() => []) : Promise.resolve(_dashHospitals),
         apiFetch(`/api/stats/global${qs}`).catch(() => null),
         apiFetch('/api/tracking/').catch(() => []),
         apiFetch(`/api/stats/crowd-analysis${qs}`).catch(() => null),
     ]);
+
+    // Update hospital list if fetched
+    if (!_dashHospitals.length && hospList) {
+        _dashHospitals = hospList;
+        renderDashHospList();
+    }
 
     // 4. Update Stats
     if (gStats) {
@@ -508,34 +508,34 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
     const modal = document.getElementById('clinic-waiting-modal');
     document.getElementById('clinic-waiting-title').textContent = `🚪 診間 ${escHtml(clinicRoom)}診 - ${escHtml(doctorName)}`;
     document.getElementById('clinic-waiting-body').innerHTML = '<div class="spinner"></div>';
-    
+
     modal.classList.add('open');
-    
+
     try {
         // Fetch latest snapshot for this doctor's clinic room
         const snap = await apiFetch(`/api/snapshots/doctor/${doctorId}/current?clinic_room=${encodeURIComponent(clinicRoom)}`);
         if (!snap) {
-            document.getElementById('clinic-waiting-body').innerHTML = 
+            document.getElementById('clinic-waiting-body').innerHTML =
                 '<div class="empty-state"><p>無法獲取候診列表資料</p></div>';
             return;
         }
-        
+
         // Get today's date (Taiwan timezone)
         const today = new Date();
         today.setMilliseconds(0);
         const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
         const sessionDate = snap.session_date || '';
         const isToday = sessionDate === todayStr;
-        
+
         // Update subtitle based on whether it's today
         if (isToday) {
             document.getElementById('clinic-waiting-subtitle').textContent = `原生候診列表 (每3分鐘更新)`;
         } else {
             document.getElementById('clinic-waiting-subtitle').textContent = `${sessionDate} 排班信息（未來日期，無實時進度）`;
         }
-        
+
         const queueDetails = snap.clinic_queue_details || [];
-        
+
         // Build statistics section
         let html = `
             <div style="padding:16px">
@@ -549,20 +549,20 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
                     </div>
                 </div>
         `;
-        
+
         // Only show queue details if it's today
         if (!isToday) {
             document.getElementById('clinic-waiting-body').innerHTML = html + '<div class="empty-state"><p>⏳ 該日期為未來排班，醫院只提供當日的實時進度資料</p></div></div>';
             return;
         }
-        
+
         // If no queue details, show simple message
         if (!queueDetails || queueDetails.length === 0) {
             html += '<div class="empty-state"><p>目前無候診資料</p></div>';
             document.getElementById('clinic-waiting-body').innerHTML = html + '</div>';
             return;
         }
-        
+
         // Build scrollable table
         html += `
                 <div style="border-radius:8px; border:1px solid var(--border-subtle); overflow:hidden; max-height:400px; overflow-y:auto">
@@ -575,13 +575,13 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
                         </thead>
                         <tbody>
         `;
-        
+
         queueDetails.forEach((item, idx) => {
             const isCurrent = item.number === snap.current_number;
-            const rowBg = isCurrent ? 'background:var(--danger); color:white' : 
-                         item.status === '完成' ? 'background:var(--bg-elevated)' : '';
+            const rowBg = isCurrent ? 'background:var(--danger); color:white' :
+                item.status === '完成' ? 'background:var(--bg-elevated)' : '';
             const rowStyle = rowBg ? `style="${rowBg}"` : '';
-            
+
             html += `
                             <tr ${rowStyle} style="border-bottom:1px solid var(--border-subtle)">
                                 <td style="padding:12px; text-align:center; font-weight:600">${item.number}</td>
@@ -589,18 +589,18 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
                             </tr>
             `;
         });
-        
+
         html += `
                         </tbody>
                     </table>
                 </div>
             </div>
         `;
-        
+
         document.getElementById('clinic-waiting-body').innerHTML = html;
     } catch (err) {
         console.error('Error loading waiting list:', err);
-        document.getElementById('clinic-waiting-body').innerHTML = 
+        document.getElementById('clinic-waiting-body').innerHTML =
             '<div class="empty-state"><p>載入失敗，請稍後重試</p></div>';
     }
 }
@@ -741,11 +741,11 @@ async function hsSelectCategory(hospId, hospName, cat) {
     // Reset dept search when switching category
     const deptSearchEl = document.getElementById('dept-search');
     if (deptSearchEl) { deptSearchEl.value = ''; deptSearchEl.dataset.lastVal = ''; }
-    
+
     // Reset doctor search
     const docSearchEl = document.getElementById('doctor-search');
     if (docSearchEl) { docSearchEl.value = ''; }
-    
+
     // 🔴 FIX: Clear state when switching categories
     _currentHsDeptId = null;
     allDoctors = [];
@@ -1045,7 +1045,7 @@ async function stepperSelectDoctor(docId, docName) {
     _st.doctorId = docId; _st.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
-    
+
     // Show doctor detail (clinic schedule) in modal first
     await showDoctorDetail(docId, docName);
 }
@@ -1095,13 +1095,13 @@ function stepperGoTo(step) {
     });
     const subtitles = ['選擇醫院', '選擇科室', '選擇醫師', '選擇日期與設定通知', '確認並送出'];
     document.getElementById('stepper-subtitle').textContent = subtitles[step - 1] || '';
-    
+
     // Show/hide back button (hide on first step)
     const backBtn = document.getElementById('stepper-back-btn');
     if (backBtn) {
         backBtn.style.display = step > 1 ? '' : 'none';
     }
-    
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1162,12 +1162,12 @@ let _qtSchedules = [];
 
 async function openQuickTrackModal(qtState) {
     _qtState = qtState;
-    
+
     // Update modal header and doctor info
     document.getElementById('quick-track-title').textContent = `快速追蹤 - ${escHtml(qtState.doctorName)}`;
     document.getElementById('qt-doctor-name').textContent = escHtml(qtState.doctorName);
     document.getElementById('qt-hospital-dept').textContent = `${escHtml(qtState.hospitalName)} / ${escHtml(qtState.departmentName || '—')}`;
-    
+
     // Reset form
     document.getElementById('qt-date').value = '';
     document.getElementById('qt-session').value = '';
@@ -1177,12 +1177,12 @@ async function openQuickTrackModal(qtState) {
     document.getElementById('qt-notify-5').checked = true;
     document.getElementById('qt-notify-email').checked = true;
     document.getElementById('qt-notify-line').checked = true;
-    
+
     // Load schedules
     document.getElementById('qt-date').innerHTML = '<option value="">— 載入中… —</option>';
     document.getElementById('qt-date').disabled = true;
     await loadQuickTrackSchedules();
-    
+
     // Show modal
     document.getElementById('quick-track-modal').classList.add('open');
 }
@@ -1195,18 +1195,18 @@ function closeQuickTrackModal() {
 
 async function loadQuickTrackSchedules() {
     if (!_qtState?.doctorId) return;
-    
+
     const dateSel = document.getElementById('qt-date');
     const sessionSel = document.getElementById('qt-session');
-    
+
     _qtSchedules = await apiFetch(`/api/doctors/${_qtState.doctorId}/schedules`) || [];
-    
+
     if (!_qtSchedules.length) {
         dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
         dateSel.disabled = true;
         return;
     }
-    
+
     const dates = [...new Set(_qtSchedules.map(s => s.session_date))];
     dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
         dates.map(d => {
@@ -1223,12 +1223,12 @@ function loadQuickTrackSessions() {
     sessionSel.innerHTML = '<option value="">— 選擇診次 —</option>';
     sessionSel.disabled = true;
     if (!date) return;
-    
+
     const sessions = _qtSchedules
         .filter(s => s.session_date === date && s.session_type)
         .map(s => s.session_type);
     const unique = [...new Set(sessions)];
-    
+
     if (!unique.length) {
         sessionSel.innerHTML = '<option value="上午">上午</option><option value="下午">下午</option><option value="晚上">晚上</option>';
     } else {
@@ -1240,7 +1240,7 @@ function loadQuickTrackSessions() {
 async function submitQuickTrack() {
     const date = document.getElementById('qt-date').value;
     const session = document.getElementById('qt-session').value;
-    
+
     if (!date) {
         toast('請選擇就診日期', 'warning');
         return;
@@ -1249,7 +1249,7 @@ async function submitQuickTrack() {
         toast('請選擇診次', 'warning');
         return;
     }
-    
+
     const apptNum = document.getElementById('qt-appointment-number').value;
     const notify = {
         notify_20: document.getElementById('qt-notify-20').checked,
@@ -1258,7 +1258,7 @@ async function submitQuickTrack() {
         notify_email: document.getElementById('qt-notify-email').checked,
         notify_line: document.getElementById('qt-notify-line').checked
     };
-    
+
     // Prepare payload
     const payload = {
         doctor_id: _qtState.doctorId,
@@ -1272,7 +1272,7 @@ async function submitQuickTrack() {
         notify_email: notify.notify_email,
         notify_line: notify.notify_line,
     };
-    
+
     try {
         const result = await apiFetch('/api/tracking/', { method: 'POST', body: JSON.stringify(payload) });
         console.log('Tracking response:', result);
@@ -1305,7 +1305,7 @@ async function loadModalSchedules() {
         docId = _st.doctorId;
         document.getElementById('modal-doctor').value = docId;
     }
-    
+
     const dateSel = document.getElementById('modal-date');
     const sessionSel = document.getElementById('modal-session');
     dateSel.innerHTML = '<option value="">— 載入中… —</option>';
@@ -1373,7 +1373,7 @@ async function showDoctorDetail(doctorId, name) {
     // Check if we're in stepper mode (adding tracking) or just viewing
     // Show action buttons only if in stepper step 3 (doctor selection)
     const isInStepper = _st && _st.step === 3;
-    const actionButtons = isInStepper 
+    const actionButtons = isInStepper
         ? `<div style="display:flex; gap:8px; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-subtle)">
              <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open'); stepperGoTo(3)" style="flex:1">上一步</button>
              <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open')" style="flex:1">取消</button>
@@ -1686,7 +1686,7 @@ async function loadProfile() {
 
         if (nameEl) nameEl.value = profile.display_name || '';
         if (emailEl) emailEl.value = profile.email || '（未提供）';
-        
+
         // Start polling to detect when user scans QR code
         startLineConnectionPolling();
     }
@@ -1697,10 +1697,10 @@ let _linePollingTimer = null;
 function startLineConnectionPolling() {
     // Stop any existing polling
     if (_linePollingTimer) clearInterval(_linePollingTimer);
-    
+
     // If already linked, don't poll
     if (currentUser && currentUser.line_user_id) return;
-    
+
     // Poll every 3 seconds to check for pending LINE connection
     _linePollingTimer = setInterval(async () => {
         try {
