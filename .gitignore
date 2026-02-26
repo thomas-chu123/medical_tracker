@@ -162,5 +162,6 @@ output.json
 *.tmp
 temp/
 allure-results/
+allure-results/report/
 report/
 report/result/*.json
