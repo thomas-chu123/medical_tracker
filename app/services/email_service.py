@@ -63,6 +63,11 @@ def build_clinic_alert_email(
     bg_color = "#f8f9fa"
     card_bg = "#ffffff"
 
+    # Build appointment number row if provided
+    appointment_row = ""
+    if appointment_number:
+        appointment_row = f'<tr><td style="padding: 8px 0; color: {secondary_color}; font-size: 14px;">看診號碼</td><td style="padding: 8px 0; text-align: right; font-weight: 600; color: #202124;">{appointment_number}</td></tr>'
+
     body = f"""
     <!DOCTYPE html>
     <html>
@@ -103,7 +108,7 @@ def build_clinic_alert_email(
                             <td style="padding: 8px 0; color: {secondary_color}; font-size: 14px;">看診時段</td>
                             <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #202124;">{session_date} ({session_type})</td>
                         </tr>
-                        {f'<tr><td style="padding: 8px 0; color: {secondary_color}; font-size: 14px;">看診號碼</td><td style="padding: 8px 0; text-align: right; font-weight: 600; color: #202124;">{appointment_number}</td></tr>' if appointment_number else ''}
+                        {appointment_row}
                         <tr>
                             <td colspan="2" style="padding: 20px 0 10px 0; border-top: 1px solid #dadce0; margin-top: 10px;">
                                 <table style="width: 100%;">
