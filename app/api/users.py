@@ -13,6 +13,56 @@ class AdminUserEdit(BaseModel):
     new_password: Optional[str] = None
 
 
+@router.post("/link-line")
+async def link_line_account(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Link the currently logged-in user to the most recent pending LINE User ID from webhook.
+    Called after user has scanned QR code and webhook stored the LINE User ID.
+    """
+    supabase = get_supabase()
+    
+    try:
+        # Check if user already has LINE linked
+        user_res = supabase.table("users_local").select("line_user_id").eq("id", current_user["id"]).execute()
+        if user_res.data and user_res.data[0].get("line_user_id"):
+            return {
+                "status": "already_linked",
+                "line_user_id": user_res.data[0]["line_user_id"],
+                "message": "您的帳號已連接 LINE Bot"
+            }
+        
+        # Find the most recent unexpired pending LINE User ID
+        pending_res = supabase.table("line_pending_links").select("id, line_user_id").gt("expires_at", "now()").order("created_at", desc=True).limit(1).execute()
+        
+        if not pending_res.data:
+            return {
+                "status": "pending",
+                "message": "尚未偵測到 QR Code 掃描。請確保已在 LINE 中加入 Bot。"
+            }
+        
+        pending_link = pending_res.data[0]
+        line_user_id = pending_link["line_user_id"]
+        
+        # Link the LINE User ID to the current user
+        update_res = supabase.table("users_local").update({
+            "line_user_id": line_user_id
+        }).eq("id", current_user["id"]).execute()
+        
+        # Delete the pending link record
+        supabase.table("line_pending_links").delete().eq("id", pending_link["id"]).execute()
+        
+        return {
+            "status": "linked",
+            "line_user_id": line_user_id,
+            "message": "✓ LINE 連接成功！"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"連接失敗：{str(e)}")
+
+
 @router.get("/me", response_model=UserProfileOut)
 async def get_my_profile(current_user: dict = Depends(get_current_user)):
     return current_user

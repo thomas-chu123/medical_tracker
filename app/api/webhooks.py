@@ -80,36 +80,29 @@ async def _handle_user_follow(user_id: str):
     Handle user following the bot.
     
     When a user adds the bot as a friend:
-    - Check if there's an existing user with this LINE User ID
-    - If found, update their record
-    - If not found, store it (they'll match when they register/login)
-    - Send welcome message
+    - Store LINE User ID in pending_links table
+    - User will link it from their profile settings after scanning QR code
     """
     print(f"[LINE] User {user_id} followed the bot")
     
     try:
         supabase = get_supabase()
         
-        # Check if a user with this LINE User ID already exists
-        result = supabase.table("users_local").select("id").eq("line_user_id", user_id).execute()
+        # Store in pending links for user to claim
+        pending_insert = supabase.table("line_pending_links").insert({
+            "line_user_id": user_id
+        }).execute()
         
-        if result.data:
-            # User exists, just confirm the follow
-            print(f"[LINE] User {user_id} is already registered")
-        else:
-            # User doesn't exist yet, store the LINE User ID
-            # They will match it to their account when they register/login
-            # For now, we don't update any user (they haven't registered yet)
-            print(f"[LINE] New user {user_id} - waiting for registration")
+        print(f"[LINE] Stored pending link for user {user_id}")
         
-        # Send welcome message (works even if they haven't registered)
+        # Send welcome message
         from app.services.line_message_api import send_line_message
         await send_line_message(
             user_id,
             "歡迎使用台灣醫療門診追蹤系統！\n\n"
-            "若尚未註冊，請先在應用中建立帳號。\n"
-            "建立帳號時，您的 LINE User ID 會自動收集。\n\n"
-            "之後可在應用中設置要追蹤的醫師，並啟用 LINE 通知。"
+            "您已成功連接 LINE Bot，將可接收門診通知。\n\n"
+            "如尚未在應用中登入，請先登入您的帳號。\n"
+            "進入「個人設定」即可完成 LINE 連接。"
         )
     
     except Exception as e:

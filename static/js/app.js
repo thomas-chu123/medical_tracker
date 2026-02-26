@@ -74,6 +74,12 @@ function switchTab(tab) {
     event.target.classList.add('active');
     document.getElementById('login-form').style.display = tab === 'login' ? '' : 'none';
     document.getElementById('register-form').style.display = tab === 'register' ? '' : 'none';
+    
+    // 控制 QR Code 顯示
+    const qrContainer = document.getElementById('line-qr-container');
+    if (qrContainer) {
+        qrContainer.style.display = tab === 'login' ? 'block' : 'none';
+    }
 }
 
 async function handleLogin(e) {
@@ -1663,17 +1669,7 @@ async function saveProfile(e) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function saveLineSettings(e) {
-    e.preventDefault();
-    try {
-        const lineUserId = document.getElementById('line-user-id').value.trim();
-        
-        await apiPatch('/api/users/me', {
-            line_user_id: lineUserId || null
-        });
-        toast('LINE 設定已儲存', 'success');
-    } catch (e) { toast(e.message, 'error'); }
-}
+
 
 async function loadProfile() {
     console.log('[loadProfile] loading...');
@@ -1683,11 +1679,85 @@ async function loadProfile() {
         currentUser = profile;
         const nameEl = document.getElementById('profile-name');
         const emailEl = document.getElementById('profile-email');
-        const lineUserIdEl = document.getElementById('line-user-id');
 
         if (nameEl) nameEl.value = profile.display_name || '';
         if (emailEl) emailEl.value = profile.email || '（未提供）';
-        if (lineUserIdEl) lineUserIdEl.value = profile.line_user_id || '';
+        
+        // Generate LINE QR Code for adding bot
+        generateLineQRCode(profile);
+        
+        // Start polling to detect when user scans QR code
+        startLineConnectionPolling();
+    }
+}
+
+let _linePollingTimer = null;
+
+function startLineConnectionPolling() {
+    // Stop any existing polling
+    if (_linePollingTimer) clearInterval(_linePollingTimer);
+    
+    // If already linked, don't poll
+    if (currentUser && currentUser.line_user_id) return;
+    
+    // Poll every 3 seconds to check for pending LINE connection
+    _linePollingTimer = setInterval(async () => {
+        try {
+            const result = await apiPost('/api/users/link-line', {});
+            if (result && result.status === 'linked') {
+                console.log('[LINE] Successfully linked:', result.line_user_id);
+                // Refresh profile
+                const profile = await apiFetch('/api/users/me');
+                currentUser = profile;
+                generateLineQRCode(profile);
+                toast('✓ LINE 連接成功！', 'success');
+                // Stop polling
+                clearInterval(_linePollingTimer);
+                _linePollingTimer = null;
+            }
+        } catch (e) {
+            // Polling error, continue silently
+        }
+    }, 3000);
+}
+
+function generateLineQRCode(profile) {
+    const qrContainer = document.getElementById('line-qr-code');
+    const statusText = document.getElementById('line-status-text');
+    
+    if (!qrContainer) return;
+    
+    // Stop polling if LINE is already connected
+    if (profile && profile.line_user_id && _linePollingTimer) {
+        clearInterval(_linePollingTimer);
+        _linePollingTimer = null;
+    }
+    
+    // Clear previous QR code
+    qrContainer.innerHTML = '';
+    
+    // Bot add URL format for LINE
+    // Using the bot's User ID from .env
+    const botUserId = 'U1b9e5c8f0a7c4e5b8d9f0a1b2c3d4e5'; // This will come from backend in production
+    const lineAddUrl = `https://line.me/R/ti/p/${botUserId}`;
+    
+    // Generate QR Code
+    new QRCode(qrContainer, {
+        text: lineAddUrl,
+        width: 180,
+        height: 180,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H
+    });
+    
+    // Update status text
+    if (profile && profile.line_user_id) {
+        statusText.innerHTML = '✓ 已連接 LINE Bot';
+        statusText.style.color = '#4CAF50';
+    } else {
+        statusText.innerHTML = '掃描 QR Code 連結帳號';
+        statusText.style.color = '#fff';
     }
 }
 
@@ -1807,6 +1877,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         await initApp();
     } else {
         document.getElementById('auth-page').classList.add('show');
+        // 初始化 QR Code 容器 - 登入頁面默認顯示
+        const qrContainer = document.getElementById('line-qr-container');
+        if (qrContainer) {
+            qrContainer.style.display = 'block';
+        }
     }
 });
 
