@@ -1275,6 +1275,7 @@ async function submitQuickTrack() {
     
     try {
         const result = await apiFetch('/api/tracking/', { method: 'POST', body: JSON.stringify(payload) });
+        console.log('Tracking response:', result);
         const doctorName = _qtState.doctorName;
         closeQuickTrackModal();
         toast(`成功追蹤 ${escHtml(doctorName)} 的門診`, 'success');
@@ -1285,6 +1286,7 @@ async function submitQuickTrack() {
         }
     } catch (e) {
         console.error('Error creating tracking:', e);
+        console.error('Stack:', e.stack);
         toast('追蹤失敗，請重試', 'error');
     }
 }
