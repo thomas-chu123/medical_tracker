@@ -166,11 +166,15 @@ async function initApp(userFromLogin = null) {
 
     // Set user info
     const name = currentUser.display_name || 'User';
-    document.getElementById('user-name-display').textContent = name;
-    document.getElementById('user-avatar').textContent = name[0].toUpperCase();
-    document.getElementById('profile-name').value = name;
-    if (currentUser.line_user_id)
-        document.getElementById('line-user-id').value = currentUser.line_user_id;
+    const displayEl = document.getElementById('user-name-display');
+    const avatarEl = document.getElementById('user-avatar');
+    const profileNameEl = document.getElementById('profile-name');
+    const lineUserIdEl = document.getElementById('line-user-id');
+    
+    if (displayEl) displayEl.textContent = name;
+    if (avatarEl) avatarEl.textContent = name[0].toUpperCase();
+    if (profileNameEl) profileNameEl.value = name;
+    if (lineUserIdEl && currentUser.line_user_id) lineUserIdEl.value = currentUser.line_user_id;
 
     // Manage admin nav button visibility
     const adminBtn = document.getElementById('admin-nav-btn');
@@ -235,14 +239,17 @@ function navigate(btn, pageId, options = {}) {
 
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
-    // 2. Fire all dashboard requests in parallel for maximum speed
+    console.log('[Dashboard] loadDashboard() called');
+    
+    // Fire fast requests immediately, load subscriptions asynchronously in background
     const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
 
-    const [hospList, gStats, subs, crowdStats] = await Promise.all([
+    // 1. Load fast data immediately (hospitals, stats, crowdStats)
+    console.log('[Dashboard] Loading fast data...');
+    const [hospList, gStats, crowdStats] = await Promise.all([
         // Only fetch hospitals if list is empty
         !_dashHospitals.length ? apiFetch('/api/hospitals').catch(() => []) : Promise.resolve(_dashHospitals),
         apiFetch(`/api/stats/global${qs}`).catch(() => null),
-        apiFetch('/api/tracking/').catch(() => []),
         apiFetch(`/api/stats/crowd-analysis${qs}`).catch(() => null),
     ]);
 
@@ -252,24 +259,55 @@ async function loadDashboard() {
         renderDashHospList();
     }
 
-    // 4. Update Stats
+    // 2. Update Stats
     if (gStats) {
         document.getElementById('stat-hospitals').textContent = gStats.hospitals;
         document.getElementById('stat-doctors').textContent = gStats.doctors;
         document.getElementById('stat-alerts').textContent = gStats.notifications_today || '0';
     }
 
-    _allDashboardSubs = (subs || []).filter(s => s.is_active);
-    document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
-    document.getElementById('last-update-label').textContent = `最後更新：${new Date().toLocaleString('zh-TW')}`;
-
-    // 5. Render Crowd Chart
+    // 3. Render Crowd Chart
     if (crowdStats) {
         renderCrowdChart(crowdStats);
     }
 
-    // 6. Render Tracking Cards (filtered by selected hospital)
-    renderDashboardTracking();
+    // 4. Load tracking subscriptions in background (don't wait for it)
+    // This prevents slow tracking queries from blocking the UI
+    console.log('[Dashboard] Calling _loadTrackingAsync()');
+    _loadTrackingAsync();
+
+    // 5. Update timestamp
+    document.getElementById('last-update-label').textContent = `最後更新：${new Date().toLocaleString('zh-TW')}`;
+    
+    console.log('[Dashboard] loadDashboard() completed');
+}
+
+// Load tracking subscriptions asynchronously in background
+async function _loadTrackingAsync() {
+    try {
+        console.log('[Dashboard] Starting _loadTrackingAsync...');
+        const subs = await apiFetch('/api/tracking/').catch(() => []);
+        console.log('[Dashboard] API response (raw):', subs);
+        console.log('[Dashboard] API response type:', typeof subs);
+        console.log('[Dashboard] API response is array:', Array.isArray(subs));
+        
+        _allDashboardSubs = (subs || []).filter(s => s.is_active);
+        console.log('[Dashboard] Loaded tracking subs (filtered):', _allDashboardSubs.length);
+        console.log('[Dashboard] Filtered subs:', _allDashboardSubs);
+        
+        document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
+        
+        const grid = document.getElementById('dashboard-tracking-grid');
+        console.log('[Dashboard] Grid element found:', !!grid);
+        
+        // Re-render tracking cards with new data
+        console.log('[Dashboard] About to call renderDashboardTracking()');
+        renderDashboardTracking();
+        console.log('[Dashboard] renderDashboardTracking() called');
+    } catch (err) {
+        console.error('[Dashboard] Error loading tracking subscriptions:', err);
+        // Keep showing old data or empty state
+    }
 }
 
 /** Dashboard Hospital Filter Logic **/
@@ -386,7 +424,13 @@ function renderCrowdChart(stats) {
 }
 
 async function renderDashboardTracking() {
+    console.log('[renderDashboardTracking] Called with _allDashboardSubs:', _allDashboardSubs.length);
+    
     const grid = document.getElementById('dashboard-tracking-grid');
+    console.log('[renderDashboardTracking] Grid element:', grid);
+    console.log('[renderDashboardTracking] Grid display:', grid?.style.display);
+    console.log('[renderDashboardTracking] Grid classes:', grid?.className);
+    console.log('[renderDashboardTracking] Grid visible:', grid?.offsetHeight);
 
     // Get today's date in YYYY-MM-DD format (Taiwan timezone)
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
@@ -397,16 +441,20 @@ async function renderDashboardTracking() {
         filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
 
+    console.log('[renderDashboardTracking] Filtered items:', filtered.length);
+    
     if (!filtered.length) {
         grid.innerHTML = `<div class="empty-state">
       <div class="empty-icon">🔔</div>
       <p>目前無相關追蹤項目<br><a href="#" onclick="navigate(document.querySelector('[data-page=tracking]'), 'tracking')">前往追蹤清單</a></p>
     </div>`;
+        console.log('[renderDashboardTracking] Rendered empty state');
         return;
     }
 
     const cards = filtered.map(sub => renderClinicCard(sub, null));
     grid.innerHTML = cards.join('');
+    console.log('[renderDashboardTracking] Rendered', cards.length, 'cards');
 }
 
 function renderClinicCard(sub, snap) {
@@ -1595,8 +1643,14 @@ async function loadNotifications() {
     const tbody = document.getElementById('notif-table-body');
     tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)"><div class="spinner"></div></td></tr>`;
 
+    console.log('[Notifications] Starting to load notification logs...');
+    const startTime = performance.now();
+    
     // Always fetch from the new endpoint
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
+    const endTime = performance.now();
+    console.log(`[Notifications] Loaded ${logs.length} logs in ${(endTime - startTime).toFixed(0)}ms`);
+    
     _allNotificationLogs = logs;
 
     // Sort globally by sent_at descending

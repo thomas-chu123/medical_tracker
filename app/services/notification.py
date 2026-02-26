@@ -165,6 +165,7 @@ async def _process_subscription(supabase, sub: dict):
                 supabase=supabase,
                 sub_id=sub["id"],
                 user_id=sub["user_id"],
+                doctor_id=sub.get("doctor_id"),
                 email=user_email,
                 line_user_id=line_user_id,
                 notify_email=sub.get("notify_email", True),
@@ -196,20 +197,21 @@ async def _send_alerts(
     supabase,
     sub_id: str,
     user_id: str,
-    email: str | None,
-    line_user_id: str,
-    notify_email: bool,
-    notify_line: bool,
-    hospital_name: str,
-    clinic_room: str,
-    doctor_name: str,
-    dept_name: str,
-    session_date_str: str,
-    session_type_str: str,
-    current_number: int,
-    remaining: int,
-    threshold: int,
-    notified_flag: str,
+    doctor_id: str | None = None,
+    email: str | None = None,
+    line_user_id: str = "",
+    notify_email: bool = True,
+    notify_line: bool = False,
+    hospital_name: str = "Unknown",
+    clinic_room: str = "",
+    doctor_name: str = "",
+    dept_name: str = "",
+    session_date_str: str = "",
+    session_type_str: str = "",
+    current_number: int = 0,
+    remaining: int = 0,
+    threshold: int = 0,
+    notified_flag: str = "",
     appointment_number: int | None = None,
 ):
     send_tasks = []
@@ -228,8 +230,14 @@ async def _send_alerts(
             appointment_number=appointment_number,
         )
         send_tasks.append(_send_and_log(
-            supabase, sub_id, threshold, "email", email,
-            send_email(email, subject, body)
+            supabase, sub_id, threshold, "email", email, f"Email: {subject}",
+            doctor_id=doctor_id,
+            hospital_name=hospital_name,
+            department_name=dept_name,
+            clinic_room=clinic_room,
+            session_date=session_date_str,
+            current_number=current_number,
+            coro=send_email(email, subject, body)
         ))
 
     if notify_line and line_user_id:
@@ -243,8 +251,14 @@ async def _send_alerts(
             threshold=threshold,
         )
         send_tasks.append(_send_and_log(
-            supabase, sub_id, threshold, "line", "",
-            send_line_message(line_user_id, message)
+            supabase, sub_id, threshold, "line", line_user_id, f"LINE: {message}",
+            doctor_id=doctor_id,
+            hospital_name=hospital_name,
+            department_name=dept_name,
+            clinic_room=clinic_room,
+            session_date=session_date_str,
+            current_number=current_number,
+            coro=send_line_message(line_user_id, message)
         ))
 
     if send_tasks:
@@ -263,37 +277,76 @@ async def _send_alerts(
          log.warning(f"[Notification] No alerts sent for sub {sub_id} threshold {threshold}. Tasks list was empty. Email: {email}, LineUserID: {'set' if line_user_id else 'not set'}")
 
 
-async def _send_and_log(supabase, sub_id, threshold, channel, recipient, coro):
-    # Log the attempt FIRST so we have a record even if it crashes
-    log_res = await _run(
-        lambda: supabase.table("notification_logs").insert({
-            "subscription_id": sub_id,
-            "threshold": threshold,
-            "channel": channel,
-            "recipient": recipient or "Unknown",
-            "success": False,
-            "error_message": "Started sending...",
-        }).execute()
-    )
-    log_id = log_res.data[0]["id"] if log_res.data else None
+async def _send_and_log(
+    supabase,
+    sub_id,
+    threshold,
+    channel,
+    recipient,
+    message,
+    doctor_id=None,
+    hospital_name=None,
+    department_name=None,
+    clinic_room=None,
+    session_date=None,
+    current_number=None,
+    coro=None,
+):
+    # Log the attempt FIRST with context
+    log_data = {
+        "subscription_id": sub_id,
+        "threshold": threshold,
+        "channel": channel,
+        "recipient": recipient or "Unknown",
+        "message": message or "Notification sent",
+        "success": False,
+        "error_message": "Started sending...",
+    }
+    
+    # Add optional context fields if available - only add non-empty values
+    if doctor_id:
+        log_data["doctor_id"] = doctor_id
+    if hospital_name and hospital_name != "未知醫院":
+        log_data["hospital_name"] = hospital_name
+    if department_name and department_name not in ("未知科別", None, ""):
+        log_data["department_name"] = department_name
+    if clinic_room and clinic_room not in ("未提供", None, ""):
+        log_data["clinic_room"] = clinic_room
+    if session_date:
+        log_data["session_date"] = session_date
+    if current_number is not None:
+        log_data["current_number"] = current_number
+    
+    try:
+        log_res = await _run(
+            lambda: supabase.table("notification_logs").insert(log_data).execute()
+        )
+        log_id = log_res.data[0]["id"] if log_res.data else None
+    except Exception as e:
+        log.error(f"[Notification] Failed to insert log row: {e}. Data: {log_data}")
+        log_id = None
 
     success = False
     error = None
     try:
         if not recipient and channel == "email":
              raise ValueError("User email is missing")
-        success = await coro
+        if coro:
+            success = await coro
     except Exception as e:
         error = str(e)
 
     # Update the log with final result
     if log_id:
-        await _run(
-            lambda: supabase.table("notification_logs").update({
-                "success": success,
-                "error_message": error,
-            }).eq("id", log_id).execute()
-        )
+        try:
+            await _run(
+                lambda: supabase.table("notification_logs").update({
+                    "success": success,
+                    "error_message": error,
+                }).eq("id", log_id).execute()
+            )
+        except Exception as e:
+            log.error(f"[Notification] Failed to update log row {log_id}: {e}")
 
 
 async def _get_user_email(supabase, user_id: str) -> str | None:

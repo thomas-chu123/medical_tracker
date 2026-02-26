@@ -448,34 +448,17 @@ async def get_categories():
 # Background Cache Refresher
 async def refresh_stats_cache_task():
     """Periodically refreshes the global and crowd statistics cache."""
-    async def refresh_hosp(hid):
-        cache_key = hid or "all"
-        try:
-            # Refresh both in parallel for this hospital
-            g_stats, c_stats = await asyncio.gather(
-                calculate_global_stats(hid),
-                calculate_crowd_analysis(hid)
-            )
-            _STATS_CACHE["global"][cache_key] = g_stats
-            _STATS_CACHE["crowd"][cache_key] = c_stats
-        except Exception as e:
-            logger.error(f"❌ Error refreshing cache for hospital {cache_key}: {e}")
-
-    # Initial fill
+    # Initial fill - only pre-cache the "all" view to avoid connection exhaustion at startup
     try:
-        logger.info("🔄 Initializing dashboard stats cache on startup...")
-        supabase = get_supabase()
-        hospitals_res = await asyncio.to_thread(lambda: supabase.table("hospitals").select("id").execute())
-        hosp_ids = [h["id"] for h in hospitals_res.data]
-        target_hids = [None] + hosp_ids
-        
-        # Run refreshes in parallel (batch size 3 to be safe)
-        batch_size = 3
-        for i in range(0, len(target_hids), batch_size):
-            batch = target_hids[i:i + batch_size]
-            await asyncio.gather(*[refresh_hosp(hid) for hid in batch])
-            
-        logger.info(f"✅ Dashboard stats cache initialized for {len(target_hids)} targets.")
+        logger.info("🔄 Initializing dashboard stats cache (global view only)...")
+        # Only pre-calculate the global "all" stats, per-hospital will be done on-demand
+        g_stats, c_stats = await asyncio.gather(
+            calculate_global_stats(None),
+            calculate_crowd_analysis(None)
+        )
+        _STATS_CACHE["global"]["all"] = g_stats
+        _STATS_CACHE["crowd"]["all"] = c_stats
+        logger.info("✅ Dashboard stats cache initialized (global view).")
     except Exception as e:
         logger.error(f"❌ Error during initial stats cache fill: {e}")
     
@@ -484,16 +467,17 @@ async def refresh_stats_cache_task():
         try:
             await asyncio.sleep(3600)
             logger.info("🔄 Periodically refreshing dashboard stats cache...")
-            supabase = get_supabase()
-            hospitals_res = await asyncio.to_thread(lambda: supabase.table("hospitals").select("id").execute())
-            hosp_ids = [h["id"] for h in hospitals_res.data]
-            target_hids = [None] + hosp_ids
             
-            for i in range(0, len(target_hids), batch_size):
-                batch = target_hids[i:i + batch_size]
-                await asyncio.gather(*[refresh_hosp(hid) for hid in batch])
+            # Refresh only the global "all" stats periodically
+            # Per-hospital caches will update on-demand
+            g_stats, c_stats = await asyncio.gather(
+                calculate_global_stats(None),
+                calculate_crowd_analysis(None)
+            )
+            _STATS_CACHE["global"]["all"] = g_stats
+            _STATS_CACHE["crowd"]["all"] = c_stats
             
-            logger.info("✅ Periodic dashboard stats cache refresh complete.")
+            logger.info("✅ Periodic dashboard stats cache refresh complete (global view).")
         except Exception as e:
             logger.error(f"❌ Error during periodic stats cache refresh: {e}")
 
