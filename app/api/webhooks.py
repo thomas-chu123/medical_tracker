@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.database import get_supabase
 
 settings = get_settings()
-router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
 
 
 @router.post("/line")
