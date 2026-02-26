@@ -118,14 +118,18 @@ async def _process_subscription(supabase, sub: dict):
             hospital_name = hosp_res.data.get("name", "未知醫院")
 
     # Fetch user's LINE Notify token from users_local
-    user_res = await _run(
-        lambda: supabase.table("users_local")
-        .select("line_notify_token")
-        .eq("id", sub["user_id"])
-        .execute()
-    )
-    user_data = user_res.data[0] if user_res.data else {}
-    line_notify_token = user_data.get("line_notify_token", "")
+    try:
+        user_res = await _run(
+            lambda: supabase.table("users_local")
+            .select("line_notify_token")
+            .eq("id", sub["user_id"])
+            .execute()
+        )
+        user_data = user_res.data[0] if user_res.data else {}
+        line_notify_token = user_data.get("line_notify_token", "")
+    except Exception as e:
+        log.warning(f"Failed to fetch line_notify_token: {e}. Column may not exist in database.")
+        line_notify_token = ""
 
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])

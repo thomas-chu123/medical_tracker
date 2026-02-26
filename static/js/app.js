@@ -3,78 +3,18 @@
    ============================================================ */
 
 const API = '';   // Same origin; change to http://localhost:8000 if needed
+let authToken = localStorage.getItem('auth_token') || null;
+let currentUser = null;
 
-// ── Unified App State ──────────────────────────────────────────
-const AppState = {
-    // Auth
-    authToken: localStorage.getItem('auth_token') || null,
-    currentUser: null,
-
-    // Dashboard
-    dashboard: {
-        hospitals: [],
-        selectedHospitalId: null,
-        subscriptions: [],
-    },
-
-    // Hospital Search
-    hospitalSearch: {
-        selectedHospitalId: null,
-        selectedHospitalName: '',
-        selectedDepartmentId: null,
-        selectedDepartmentName: '',
-        allDepartments: [],
-        allDoctors: [],
-        doctorSearchTimer: null,
-        departmentData: { depts: [], hospName: '', cat: '' },
-    },
-
-    // Add Tracking Stepper
-    stepper: {
-        step: 1,
-        hospitalId: '',
-        hospitalName: '',
-        category: '',
-        departmentId: '',
-        departmentName: '',
-        doctorId: '',
-        doctorName: '',
-        doctorSchedules: [],
-    },
-
-    // Tracking Management
-    tracking: {
-        subscriptions: [],
-        currentTab: 'current',
-    },
-
-    // Notifications
-    notifications: {
-        logs: [],
-        currentTab: 'current',
-    },
-
-    // Charts
-    charts: {
-        crowdChart: null,
-        deptComparisonChart: null,
-        doctorComparisonChart: null,
-        doctorSpeedChart: null,
-    },
-
-    // Analysis
-    analysis: {
-        ranking: [],
-    },
-
-    // Components
-    combos: {},
-};
+// ── Global State ──────────────────────────────────────────────
+let _dashHospitals = [];
+let _selectedDashHospId = null;
+let _allDashboardSubs = [];
 
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-    if (AppState.authToken) headers['Authorization'] = `Bearer ${AppState.authToken}`;
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     let resp;
     try {
@@ -148,8 +88,8 @@ async function handleLogin(e) {
         if (!data || !data.access_token) {
             throw new Error('伺服器未回傳 Token，請稍後再試');
         }
-        AppState.authToken = data.access_token;
-        localStorage.setItem('auth_token', AppState.authToken);
+        authToken = data.access_token;
+        localStorage.setItem('auth_token', authToken);
 
         // Show success feedback before reloading
         toast('登入成功！重新載入中…', 'success', 2000);
@@ -189,9 +129,9 @@ async function handleRegister(e) {
 }
 
 function handleLogout() {
-    AppState.authToken = null;
+    authToken = null;
     localStorage.removeItem('auth_token');
-    AppState.currentUser = null;
+    currentUser = null;
     document.body.classList.remove('is-admin');
     document.getElementById('app').style.display = 'none';
     document.getElementById('auth-page').classList.add('show');
@@ -201,13 +141,13 @@ function handleLogout() {
 async function initApp(userFromLogin = null) {
     if (userFromLogin) {
         // Fresh login: use profile from login response, no extra API call needed
-        AppState.currentUser = userFromLogin;
+        currentUser = userFromLogin;
     } else {
         // Page reload: fetch profile with stored token
         try {
-            AppState.currentUser = await apiFetch('/api/users/me');
-            console.log('[initApp] currentUser loaded:', AppState.currentUser);
-            if (!AppState.currentUser) return;
+            currentUser = await apiFetch('/api/users/me');
+            console.log('[initApp] currentUser loaded:', currentUser);
+            if (!currentUser) return;
         } catch (e) {
             console.error('[initApp] Failed to load profile:', e);
             handleLogout(); return;
@@ -219,17 +159,17 @@ async function initApp(userFromLogin = null) {
     document.getElementById('app').style.display = 'grid';
 
     // Set user info
-    const name = AppState.currentUser.display_name || 'User';
+    const name = currentUser.display_name || 'User';
     document.getElementById('user-name-display').textContent = name;
     document.getElementById('user-avatar').textContent = name[0].toUpperCase();
     document.getElementById('profile-name').value = name;
-    if (AppState.currentUser.line_notify_token)
-        document.getElementById('line-token').value = AppState.currentUser.line_notify_token;
+    if (currentUser.line_notify_token)
+        document.getElementById('line-token').value = currentUser.line_notify_token;
 
     // Manage admin nav button visibility
     const adminBtn = document.getElementById('admin-nav-btn');
     if (adminBtn) {
-        if (AppState.currentUser.is_admin) {
+        if (currentUser.is_admin) {
             adminBtn.style.display = 'flex';
             document.body.classList.add('is-admin');
         } else {
@@ -244,25 +184,10 @@ async function initApp(userFromLogin = null) {
 
 // ── Navigation ────────────────────────────────────────────────
 function navigate(btn, pageId, options = {}) {
-    console.log(`[navigate] pageId: ${pageId}, from btn:`, btn, 'options:', options);
-
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-
-    // If no btn provided (e.g. from script jump), try to find the matching nav button
-    if (!btn) {
-        btn = document.querySelector(`.nav-item[data-page="${pageId}"]`) ||
-            document.querySelector(`.nav-item[data-page=${pageId}]`);
-    }
-
     if (btn) btn.classList.add('active');
-
-    const targetPage = document.getElementById('page-' + pageId);
-    if (!targetPage) {
-        console.error('[navigate] Target page not found:', 'page-' + pageId);
-        return;
-    }
-    targetPage.classList.add('active');
+    document.getElementById('page-' + pageId).classList.add('active');
 
     // Show/hide add-tracking nav item
     const navAddTracking = document.getElementById('nav-add-tracking');
@@ -274,7 +199,7 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'hospitals') {
         loadHospitalsPage();
     } else if (pageId === 'tracking') {
-        AppState.tracking.currentTab = 'current';
+        _currentTrackingTab = 'current';
         // Reset tab button styles
         const btnCurr = document.getElementById('btn-tab-tracking-current');
         const btnPast = document.getElementById('btn-tab-tracking-past');
@@ -290,11 +215,11 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'admin') {
         switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
+        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, '_st BEFORE:', JSON.parse(JSON.stringify(_st)));
         if (!options.skipReset) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
-            Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
-            console.log('[navigate] stepper RESET');
+            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            console.log('[navigate] _st RESET');
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
             loadStepperHospitals();
@@ -305,13 +230,13 @@ function navigate(btn, pageId, options = {}) {
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
     // 1. Initialize Hospital Filter if not done
-    if (!AppState.dashboard.hospitals.length) {
-        AppState.dashboard.hospitals = await apiFetch('/api/hospitals').catch(() => []) || [];
+    if (!_dashHospitals.length) {
+        _dashHospitals = await apiFetch('/api/hospitals').catch(() => []) || [];
         renderDashHospList();
     }
 
     // 2. Prepare query param
-    const qs = AppState.dashboard.selectedHospitalId ? `?hospital_id=${AppState.dashboard.selectedHospitalId}` : '';
+    const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
 
     // 3. Fire requests in parallel including crowd-analysis
     const [gStats, subs, crowdStats] = await Promise.all([
@@ -327,8 +252,8 @@ async function loadDashboard() {
         document.getElementById('stat-alerts').textContent = gStats.notifications_today || '0';
     }
 
-    AppState.dashboard.subscriptions = (subs || []).filter(s => s.is_active);
-    document.getElementById('stat-tracking').textContent = AppState.dashboard.subscriptions.length;
+    _allDashboardSubs = (subs || []).filter(s => s.is_active);
+    document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
     document.getElementById('last-update-label').textContent = `最後更新：${new Date().toLocaleString('zh-TW')}`;
 
     // 5. Render Crowd Chart
@@ -345,13 +270,13 @@ function renderDashHospList(filterText = '') {
     const list = document.getElementById('dash-hosp-list');
     let q = filterText.toLowerCase().trim();
 
-    const selectedHosp = AppState.dashboard.hospitals.find(h => h.id === AppState.dashboard.selectedHospitalId);
+    const selectedHosp = _dashHospitals.find(h => h.id === _selectedDashHospId);
     if (selectedHosp && selectedHosp.name.toLowerCase().trim() === q) {
         q = ''; // Skip filtering if input matches the currently selected hospital
     }
 
     // Add "All Hospitals" option
-    let items = [{ id: null, name: '全部醫院' }, ...AppState.dashboard.hospitals];
+    let items = [{ id: null, name: '全部醫院' }, ..._dashHospitals];
     if (q) {
         items = items.filter(h => h.name.toLowerCase().includes(q));
     }
@@ -389,9 +314,9 @@ function toggleDashHosp() {
 }
 
 function selectDashHosp(id, name) {
-    AppState.dashboard.selectedHospitalId = (id === 'null' || id === null) ? null : id;
+    _selectedDashHospId = (id === 'null' || id === null) ? null : id;
     const inp = document.querySelector('#dash-hosp-combo input');
-    inp.value = AppState.dashboard.selectedHospitalId ? name : '';
+    inp.value = _selectedDashHospId ? name : '';
     document.getElementById('dash-hosp-combo').classList.remove('open');
 
     // Refresh data
@@ -405,15 +330,16 @@ document.addEventListener('click', e => {
     }
 });
 
+let crowdChartInstance = null;
 function renderCrowdChart(stats) {
     const ctx = document.getElementById('crowd-chart');
     if (!ctx) return;
 
-    if (AppState.charts.crowdChart) {
-        AppState.charts.crowdChart.destroy();
+    if (crowdChartInstance) {
+        crowdChartInstance.destroy();
     }
 
-    AppState.charts.crowdChart = new Chart(ctx, {
+    crowdChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: stats.labels,
@@ -455,10 +381,13 @@ function renderCrowdChart(stats) {
 async function renderDashboardTracking() {
     const grid = document.getElementById('dashboard-tracking-grid');
 
-    // Filter by selected hospital
-    let filtered = AppState.dashboard.subscriptions;
-    if (AppState.dashboard.selectedHospitalId) {
-        filtered = filtered.filter(s => s.hospital_id === AppState.dashboard.selectedHospitalId);
+    // Get today's date in YYYY-MM-DD format (Taiwan timezone)
+    const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
+
+    // Filter by selected hospital and date (only show active upcoming sessions)
+    let filtered = _allDashboardSubs.filter(s => (s.session_date || '') >= todayStr);
+    if (_selectedDashHospId) {
+        filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
 
     if (!filtered.length) {
@@ -565,9 +494,10 @@ async function refreshAll() {
 
 // ── Combobox engine ───────────────────────────────────────────
 // Each combobox: { cbId, items: [{value, label}], onSelect, inputId }
+const _combos = {};
 
 function buildCombo(cbId, items, onSelect) {
-    AppState.combos[cbId] = { items, onSelect, filtered: items };
+    _combos[cbId] = { items, onSelect, filtered: items };
     const list = document.getElementById(cbId + '-list');
     _renderComboList(cbId, items);
 }
@@ -604,7 +534,7 @@ function toggleCombo(cbId) {
 }
 
 function filterCombo(cbId) {
-    const cb = AppState.combos[cbId];
+    const cb = _combos[cbId];
     if (!cb) return;
     const inp = document.getElementById(cbId).querySelector('input[type=text]');
     const q = inp.value.toLowerCase();
@@ -617,7 +547,7 @@ function selectCombo(cbId, value, label) {
     const inp = document.getElementById(cbId).querySelector('input[type=text]');
     inp.value = label;
     closeCombo(cbId);
-    const cb = AppState.combos[cbId];
+    const cb = _combos[cbId];
     if (cb?.onSelect) cb.onSelect(value, label);
 }
 
@@ -629,6 +559,12 @@ document.addEventListener('click', e => {
 });
 
 // ── Hospitals page (Chip + Grid) ──────────────────────────────
+let allDoctors = [];
+let _hsHospitalId = null;
+let _hsHospitalName = '';
+
+let allDepts = [];   // stores current category's dept list for filtering
+
 async function loadHospitalsPage() {
     const inp = document.getElementById('hospital-input');
     if (inp.dataset.loaded === '1') return;
@@ -637,8 +573,8 @@ async function loadHospitalsPage() {
 
     const hospitals = await apiFetch('/api/hospitals') || [];
     buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name })), async (hospId, hospName) => {
-        AppState.hospitalSearch.selectedHospitalId = hospId;
-        AppState.hospitalSearch.selectedHospitalName = hospName;
+        _hsHospitalId = hospId;
+        _hsHospitalName = hospName;
         document.getElementById('hs-category-wrap').style.display = 'none';
         document.getElementById('hs-dept-wrap').style.display = 'none';
         document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
@@ -649,18 +585,13 @@ async function loadHospitalsPage() {
         if (deptSearchEl) deptSearchEl.value = '';
         _hsBreadcrumb([hospName]);
 
-        try {
-            const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
-            if (cats.length) {
-                _hsRenderCategoryChips(hospId, hospName, cats);
-            } else {
-                // No categories \u2014 load all depts directly
-                const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
-                _hsRenderDeptGrid(hospId, hospName, null, depts);
-            }
-        } catch (e) {
-            console.error('[loadHospitalsPage] select error:', e);
-            document.getElementById('doctors-grid').innerHTML = '\u003cdiv class=\"empty-state\"\u003e\u003cp\u003e載入失敗，請重試\u003c/p\u003e\u003c/div\u003e';
+        const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
+        if (cats.length) {
+            _hsRenderCategoryChips(hospId, hospName, cats);
+        } else {
+            // No categories — load all depts directly
+            const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
+            _hsRenderDeptGrid(hospId, hospName, null, depts);
         }
     });
 }
@@ -694,51 +625,50 @@ async function hsSelectCategory(hospId, hospName, cat) {
     const deptSearchEl = document.getElementById('dept-search');
     if (deptSearchEl) { deptSearchEl.value = ''; deptSearchEl.dataset.lastVal = ''; }
 
-    const url = `/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`;
-    console.log('[hsSelectCategory] Fetching:', url);
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-    try {
-        const depts = await apiFetch(url) || [];
-        _hsRenderDeptGrid(hospId, hospName, cat, depts);
-        filterHospitalSearch();
-    } catch (e) {
-        console.error('[hsSelectCategory] error:', e);
-        document.getElementById('doctors-grid').innerHTML = `<div class="empty-state"><p>載入科室失敗: ${e.message}</p><p style="font-size:12px;color:var(--text-muted)">${url}</p></div>`;
-    }
+    const depts = await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [];
+    _hsRenderDeptGrid(hospId, hospName, cat, depts);
+
+    // Apply existing doctor/dept filters (if any) to the newly selected category
+    filterHospitalSearch();
 }
 
 function _hsDeptButtons(depts, hospName, cat) {
-    return depts.map(d =>
-        `<button class="dept-btn" onclick="hsSelectDept('${d.id}','${escHtml(d.name)}','${escHtml(hospName)}','${escHtml(cat)}')">${escHtml(d.name)}</button>`
-    ).join('');
+    return depts.length
+        ? depts.map(d =>
+            `<button class="dept-btn" onclick="hsSelectDept('${d.id}','${escHtml(d.name)}','${escHtml(hospName)}','${cat ? escHtml(cat) : ''}')">${escHtml(d.name)}<\/button>`
+        ).join('')
+        : '<div style="color:var(--text-muted);font-size:14px">找不到符合的科室<\/div>';
 }
 
 function _hsRenderDeptGrid(hospId, hospName, cat, depts) {
     const wrap = document.getElementById('hs-dept-wrap');
     const label = document.getElementById('hs-dept-label');
     const grid = document.getElementById('hs-dept-grid');
-
-    // Update state
-    AppState.hospitalSearch.departmentData = { depts, hospName, cat };
-
+    // Store for filter
+    _hsDeptAll = { depts, hospName, cat };
     label.textContent = cat ? `${cat} — 請選擇科室` : '請選擇科室';
     grid.innerHTML = depts.length
         ? _hsDeptButtons(depts, hospName, cat)
-        : '<div style="color:var(--text-muted);font-size:14px">此類別下無科室資料</div>';
+        : '<div style="color:var(--text-muted);font-size:14px">此類別下無科室資料<\/div>';
     wrap.style.display = 'block';
     document.getElementById('doctors-grid').innerHTML =
         '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
 }
 
+let _hsDeptAll = { depts: [], hospName: '', cat: '' };
+let _currentHsDeptId = null;
+let _doctorSearchTimer = null;
+
 function filterHospitalSearch() {
     const dq = (document.getElementById('dept-search')?.value || '').toLowerCase().trim();
     const docq = (document.getElementById('doctor-search')?.value || '').toLowerCase().trim();
-    const { depts, hospName, cat } = AppState.hospitalSearch.departmentData;
+    const { depts, hospName, cat } = _hsDeptAll;
 
     const dsNode = document.getElementById('dept-search');
     const prevDq = dsNode?.dataset.lastVal || '';
     if (dq !== prevDq && dsNode) {
-        AppState.hospitalSearch.selectedDepartmentId = null; // Unselect dept if user manually edits dept-search
+        _currentHsDeptId = null; // Unselect dept if user manually edits dept-search
         dsNode.dataset.lastVal = dq;
     }
 
@@ -747,13 +677,13 @@ function filterHospitalSearch() {
         document.getElementById('hs-dept-label').textContent = `${cat} — 請選擇科室`;
         document.getElementById('hs-dept-wrap').style.display = 'block';
     }
-    else if (!dq && !cat && AppState.hospitalSearch.selectedHospitalId) {
+    else if (!dq && !cat && _hsHospitalId) {
         document.getElementById('hs-dept-wrap').style.display = 'none';
         document.getElementById('hs-category-wrap').style.display = 'block';
     }
-    else if (AppState.hospitalSearch.selectedHospitalId && dq) {
+    else if (_hsHospitalId && dq) {
         // If there's a search query, always search the whole hospital departments
-        apiFetch(`/api/hospitals/${AppState.hospitalSearch.selectedHospitalId}/departments?q=${encodeURIComponent(dq)}`).then(results => {
+        apiFetch(`/api/hospitals/${_hsHospitalId}/departments?q=${encodeURIComponent(dq)}`).then(results => {
             const deptWrap = document.getElementById('hs-dept-wrap');
             document.getElementById('hs-category-wrap').style.display = 'none';
             document.getElementById('hs-dept-label').textContent = `搜尋「${dq}」— 找到 ${(results || []).length} 個科室`;
@@ -764,39 +694,36 @@ function filterHospitalSearch() {
                 : '<div style="color:var(--text-muted);font-size:14px">找不到符合的科室</div>';
             document.getElementById('hs-dept-grid').innerHTML = html;
             deptWrap.style.display = 'block';
-        }).catch(e => {
-            console.error('[filterHospitalSearch] dept search error:', e);
-            document.getElementById('hs-dept-grid').innerHTML = '<div style="color:var(--text-muted);font-size:14px">搜尋失敗</div>';
         });
     }
 
-    clearTimeout(AppState.hospitalSearch.doctorSearchTimer);
-    AppState.hospitalSearch.doctorSearchTimer = setTimeout(async () => {
-        if (!AppState.hospitalSearch.selectedHospitalId) return;
+    clearTimeout(_doctorSearchTimer);
+    _doctorSearchTimer = setTimeout(async () => {
+        if (!_hsHospitalId) return;
 
-        if (!docq && !AppState.hospitalSearch.selectedDepartmentId) {
+        if (!docq && !_currentHsDeptId) {
             // Revert to empty state if no search text and no department selected
             document.getElementById('doctors-grid').innerHTML =
                 '<div class="empty-state"><div class="empty-icon">🏥</div><p>請選擇科室，或輸入醫師名稱搜尋</p></div>';
             return;
-        } else if (!docq && AppState.hospitalSearch.selectedDepartmentId && AppState.hospitalSearch.allDoctors.length) {
-            renderDoctorCards(AppState.hospitalSearch.allDoctors);
+        } else if (!docq && _currentHsDeptId && allDoctors.length) {
+            renderDoctorCards(allDoctors);
             return;
         }
 
         document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
         try {
-            let url = `/api/hospitals/${AppState.hospitalSearch.selectedHospitalId}/doctors`;
+            let url = `/api/hospitals/${_hsHospitalId}/doctors`;
             const params = new URLSearchParams();
             if (docq) params.append('q', docq);
-            if (AppState.hospitalSearch.selectedDepartmentId) params.append('department_id', AppState.hospitalSearch.selectedDepartmentId);
+            if (_currentHsDeptId) params.append('department_id', _currentHsDeptId);
 
             if (params.toString()) url += `?${params.toString()}`;
             let docs = await apiFetch(url) || [];
 
-            if (!AppState.hospitalSearch.selectedDepartmentId) {
-                if (cat && AppState.hospitalSearch.departmentData.depts.length) {
-                    const validIds = new Set(AppState.hospitalSearch.departmentData.depts.map(d => d.id));
+            if (!_currentHsDeptId) {
+                if (cat && _hsDeptAll.depts.length) {
+                    const validIds = new Set(_hsDeptAll.depts.map(d => d.id));
                     docs = docs.filter(d => validIds.has(d.department_id));
                 }
                 if (dq) {
@@ -818,16 +745,16 @@ function resetHospitalSearch() {
     if (ds) { ds.value = ''; ds.dataset.lastVal = ''; }
     if (docs) docs.value = '';
 
-    AppState.hospitalSearch.selectedDepartmentId = null;
+    _currentHsDeptId = null;
 
     // If a hospital is selected, reset to category view
-    if (AppState.hospitalSearch.selectedHospitalId) {
+    if (_hsHospitalId) {
         document.getElementById('hs-dept-wrap').style.display = 'none';
         document.getElementById('hs-category-wrap').style.display = 'block';
         document.getElementById('doctors-grid').innerHTML =
             '<div class="empty-state"><div class="empty-icon">🏷️</div><p>請選擇科室類別</p></div>';
-        AppState.hospitalSearch.allDoctors = [];
-        _hsBreadcrumb([AppState.hospitalSearch.selectedHospitalName]);
+        allDoctors = [];
+        _hsBreadcrumb([_hsHospitalName]);
         // De-select any active chips
         document.querySelectorAll('#hs-category-chips .cat-chip').forEach(b => b.classList.remove('active'));
     }
@@ -842,26 +769,21 @@ function filterDoctors() {
 }
 
 async function hsSelectDept(deptId, deptName, hospName, cat) {
-    AppState.hospitalSearch.selectedDepartmentId = deptId;
+    _currentHsDeptId = deptId;
     const docSearchEl = document.getElementById('doctor-search');
     const dsNode = document.getElementById('dept-search');
     if (docSearchEl) docSearchEl.value = '';
     if (dsNode) { dsNode.value = deptName; dsNode.dataset.lastVal = deptName.toLowerCase(); }
-    AppState.hospitalSearch.allDoctors = [];
+    allDoctors = [];
 
     document.querySelectorAll('#hs-dept-grid .dept-btn').forEach(b =>
         b.classList.toggle('active', b.textContent === deptName));
     const parts = cat ? [hospName, cat, deptName] : [hospName, deptName];
     _hsBreadcrumb(parts);
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-    try {
-        const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
-        AppState.hospitalSearch.allDoctors = docs;
-        renderDoctorCards(docs);
-    } catch (e) {
-        console.error('[hsSelectDept] error:', e);
-        document.getElementById('doctors-grid').innerHTML = '<div class="empty-state"><p>載入醫師失敗</p></div>';
-    }
+    const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
+    allDoctors = docs;
+    renderDoctorCards(docs);
 }
 
 /**
@@ -873,7 +795,7 @@ async function hsSelectDeptFromSearch(deptId, deptName, hospName) {
     // Reset: hide dept grid, clear search, hide any stale doctor list
     document.getElementById('hs-dept-wrap').style.display = 'none';
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
-    AppState.hospitalSearch.allDoctors = [];
+    allDoctors = [];
     const docSearchEl = document.getElementById('doctor-search');
     if (docSearchEl) docSearchEl.value = '';
 
@@ -888,11 +810,10 @@ async function hsSelectDeptFromSearch(deptId, deptName, hospName) {
     }
 
     // Fetch depts for that category and render them
-    const hospId = AppState.hospitalSearch.selectedHospitalId;
-    const depts = (cat && hospId)
-        ? (await apiFetch(`/api/hospitals/${hospId}/departments?category=${encodeURIComponent(cat)}`) || [])
+    const depts = cat
+        ? (await apiFetch(`/api/hospitals/${_hsHospitalId}/departments?category=${encodeURIComponent(cat)}`) || [])
         : [{ id: deptId, name: deptName }];
-    _hsRenderDeptGrid(hospId, hospName, cat, depts);
+    _hsRenderDeptGrid(_hsHospitalId, hospName, cat, depts);
 
     // Auto-highlight the dept button and load doctors
     await hsSelectDept(deptId, deptName, hospName, cat);
@@ -920,6 +841,7 @@ function renderDoctorCards(doctors) {
 }
 
 // ── Add Tracking Stepper ───────────────────────────────────────
+const _st = { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' };
 
 async function loadStepperHospitals() {
     const grid = document.getElementById('step1-hospital-grid');
@@ -931,8 +853,8 @@ async function loadStepperHospitals() {
 }
 
 async function stepperSelectHospital(hospId, hospName) {
-    AppState.stepper.hospitalId = hospId; AppState.stepper.hospitalName = hospName;
-    AppState.stepper.category = ''; AppState.stepper.departmentId = ''; AppState.stepper.departmentName = ''; AppState.stepper.doctorId = ''; AppState.stepper.doctorName = '';
+    _st.hospitalId = hospId; _st.hospitalName = hospName;
+    _st.cat = ''; _st.deptId = ''; _st.deptName = ''; _st.doctorId = ''; _st.doctorName = '';
     _stepperBreadcrumb();
     stepperGoTo(2);
     // Load categories or depts
@@ -953,12 +875,12 @@ async function stepperSelectHospital(hospId, hospName) {
 }
 
 async function stepperSelectCategory(cat) {
-    AppState.stepper.category = cat;
+    _st.cat = cat;
     document.querySelectorAll('#step2-category-chips .cat-chip').forEach(b =>
         b.classList.toggle('active', b.textContent === cat));
     const grid = document.getElementById('step2-dept-grid');
     grid.innerHTML = '<div class="spinner"></div>';
-    const depts = await apiFetch(`/api/hospitals/${AppState.stepper.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
+    const depts = await apiFetch(`/api/hospitals/${_st.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
     grid.innerHTML = _stepperDeptButtons(depts);
     _stepperBreadcrumb();
 }
@@ -970,7 +892,7 @@ function _stepperDeptButtons(depts) {
 }
 
 async function stepperSelectDept(deptId, deptName) {
-    AppState.stepper.departmentId = deptId; AppState.stepper.departmentName = deptName;
+    _st.deptId = deptId; _st.deptName = deptName;
     document.getElementById('modal-dept').value = deptId;
     _stepperBreadcrumb();
     stepperGoTo(3);
@@ -986,7 +908,7 @@ async function stepperSelectDept(deptId, deptName) {
 }
 
 async function stepperSelectDoctor(docId, docName) {
-    AppState.stepper.doctorId = docId; AppState.stepper.doctorName = docName;
+    _st.doctorId = docId; _st.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
     stepperGoTo(4);
@@ -1007,16 +929,16 @@ function stepperNextFromStep4() {
         document.getElementById('notify-5').checked ? '前5號' : ''
     ].filter(Boolean).join('、');
 
-    const hName = AppState.stepper.hospitalName || '（未知醫院）';
-    const dName = AppState.stepper.departmentName || '（未知科室）';
-    const docName = AppState.stepper.doctorName || '（未知醫師）';
+    const hName = _st.hospitalName || '（未知醫院）';
+    const dName = _st.deptName || '（未知科室）';
+    const docName = _st.doctorName || '（未知醫師）';
 
-    console.log('[stepperNextFromStep4] stepper state:', JSON.parse(JSON.stringify(AppState.stepper)));
+    console.log('[stepperNextFromStep4] _st state:', JSON.parse(JSON.stringify(_st)));
     console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
 
     document.getElementById('confirm-summary').innerHTML = `
       <div>🏥 <b>醫院：</b>${escHtml(hName)}</div>
-      ${AppState.stepper.category ? `<div>🏷️ <b>類別：</b>${escHtml(AppState.stepper.category)}</div>` : ''}
+      ${_st.cat ? `<div>🏷️ <b>類別：</b>${escHtml(_st.cat)}</div>` : ''}
       <div>🩺 <b>科室：</b>${escHtml(dName)}</div>
       <div>👨‍⚕️ <b>醫師：</b>${escHtml(docName)}</div>
       <div>📅 <b>日期：</b>${date} ${session}診</div>
@@ -1027,7 +949,7 @@ function stepperNextFromStep4() {
 }
 
 function stepperGoTo(step) {
-    AppState.stepper.step = step;
+    _st.step = step;
     for (let i = 1; i <= 5; i++) {
         document.getElementById(`step-${i}-content`).style.display = i === step ? '' : 'none';
     }
@@ -1042,7 +964,7 @@ function stepperGoTo(step) {
 }
 
 function _stepperBreadcrumb() {
-    const parts = [AppState.stepper.hospitalName, AppState.stepper.category, AppState.stepper.departmentName, AppState.stepper.doctorName].filter(Boolean);
+    const parts = [_st.hospitalName, _st.cat, _st.deptName, _st.doctorName].filter(Boolean);
     const el = document.getElementById('stepper-breadcrumb');
     el.innerHTML = parts.map((p, i) => i < parts.length - 1
         ? `<span class="bc-link">${escHtml(p)}</span><span class="bc-sep">›</span>`
@@ -1050,46 +972,36 @@ function _stepperBreadcrumb() {
 }
 
 function cancelAddTracking() {
-    const btn = document.querySelector('.nav-item[data-page="tracking"]') ||
-        document.querySelector('.nav-item[data-page=tracking]');
-    navigate(btn, 'tracking');
-}
-
-function openAddTracking() {
-    const btn = document.querySelector('.nav-item[data-page="add-tracking"]') ||
-        document.querySelector('.nav-item[data-page=add-tracking]');
-    navigate(btn, 'add-tracking');
+    navigate(document.querySelector('[data-page=tracking]'), 'tracking');
 }
 
 async function quickTrack(doctorId, doctorName) {
     // Collect context from existing selections if possible
-    AppState.stepper.hospitalId = AppState.hospitalSearch.selectedHospitalId;
-    AppState.stepper.hospitalName = AppState.hospitalSearch.selectedHospitalName;
-    AppState.stepper.departmentId = '';
-    AppState.stepper.departmentName = '';
-    AppState.stepper.doctorId = doctorId;
-    AppState.stepper.doctorName = doctorName;
+    _st.hospitalId = _hsHospitalId;
+    _st.hospitalName = _hsHospitalName;
+    _st.deptId = '';
+    _st.deptName = '';
+    _st.doctorId = doctorId;
+    _st.doctorName = doctorName;
 
     // Use the new info endpoint to get perfect context
-    console.log('[quickTrack] Fetching info for doctor:', doctorId);
     const info = await apiFetch(`/api/doctors/${doctorId}/info`);
     console.log('[quickTrack] doctor info from API:', info);
     if (info) {
-        AppState.stepper.hospitalId = info.hospital_id || info.hospitalId || AppState.stepper.hospitalId;
-        AppState.stepper.hospitalName = info.hospital_name || info.hospitalName || AppState.stepper.hospitalName;
-        AppState.stepper.departmentId = info.department_id || info.deptId || AppState.stepper.departmentId;
-        AppState.stepper.departmentName = info.department_name || info.deptName || AppState.stepper.departmentName;
-        AppState.stepper.doctorName = info.name || AppState.stepper.doctorName;
+        _st.hospitalId = info.hospital_id || info.hospitalId || _st.hospitalId;
+        _st.hospitalName = info.hospital_name || info.hospitalName || _st.hospitalName;
+        _st.deptId = info.department_id || info.deptId || _st.deptId;
+        _st.deptName = info.department_name || info.deptName || _st.deptName;
+        _st.doctorName = info.name || _st.doctorName;
     }
 
-    document.getElementById('modal-doctor').value = AppState.stepper.doctorId;
-    document.getElementById('modal-dept').value = AppState.stepper.departmentId;
+    document.getElementById('modal-doctor').value = _st.doctorId;
+    document.getElementById('modal-dept').value = _st.deptId;
 
-    console.log('[quickTrack] stepper updated:', JSON.parse(JSON.stringify(AppState.stepper)));
+    console.log('[quickTrack] _st updated:', JSON.parse(JSON.stringify(_st)));
 
     // Go to "add-tracking" page WITHOUT resetting stepper state
-    const page = document.querySelector('.nav-item[data-page="add-tracking"]') ||
-        document.querySelector('.nav-item[data-page=add-tracking]');
+    const page = document.querySelector('[data-page="add-tracking"]');
     navigate(page, 'add-tracking', { skipReset: true });
 
     // Ensure step-4 content is visible and breadcrumb updated
@@ -1103,49 +1015,33 @@ function openTrackingModal() { openAddTracking(); }
 function closeTrackingModal() { cancelAddTracking(); }
 
 // 醫師數據 – 傳給日期選單
+let _doctorSchedules = [];
 
 async function loadModalSchedules() {
     const docId = document.getElementById('modal-doctor').value;
     const dateSel = document.getElementById('modal-date');
     const sessionSel = document.getElementById('modal-session');
-
-    // Reset to loading state
     dateSel.innerHTML = '<option value="">— 載入中… —</option>';
     dateSel.disabled = true;
     sessionSel.innerHTML = '<option value="">— 請先選擇日期 —</option>';
     sessionSel.disabled = true;
+    if (!docId) return;
 
-    if (!docId) {
-        console.warn('[loadModalSchedules] No doctor ID found');
-        dateSel.innerHTML = '<option value="">— 錯誤：找不到醫師ID —</option>';
+    _doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
+
+    if (!_doctorSchedules.length) {
+        dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
         return;
     }
 
-    try {
-        console.log('[loadModalSchedules] Fetching schedules for doc:', docId);
-        AppState.stepper.doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
-
-        if (!AppState.stepper.doctorSchedules.length) {
-            console.log('[loadModalSchedules] No schedules returned for doc:', docId);
-            dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
-            return;
-        }
-
-        const dates = [...new Set(AppState.stepper.doctorSchedules.map(s => s.session_date))];
-        console.log('[loadModalSchedules] Found dates:', dates);
-        dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
-            dates.map(d => {
-                // Cross-browser safe date parsing (Safari dislikes some ISO formats)
-                const parts = d.split('-');
-                const label = new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
-                return `<option value="${d}">${label}</option>`;
-            }).join('');
-        dateSel.disabled = false;
-        dateSel.onchange = loadModalSessionsFromDate;
-    } catch (e) {
-        console.error('[loadModalSchedules] error:', e);
-        dateSel.innerHTML = `<option value="">— 載入失敗：${e.message} —</option>`;
-    }
+    const dates = [...new Set(_doctorSchedules.map(s => s.session_date))];
+    dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
+        dates.map(d => {
+            const label = new Date(d + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+            return `<option value="${d}">${label}</option>`;
+        }).join('');
+    dateSel.disabled = false;
+    dateSel.onchange = loadModalSessionsFromDate;
 }
 
 function loadModalSessionsFromDate() {
@@ -1154,7 +1050,7 @@ function loadModalSessionsFromDate() {
     sessionSel.innerHTML = '<option value="">— 選擇診次 —</option>';
     sessionSel.disabled = true;
     if (!date) return;
-    const sessions = AppState.stepper.doctorSchedules
+    const sessions = _doctorSchedules
         .filter(s => s.session_date === date && s.session_type)
         .map(s => s.session_type);
     const unique = [...new Set(sessions)];
@@ -1214,15 +1110,17 @@ async function showDoctorDetail(doctorId, name) {
 
 
 // ── Tracking list ─────────────────────────────────────────────
+let _allTrackingSubs = [];
+let _currentTrackingTab = 'current';
 
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking') || [];
-    AppState.tracking.subscriptions = subs;
+    _allTrackingSubs = subs;
     renderTrackingList();
 }
 
 function switchTrackingTab(tab) {
-    AppState.tracking.currentTab = tab;
+    _currentTrackingTab = tab;
     document.getElementById('btn-tab-tracking-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
     document.getElementById('btn-tab-tracking-past').className = tab === 'past' ? 'btn btn-primary' : 'btn btn-secondary';
     renderTrackingList();
@@ -1231,7 +1129,7 @@ function switchTrackingTab(tab) {
 function renderTrackingList() {
     const list = document.getElementById('tracking-list');
 
-    if (!AppState.tracking.subscriptions.length) {
+    if (!_allTrackingSubs.length) {
         list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
       <div class="empty-icon">🔔</div>
       <p>尚無追蹤設定<br><button class="btn btn-primary" onclick="openTrackingModal()" style="margin-top:12px">新增追蹤</button></p>
@@ -1242,13 +1140,13 @@ function renderTrackingList() {
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
     let subs;
-    if (AppState.tracking.currentTab === 'current') {
-        subs = AppState.tracking.subscriptions.filter(s => (s.session_date || '') >= todayStr);
+    if (_currentTrackingTab === 'current') {
+        subs = _allTrackingSubs.filter(s => (s.session_date || '') >= todayStr);
     } else {
-        subs = AppState.tracking.subscriptions.filter(s => (s.session_date || '') < todayStr);
+        subs = _allTrackingSubs.filter(s => (s.session_date || '') < todayStr);
     }
 
-    const isExpiredTab = AppState.tracking.currentTab === 'past';
+    const isExpiredTab = _currentTrackingTab === 'past';
 
     if (!subs.length) {
         list.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
@@ -1274,9 +1172,9 @@ function renderTrackingCard(sub, isExpired = false) {
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNo = sub.appointment_number ? `${sub.appointment_number}` : '<span style="opacity:0.6">(未填寫)</span>';
 
-    const emailDisplay = sub.notify_email && AppState.currentUser?.email ? `📧 Email (${AppState.currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
+    const emailDisplay = sub.notify_email && currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
     if (sub.notify_email) {
-        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', AppState.currentUser);
+        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', currentUser);
     }
     const lineDisplay = sub.notify_line ? '📲 LINE' : '';
 
@@ -1391,6 +1289,8 @@ async function submitTracking(e) {
 // ── Notifications ─────────────────────────────────────────────
 
 
+let _allNotificationLogs = [];
+let _currentNotifTab = 'current';
 
 async function loadNotifications() {
     const tbody = document.getElementById('notif-table-body');
@@ -1398,16 +1298,16 @@ async function loadNotifications() {
 
     // Always fetch from the new endpoint
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
-    AppState.notifications.logs = logs;
+    _allNotificationLogs = logs;
 
     // Sort globally by sent_at descending
-    AppState.notifications.logs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+    _allNotificationLogs.sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
 
     renderNotificationTable();
 }
 
 function switchNotifTab(tab) {
-    AppState.notifications.currentTab = tab;
+    _currentNotifTab = tab;
 
     // Update button styles
     document.getElementById('btn-tab-notif-current').className = tab === 'current' ? 'btn btn-primary' : 'btn btn-secondary';
@@ -1419,7 +1319,7 @@ function switchNotifTab(tab) {
 function renderNotificationTable() {
     const tbody = document.getElementById('notif-table-body');
 
-    if (!AppState.notifications.logs.length) {
+    if (!_allNotificationLogs.length) {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:var(--text-muted)">尚無通知紀錄</td></tr>`;
         return;
     }
@@ -1427,9 +1327,9 @@ function renderNotificationTable() {
     // Determine the boundary date: today string like 'YYYY-MM-DD'
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    const filteredLogs = AppState.notifications.logs.filter(l => {
+    const filteredLogs = _allNotificationLogs.filter(l => {
         const sessionDate = l.session_date || '1970-01-01'; // Fallback
-        if (AppState.notifications.currentTab === 'current') {
+        if (_currentNotifTab === 'current') {
             return sessionDate >= todayStr;
         } else {
             return sessionDate < todayStr;
@@ -1487,7 +1387,7 @@ async function loadProfile() {
     const profile = await apiFetch('/api/users/me');
     console.log('[loadProfile] fetched profile:', profile);
     if (profile) {
-        AppState.currentUser = profile;
+        currentUser = profile;
         const nameEl = document.getElementById('profile-name');
         const emailEl = document.getElementById('profile-email');
         const lineEl = document.getElementById('line-token');
@@ -1522,7 +1422,7 @@ async function loadAdminUsers() {
         const adminBtnClass = u.is_admin ? 'btn-danger' : 'btn-secondary';
         const verified = u.is_verified ? '✅' : '❌';
         const createdAt = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-TW') : '—';
-        const isSelf = AppState.currentUser && u.id === AppState.currentUser.id;
+        const isSelf = currentUser && u.id === currentUser.id;
         const displayName = escHtml(u.display_name || '—');
 
         const actions = isSelf
@@ -1610,7 +1510,7 @@ function escHtml(str) {
 
 // ── Boot ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    if (AppState.authToken) {
+    if (authToken) {
         await initApp();
     } else {
         document.getElementById('auth-page').classList.add('show');
@@ -1792,9 +1692,12 @@ async function deleteAdminTracking(id) {
 }
 
 /* ── Chart Analysis ─────────────────────────────────────────── */
+let deptComparisonChart = null;
+let doctorComparisonChart = null;
+let doctorSpeedChart = null;
+let allRankingData = [];
 
 async function switchAnalysisSheet(sheetId) {
-    console.log('[switchAnalysisSheet] Switching to:', sheetId);
     document.querySelectorAll('.analysis-tab-content').forEach(el => el.style.display = 'none');
     document.querySelectorAll('#page-analysis .hs-tabs button').forEach(btn => {
         btn.classList.remove('btn-primary');
@@ -1809,29 +1712,19 @@ async function switchAnalysisSheet(sheetId) {
     }
 
     if (sheetId === 'sheet1') {
-        console.log('[switchAnalysisSheet] Loading sheet1...');
-        await loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
-        await loadAnalysisCategories('analysis-sheet1-cat-select');
+        loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
+        loadAnalysisCategories('analysis-sheet1-cat-select');
         loadDeptComparison();
     } else if (sheetId === 'sheet2') {
-        console.log('[switchAnalysisSheet] Loading sheet2...');
-        await loadAnalysisHospitals('analysis-sheet2-hosp-select');
-        await loadAnalysisCategories('analysis-sheet2-cat-select');
-        await loadAnalysisDepts('analysis-sheet2-hosp-select', 'analysis-sheet2-cat-select', 'analysis-sheet2-dept-select');
+        loadAnalysisHospitals('analysis-sheet2-hosp-select');
+        loadAnalysisCategories('analysis-sheet2-cat-select');
     } else if (sheetId === 'sheet3') {
-        console.log('[switchAnalysisSheet] Loading sheet3...');
-        await loadAnalysisHospitals('rank-hosp-filter', true);
-        await loadRankingTable();
+        loadAnalysisHospitals('rank-hosp-filter', true);
+        loadRankingTable();
     } else if (sheetId === 'sheet4') {
-        console.log('[switchAnalysisSheet] Loading sheet4...');
-        await loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
-        console.log('[switchAnalysisSheet] Hospitals loaded');
-        await loadAnalysisCategories('analysis-sheet4-cat-select');
-        console.log('[switchAnalysisSheet] Categories loaded');
-        await loadAnalysisDepts('analysis-sheet4-hosp-select', 'analysis-sheet4-cat-select', 'analysis-sheet4-dept-select');
-        console.log('[switchAnalysisSheet] Departments loaded, calling loadDoctorSpeedAnalysis');
-        await loadDoctorSpeedAnalysis();
-        console.log('[switchAnalysisSheet] loadDoctorSpeedAnalysis completed');
+        loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
+        loadAnalysisCategories('analysis-sheet4-cat-select');
+        loadDoctorSpeedAnalysis();
     }
 }
 
@@ -1846,8 +1739,8 @@ async function loadDeptComparison() {
         const stats = await apiFetch(`/api/stats/dept-comparison?hospital_id=${hospId}&category=${encodeURIComponent(cat)}`);
         if (!stats) return;
 
-        if (AppState.charts.deptComparisonChart) AppState.charts.deptComparisonChart.destroy();
-        AppState.charts.deptComparisonChart = new Chart(ctx, {
+        if (deptComparisonChart) deptComparisonChart.destroy();
+        deptComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -1921,11 +1814,7 @@ async function loadAnalysisDepts(hospSelectId, catSelectId, deptSelectId) {
         const depts = await apiFetch(url) || [];
         dSelect.innerHTML = '<option value="">所有科室</option>' +
             depts.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
-        return depts; // Return for awaiting
-    } catch (e) {
-        toast(e.message, 'error');
-        return [];
-    }
+    } catch (e) { toast(e.message, 'error'); }
 }
 
 async function refreshDoctorComparison() {
@@ -1944,8 +1833,8 @@ async function refreshDoctorComparison() {
         const stats = await apiFetch(url);
         if (!stats) return;
 
-        if (AppState.charts.doctorComparisonChart) AppState.charts.doctorComparisonChart.destroy();
-        AppState.charts.doctorComparisonChart = new Chart(ctx, {
+        if (doctorComparisonChart) doctorComparisonChart.destroy();
+        doctorComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -1975,37 +1864,17 @@ async function loadDoctorSpeedAnalysis() {
     const cat = document.getElementById('analysis-sheet4-cat-select').value;
     const deptId = document.getElementById('analysis-sheet4-dept-select')?.value || '';
 
-    // Show loading state
-    const card = ctx.closest('.card');
-    let spinner = card.querySelector('.spinner-overlay');
-    if (!spinner) {
-        spinner = document.createElement('div');
-        spinner.className = 'spinner-overlay';
-        spinner.innerHTML = '<div class="spinner"></div>';
-        card.appendChild(spinner);
-    }
-    spinner.style.display = 'flex';
-
     try {
-        // Fix trailing ampersand and properly construct URL
-        const params = new URLSearchParams();
-        if (hospId) params.append('hospital_id', hospId);
-        if (cat) params.append('category', cat);
-        if (deptId) params.append('dept_id', deptId);
-
-        const url = `/api/stats/doctor-speed${params.toString() ? '?' + params.toString() : ''}`;
+        let url = `/api/stats/doctor-speed?`;
+        if (hospId) url += `hospital_id=${hospId}&`;
+        if (cat) url += `category=${encodeURIComponent(cat)}&`;
+        if (deptId) url += `dept_id=${deptId}`;
 
         const stats = await apiFetch(url);
-        spinner.style.display = 'none';
-
         if (!stats) return;
 
-        if (AppState.charts.doctorSpeedChart) {
-            console.log('[loadDoctorSpeedAnalysis] Destroying existing chart');
-            AppState.charts.doctorSpeedChart.destroy();
-        }
-        console.log('[loadDoctorSpeedAnalysis] Creating new chart with labels:', stats.labels.length, 'and data:', stats.data.length);
-        AppState.charts.doctorSpeedChart = new Chart(ctx, {
+        if (doctorSpeedChart) doctorSpeedChart.destroy();
+        doctorSpeedChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -2031,18 +1900,14 @@ async function loadDoctorSpeedAnalysis() {
                 }
             }
         });
-        console.log('[loadDoctorSpeedAnalysis] Chart created successfully');
-    } catch (e) {
-        console.error('[loadDoctorSpeedAnalysis] Error:', e);
-        toast(e.message, 'error');
-    }
+    } catch (e) { toast(e.message, 'error'); }
 }
 
 async function loadRankingTable() {
     const tbody = document.getElementById('ranking-table-body');
     try {
-        AppState.analysis.ranking = await apiFetch('/api/stats/dept-ranking') || [];
-        renderRankingTable(AppState.analysis.ranking);
+        allRankingData = await apiFetch('/api/stats/dept-ranking') || [];
+        renderRankingTable(allRankingData);
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger)">載入失敗: ${e.message}</td></tr>`;
     }
@@ -2070,7 +1935,7 @@ function filterRankingTable() {
     const hospName = hospId ? hospSelect.options[hospSelect.selectedIndex].text : '';
     const deptQ = document.getElementById('rank-dept-filter').value.toLowerCase();
 
-    const filtered = AppState.analysis.ranking.filter(v => {
+    const filtered = allRankingData.filter(v => {
         const matchHosp = !hospName || v.hospital_name === hospName;
         const matchDept = !deptQ || v.dept_name.toLowerCase().includes(deptQ);
         return matchHosp && matchDept;

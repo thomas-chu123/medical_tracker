@@ -19,7 +19,6 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         supabase.table("tracking_subscriptions")
         .select("*")
         .eq("user_id", current_user["id"])
-        .gte("session_date", today_tw_str())  # Only show today and future sessions
         .order("session_date", desc=False)
         .execute()
     )
