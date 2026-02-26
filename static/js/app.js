@@ -1683,9 +1683,6 @@ async function loadProfile() {
         if (nameEl) nameEl.value = profile.display_name || '';
         if (emailEl) emailEl.value = profile.email || '（未提供）';
         
-        // Generate LINE QR Code for adding bot
-        generateLineQRCode(profile);
-        
         // Start polling to detect when user scans QR code
         startLineConnectionPolling();
     }
@@ -1709,7 +1706,6 @@ function startLineConnectionPolling() {
                 // Refresh profile
                 const profile = await apiFetch('/api/users/me');
                 currentUser = profile;
-                generateLineQRCode(profile);
                 toast('✓ LINE 連接成功！', 'success');
                 // Stop polling
                 clearInterval(_linePollingTimer);
@@ -1719,46 +1715,6 @@ function startLineConnectionPolling() {
             // Polling error, continue silently
         }
     }, 3000);
-}
-
-function generateLineQRCode(profile) {
-    const qrContainer = document.getElementById('line-qr-code');
-    const statusText = document.getElementById('line-status-text');
-    
-    if (!qrContainer) return;
-    
-    // Stop polling if LINE is already connected
-    if (profile && profile.line_user_id && _linePollingTimer) {
-        clearInterval(_linePollingTimer);
-        _linePollingTimer = null;
-    }
-    
-    // Clear previous QR code
-    qrContainer.innerHTML = '';
-    
-    // Bot add URL format for LINE
-    // Using the bot's User ID from .env
-    const botUserId = 'U1b9e5c8f0a7c4e5b8d9f0a1b2c3d4e5'; // This will come from backend in production
-    const lineAddUrl = `https://line.me/R/ti/p/${botUserId}`;
-    
-    // Generate QR Code
-    new QRCode(qrContainer, {
-        text: lineAddUrl,
-        width: 180,
-        height: 180,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.H
-    });
-    
-    // Update status text
-    if (profile && profile.line_user_id) {
-        statusText.innerHTML = '✓ 已連接 LINE Bot';
-        statusText.style.color = '#4CAF50';
-    } else {
-        statusText.innerHTML = '掃描 QR Code 連結帳號';
-        statusText.style.color = '#fff';
-    }
 }
 
 // ── Modal helpers ─────────────────────────────────────────────
