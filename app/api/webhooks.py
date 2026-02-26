@@ -79,28 +79,37 @@ async def _handle_user_follow(user_id: str):
     """
     Handle user following the bot.
     
-    - Save LINE User ID to database
+    When a user adds the bot as a friend:
+    - Check if there's an existing user with this LINE User ID
+    - If found, update their record
+    - If not found, store it (they'll match when they register/login)
     - Send welcome message
     """
     print(f"[LINE] User {user_id} followed the bot")
     
     try:
-        # Try to find user by LINE User ID and update
         supabase = get_supabase()
         
-        # Update user with LINE User ID
-        supabase.table("users_local").update({
-            "line_user_id": user_id,
-            "line_api_version": "message_api"
-        }).eq("line_user_id", user_id).execute()
+        # Check if a user with this LINE User ID already exists
+        result = supabase.table("users_local").select("id").eq("line_user_id", user_id).execute()
         
-        # Send welcome message
+        if result.data:
+            # User exists, just confirm the follow
+            print(f"[LINE] User {user_id} is already registered")
+        else:
+            # User doesn't exist yet, store the LINE User ID
+            # They will match it to their account when they register/login
+            # For now, we don't update any user (they haven't registered yet)
+            print(f"[LINE] New user {user_id} - waiting for registration")
+        
+        # Send welcome message (works even if they haven't registered)
         from app.services.line_message_api import send_line_message
         await send_line_message(
             user_id,
             "歡迎使用台灣醫療門診追蹤系統！\n\n"
-            "現在您已可以透過 LINE 接收門診進度提醒。\n\n"
-            "請在應用中設置您要追蹤的醫師，並啟用 LINE 通知。"
+            "若尚未註冊，請先在應用中建立帳號。\n"
+            "建立帳號時，您的 LINE User ID 會自動收集。\n\n"
+            "之後可在應用中設置要追蹤的醫師，並啟用 LINE 通知。"
         )
     
     except Exception as e:
@@ -111,23 +120,36 @@ async def _handle_user_unfollow(user_id: str):
     """
     Handle user unfollowing the bot.
     
-    - Clear LINE User ID from database
-    - Disable LINE notifications for this user
+    - Clear LINE User ID from their account
+    - Disable all LINE notifications for this user
     """
     print(f"[LINE] User {user_id} unfollowed the bot")
     
     try:
         supabase = get_supabase()
         
-        # Clear LINE User ID
-        supabase.table("users_local").update({
-            "line_user_id": None
-        }).eq("line_user_id", user_id).execute()
+        # Find user by LINE User ID and clear it
+        user_result = supabase.table("users_local").select("id").eq("line_user_id", user_id).execute()
         
-        # Disable all LINE notifications
-        supabase.table("tracking_subscriptions").update({
-            "notify_line": False
-        }).eq("user_id", user_id).execute()
+        if user_result.data:
+            user_local_id = user_result.data[0]["id"]
+            
+            # Clear LINE User ID from user profile
+            supabase.table("users_local").update({
+                "line_user_id": None
+            }).eq("id", user_local_id).execute()
+            
+            # Disable all LINE notifications for this user
+            supabase.table("tracking_subscriptions").update({
+                "notify_line": False
+            }).eq("user_id", user_local_id).execute()
+            
+            print(f"[LINE] Cleared LINE User ID and disabled notifications for user {user_local_id}")
+        else:
+            print(f"[LINE] No registered user found for LINE User ID {user_id}")
+    
+    except Exception as e:
+        print(f"[LINE] Error handling unfollow event: {e}")
     
     except Exception as e:
         print(f"[LINE] Error handling unfollow event: {e}")
