@@ -4,6 +4,7 @@ from typing import Optional
 from app.database import get_supabase
 from app.models.user import UserProfileOut, UserProfileUpdate, UserAdminOut
 from app.auth import get_current_user, get_current_admin, get_password_hash
+from app.core.logger import logger
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -165,8 +166,21 @@ async def delete_user(
         raise HTTPException(status_code=403, detail="無法刪除自己的帳號")
 
     # Remove related tracking subscriptions first (FK constraint)
-    supabase.table("tracking_subscriptions").delete().eq("user_id", user_id).execute()
-
-    # Delete the user
-    supabase.table("users_local").delete().eq("id", user_id).execute()
+    try:
+        sub_result = supabase.table("tracking_subscriptions").delete().eq("user_id", user_id).execute()
+        logger.info(f"Deleted {len(sub_result.data or [])} tracking subscriptions for user {user_id}")
+        
+        # Delete the user
+        user_result = supabase.table("users_local").delete().eq("id", user_id).execute()
+        
+        if not user_result.data:
+            raise HTTPException(status_code=500, detail="用戶刪除失敗，請重試")
+        
+        logger.info(f"User {user_id} and associated data deleted successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"User deletion failed for {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="無法刪除用戶，請稍後重試")
+    
     return {"message": f"使用者 {target.get('email', user_id)} 已刪除"}

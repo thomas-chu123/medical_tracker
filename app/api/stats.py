@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, status
 import asyncio
@@ -11,12 +11,16 @@ from app.core.logger import logger
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
 
-# In-memory cache for dashboard statistics
+# In-memory cache for dashboard statistics with timestamp tracking
 # Structure: { "global": { hospital_id: GlobalStats }, "crowd": { hospital_id: CrowdAnalysisResult } }
 _STATS_CACHE = {
     "global": {},
     "crowd": {}
 }
+
+# Track cache timestamps for TTL management
+# Structure: { "global:hospital_id": datetime, "crowd:hospital_id": datetime }
+_CACHE_TIMESTAMPS = {}
 
 
 class GlobalStats(BaseModel):
@@ -125,13 +129,41 @@ async def calculate_global_stats(hospital_id: str = None) -> GlobalStats:
 @router.get("/global", response_model=GlobalStats)
 async def get_global_stats(hospital_id: str = None):
     cache_key = hospital_id or "all"
-    if cache_key in _STATS_CACHE["global"]:
-        return _STATS_CACHE["global"][cache_key]
+    cache_timestamp_key = f"global:{cache_key}"
+    now = datetime.utcnow()
     
-    # Fallback/First time
+    # Check if cache is still valid (1 hour TTL)
+    if cache_key in _STATS_CACHE["global"]:
+        cached_time = _CACHE_TIMESTAMPS.get(cache_timestamp_key)
+        if cached_time and (now - cached_time) < timedelta(hours=1):
+            return _STATS_CACHE["global"][cache_key]
+    
+    # Cache miss or expired - recalculate
     stats_data = await calculate_global_stats(hospital_id)
     _STATS_CACHE["global"][cache_key] = stats_data
+    _CACHE_TIMESTAMPS[cache_timestamp_key] = now
+    
+    # Clean up expired cache entries (older than 2 hours)
+    _cleanup_cache("global", now)
+    
     return stats_data
+
+
+def _cleanup_cache(cache_type: str, now: datetime):
+    """Remove cache entries older than 2 hours."""
+    expired_keys = []
+    for key, timestamp in list(_CACHE_TIMESTAMPS.items()):
+        if key.startswith(f"{cache_type}:"):
+            if (now - timestamp) > timedelta(hours=2):
+                expired_keys.append(key)
+    
+    for key in expired_keys:
+        cache_key = key.split(":", 1)[1]
+        _STATS_CACHE[cache_type].pop(cache_key, None)
+        _CACHE_TIMESTAMPS.pop(key, None)
+    
+    if expired_keys:
+        logger.debug(f"Cleaned up {len(expired_keys)} expired {cache_type} cache entries")
 
 
 @router.post("/scrape-now", status_code=status.HTTP_202_ACCEPTED)
@@ -222,11 +254,23 @@ async def calculate_crowd_analysis(hospital_id: str = None) -> CrowdAnalysisResu
 @router.get("/crowd-analysis", response_model=CrowdAnalysisResult)
 async def get_crowd_analysis(hospital_id: str = None):
     cache_key = hospital_id or "all"
+    cache_timestamp_key = f"crowd:{cache_key}"
+    now = datetime.utcnow()
+    
+    # Check if cache is still valid (1 hour TTL)
     if cache_key in _STATS_CACHE["crowd"]:
-        return _STATS_CACHE["crowd"][cache_key]
-        
+        cached_time = _CACHE_TIMESTAMPS.get(cache_timestamp_key)
+        if cached_time and (now - cached_time) < timedelta(hours=1):
+            return _STATS_CACHE["crowd"][cache_key]
+    
+    # Cache miss or expired - recalculate
     crowd_data = await calculate_crowd_analysis(hospital_id)
     _STATS_CACHE["crowd"][cache_key] = crowd_data
+    _CACHE_TIMESTAMPS[cache_timestamp_key] = now
+    
+    # Clean up expired cache entries (older than 2 hours)
+    _cleanup_cache("crowd", now)
+    
     return crowd_data
 
 

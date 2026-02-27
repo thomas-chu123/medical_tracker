@@ -3,6 +3,7 @@ from app.database import get_supabase
 from app.models.user import UserRegister, UserLogin, Token
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.services.email_service import send_email
+import os
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -46,7 +47,8 @@ async def register(data: UserRegister):
     user_id = res.data[0]["id"]
 
     # 3. Send verification email via SMTP
-    verify_link = f"http://localhost:8000/api/auth/verify?token={v_token}"
+    base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
+    verify_link = f"{base_url}/api/auth/verify?token={v_token}"
     subject = "🏥 醫療門診追蹤系統 – 帳號驗證"
     body = f"""
     <h3>歡迎使用醫療門診追蹤系統！</h3>

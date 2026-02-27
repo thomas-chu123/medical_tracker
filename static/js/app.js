@@ -593,7 +593,7 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
                         <div><span style="color:var(--text-muted)">目前號碼：</span><strong style="font-size:16px">${snap.current_number || '—'}</strong></div>
                         <div><span style="color:var(--text-muted)">已掛號人數：</span><strong>${snap.current_registered || '—'}</strong></div>
                         <div><span style="color:var(--text-muted)">總名額：</span><strong>${snap.total_quota || '—'}</strong></div>
-                        ${isToday ? `<div><span style="color:var(--text-muted)">等候人數：</span><strong>${queueDetails.filter(q => q.status === '未看診').length}</strong></div>` : ''}
+                        ${isToday ? `<div><span style="color:var(--text-muted)">等候人數：</span><strong>${queueDetails.filter(q => q.status !== '完成').length}</strong></div>` : ''}
                     </div>
                 </div>
         `;
