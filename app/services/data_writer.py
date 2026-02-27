@@ -115,7 +115,7 @@ async def batch_insert_snapshots(rows: list[dict]):
             lambda c=chunk: supabase.table("appointment_snapshots")
             .upsert(
                 c,
-                on_conflict="doctor_id,department_id,session_date,session_type,clinic_room",
+                on_conflict="doctor_id,department_id,session_date,session_type",
             )
             .execute()
         )

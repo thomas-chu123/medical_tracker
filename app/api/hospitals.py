@@ -246,16 +246,26 @@ async def get_doctor_snapshots(
         .execute()
     )
     
-    data = result.data or []
-    for snapshot in data:
-        snapshot["eta"] = calculate_eta(
-            snapshot.get("session_date"),
-            snapshot.get("session_type"),
-            snapshot.get("current_number"),
-            snapshot.get("current_registered"),
-            snapshot.get("waiting_list")
-        )
-    return data
+    # Deduplicate: Only one snapshot per (date, session)
+    seen = set()
+    deduplicated_data = []
+    # Data is ordered by session_date ASC. If multiple for same date, later ones in list 
+    # (if scraped multiple times) would be more recent IF we ordered by scraped_at.
+    # However, since the database now has a unique constraint, this is mostly a safeguard.
+    for snapshot in result.data or []:
+        key = (snapshot.get("session_date"), snapshot.get("session_type"))
+        if key not in seen:
+            seen.add(key)
+            snapshot["eta"] = calculate_eta(
+                snapshot.get("session_date"),
+                snapshot.get("session_type"),
+                snapshot.get("current_number"),
+                snapshot.get("current_registered"),
+                snapshot.get("waiting_list")
+            )
+            deduplicated_data.append(snapshot)
+            
+    return deduplicated_data
 
 
 @router.get("/doctors/{doctor_id}/latest", response_model=SnapshotOut | None)

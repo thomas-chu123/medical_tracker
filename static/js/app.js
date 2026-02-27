@@ -170,7 +170,7 @@ async function initApp(userFromLogin = null) {
     const avatarEl = document.getElementById('user-avatar');
     const profileNameEl = document.getElementById('profile-name');
     const lineUserIdEl = document.getElementById('line-user-id');
-    
+
     if (displayEl) displayEl.textContent = name;
     if (avatarEl) avatarEl.textContent = name[0].toUpperCase();
     if (profileNameEl) profileNameEl.value = name;
@@ -240,7 +240,7 @@ function navigate(btn, pageId, options = {}) {
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
     console.log('[Dashboard] loadDashboard() called');
-    
+
     // Fire fast requests immediately, load subscriptions asynchronously in background
     const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
 
@@ -278,7 +278,7 @@ async function loadDashboard() {
 
     // 5. Update timestamp
     document.getElementById('last-update-label').textContent = `最後更新：${new Date().toLocaleString('zh-TW')}`;
-    
+
     console.log('[Dashboard] loadDashboard() completed');
 }
 
@@ -290,16 +290,16 @@ async function _loadTrackingAsync() {
         console.log('[Dashboard] API response (raw):', subs);
         console.log('[Dashboard] API response type:', typeof subs);
         console.log('[Dashboard] API response is array:', Array.isArray(subs));
-        
+
         _allDashboardSubs = (subs || []).filter(s => s.is_active);
         console.log('[Dashboard] Loaded tracking subs (filtered):', _allDashboardSubs.length);
         console.log('[Dashboard] Filtered subs:', _allDashboardSubs);
-        
+
         document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
-        
+
         const grid = document.getElementById('dashboard-tracking-grid');
         console.log('[Dashboard] Grid element found:', !!grid);
-        
+
         // Re-render tracking cards with new data
         console.log('[Dashboard] About to call renderDashboardTracking()');
         renderDashboardTracking();
@@ -425,7 +425,7 @@ function renderCrowdChart(stats) {
 
 async function renderDashboardTracking() {
     console.log('[renderDashboardTracking] Called with _allDashboardSubs:', _allDashboardSubs.length);
-    
+
     const grid = document.getElementById('dashboard-tracking-grid');
     console.log('[renderDashboardTracking] Grid element:', grid);
     console.log('[renderDashboardTracking] Grid display:', grid?.style.display);
@@ -442,7 +442,7 @@ async function renderDashboardTracking() {
     }
 
     console.log('[renderDashboardTracking] Filtered items:', filtered.length);
-    
+
     if (!filtered.length) {
         grid.innerHTML = `<div class="empty-state">
       <div class="empty-icon">🔔</div>
@@ -1101,16 +1101,16 @@ async function stepperSelectDoctor(docId, docName) {
 function stepperNextFromStep4() {
     const date = document.getElementById('modal-date').value;
     const session = document.getElementById('modal-session').value;
-    
+
     console.log('[stepperNextFromStep4] 驗證表單', { date, session });
-    
-    if (!date) { 
-        toast('⚠️ 請選擇就診日期', 'warning'); 
-        return; 
+
+    if (!date) {
+        toast('⚠️ 請選擇就診日期', 'warning');
+        return;
     }
-    if (!session) { 
-        toast('⚠️ 請選擇診次', 'warning'); 
-        return; 
+    if (!session) {
+        toast('⚠️ 請選擇診次', 'warning');
+        return;
     }
 
     // Build confirm summary
@@ -1202,7 +1202,26 @@ async function quickTrack(doctorId, doctorName) {
         return;
     }
 
-    // Store context
+    // If we're in the Add Tracking stepper (Step 3), go to Step 4
+    if (_st && _st.step === 3) {
+        console.log('[quickTrack] Stepper mode detected, going to Step 4');
+        _st.doctorId = doctorId;
+        _st.doctorName = doctorName;
+        _st.hospitalId = info.hospital_id;
+        _st.hospitalName = info.hospital_name;
+        _st.departmentId = info.department_id;
+        _st.departmentName = info.department_name;
+
+        document.getElementById('modal-doctor').value = doctorId;
+        document.getElementById('modal-dept').value = info.department_id;
+
+        _stepperBreadcrumb();
+        await loadModalSchedules(); // Load Step 4 schedules
+        stepperGoTo(4);
+        return;
+    }
+
+    // Otherwise, open standalone Quick Track modal
     const qtState = {
         doctorId: doctorId,
         doctorName: doctorName,
@@ -1211,8 +1230,6 @@ async function quickTrack(doctorId, doctorName) {
         departmentId: info.department_id,
         departmentName: info.department_name
     };
-
-    // Open modal with doctor info
     openQuickTrackModal(qtState);
 }
 
@@ -1435,9 +1452,8 @@ async function showDoctorDetail(doctorId, name) {
     const isInStepper = _st && _st.step === 3;
     const actionButtons = isInStepper
         ? `<div style="display:flex; gap:8px; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-subtle)">
-             <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open'); stepperGoTo(3)" style="flex:1">上一步</button>
-             <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open')" style="flex:1">取消</button>
-             <button class="btn btn-primary" onclick="document.getElementById('doctor-modal').classList.remove('open'); quickTrack('${doctorId}','${escHtml(name)}')" style="flex:1">＋ 追蹤</button>
+             <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open'); stepperGoTo(3)" style="flex:1">取消</button>
+             <button class="btn btn-primary" onclick="document.getElementById('doctor-modal').classList.remove('open'); quickTrack('${doctorId}','${escHtml(name)}')" style="flex:1">下一步：設定追蹤日期</button>
            </div>`
         : '';
 
@@ -1633,7 +1649,7 @@ async function submitTracking(e) {
             session_date: sessionDate,
             session_type: sessionType,
         });
-        
+
         const result = await apiPost('/api/tracking/', {
             doctor_id: docId,
             department_id: deptId || undefined,
@@ -1646,13 +1662,22 @@ async function submitTracking(e) {
             notify_email: document.getElementById('notify-email').checked,
             notify_line: document.getElementById('notify-line').checked,
         });
-        
+
         console.log('[submitTracking] 提交成功', result);
         toast('✅ 追蹤已新增！', 'success');
-        
-        // 延遲後關閉彈窗，讓用戶看到成功訊息
+
+        // 延遲後重置表單並返回第一步，讓用戶看到成功訊息
         setTimeout(() => {
-            cancelAddTracking();
+            // 重置追蹤表單狀態
+            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            // 重置表單輸入
+            document.getElementById('modal-date').value = '';
+            document.getElementById('modal-session').value = '';
+            document.getElementById('modal-appointment-number').value = '';
+            // 返回第一步
+            stepperGoTo(1);
+            document.getElementById('stepper-breadcrumb').innerHTML = '';
+            loadStepperHospitals();
             loadTracking();
         }, 500);
     } catch (e) {
@@ -1677,12 +1702,12 @@ async function loadNotifications() {
 
     console.log('[Notifications] Starting to load notification logs...');
     const startTime = performance.now();
-    
+
     // Always fetch from the new endpoint
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
     const endTime = performance.now();
     console.log(`[Notifications] Loaded ${logs.length} logs in ${(endTime - startTime).toFixed(0)}ms`);
-    
+
     _allNotificationLogs = logs;
 
     // Sort globally by sent_at descending
