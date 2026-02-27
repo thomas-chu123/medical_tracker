@@ -1101,8 +1101,17 @@ async function stepperSelectDoctor(docId, docName) {
 function stepperNextFromStep4() {
     const date = document.getElementById('modal-date').value;
     const session = document.getElementById('modal-session').value;
-    if (!date) { toast('請選擇就診日期', 'warning'); return; }
-    if (!session) { toast('請選擇診次', 'warning'); return; }
+    
+    console.log('[stepperNextFromStep4] 驗證表單', { date, session });
+    
+    if (!date) { 
+        toast('⚠️ 請選擇就診日期', 'warning'); 
+        return; 
+    }
+    if (!session) { 
+        toast('⚠️ 請選擇診次', 'warning'); 
+        return; 
+    }
 
     // Build confirm summary
     const apptNum = document.getElementById('modal-appointment-number').value;
@@ -1116,8 +1125,7 @@ function stepperNextFromStep4() {
     const dName = _st.deptName || '（未知科室）';
     const docName = _st.doctorName || '（未知醫師）';
 
-    console.log('[stepperNextFromStep4] _st state:', JSON.parse(JSON.stringify(_st)));
-    console.log('[stepperNextFromStep4] summary values:', { hName, dName, docName });
+    console.log('[stepperNextFromStep4] 準備進入 Step 5', { hName, dName, docName, date, session });
 
     document.getElementById('confirm-summary').innerHTML = `
       <div>🏥 <b>醫院：</b>${escHtml(hName)}</div>
@@ -1179,6 +1187,10 @@ function _stepperBreadcrumb() {
 }
 
 function cancelAddTracking() {
+    console.log('[cancelAddTracking] 關閉追蹤表單，返回追蹤列表');
+    // 重置表單狀態
+    _st = {};
+    // 導航回追蹤頁面
     navigate(document.querySelector('[data-page=tracking]'), 'tracking');
 }
 
@@ -1608,13 +1620,21 @@ async function submitTracking(e) {
     if (!sessionType) { toast('請選擇診次', 'warning'); return; }
 
     const btn = document.getElementById('submit-tracking-btn');
-    btn.disabled = true; btn.textContent = '新增中…';
+    const originalBtnText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '新增中…';
 
     const apptNumValue = document.getElementById('modal-appointment-number').value;
     const apptNum = apptNumValue ? parseInt(apptNumValue, 10) : null;
 
     try {
-        await apiPost('/api/tracking/', {
+        console.log('[submitTracking] 正在提交追蹤', {
+            doctor_id: docId,
+            session_date: sessionDate,
+            session_type: sessionType,
+        });
+        
+        const result = await apiPost('/api/tracking/', {
             doctor_id: docId,
             department_id: deptId || undefined,
             session_date: sessionDate,
@@ -1626,11 +1646,23 @@ async function submitTracking(e) {
             notify_email: document.getElementById('notify-email').checked,
             notify_line: document.getElementById('notify-line').checked,
         });
-        toast('追蹤已新增！', 'success');
-        cancelAddTracking();
-        loadTracking();
-    } catch (e) { toast(e.message, 'error'); }
-    finally { btn.disabled = false; btn.textContent = '確認新增'; }
+        
+        console.log('[submitTracking] 提交成功', result);
+        toast('✅ 追蹤已新增！', 'success');
+        
+        // 延遲後關閉彈窗，讓用戶看到成功訊息
+        setTimeout(() => {
+            cancelAddTracking();
+            loadTracking();
+        }, 500);
+    } catch (e) {
+        console.error('[submitTracking] 提交失敗', e);
+        toast('❌ 新增失敗：' + e.message, 'error');
+    }
+    finally {
+        btn.disabled = false;
+        btn.textContent = originalBtnText;
+    }
 }
 
 // ── Notifications ─────────────────────────────────────────────
