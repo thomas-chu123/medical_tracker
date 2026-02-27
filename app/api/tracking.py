@@ -160,20 +160,11 @@ async def create_subscription(
         raise HTTPException(status_code=404, detail="Doctor not found")
 
     # Insert subscription
-    sub = supabase.table("tracking_subscriptions").insert({
-        "user_id": current_user["id"],
-        "doctor_id": str(data.doctor_id),
-        "department_id": data.department_id,
-        "appointment_number": data.appointment_number,
-        "session_date": data.session_date,
-        "session_type": data.session_type,
-        "is_active": True,
-        "notify_email": data.notify_email,
-        "notify_line": data.notify_line,
-        "notify_at_20": data.notify_at_20,
-        "notify_at_10": data.notify_at_10,
-        "notify_at_5": data.notify_at_5,
-    }).execute()
+    sub_data = data.model_dump(mode="json")
+    sub_data["user_id"] = str(current_user["id"])
+    sub_data["is_active"] = True
+
+    sub = supabase.table("tracking_subscriptions").insert(sub_data).execute()
 
     return TrackingOut(**sub.data[0])
 
@@ -192,7 +183,7 @@ async def update_subscription(
         raise HTTPException(status_code=404, detail="Subscription not found")
 
     # Update
-    update_dict = data.model_dump(exclude_unset=True)
+    update_dict = data.model_dump(mode="json", exclude_unset=True)
     result = supabase.table("tracking_subscriptions").update(update_dict).eq("id", sub_id).execute()
 
     return TrackingOut(**result.data[0])
