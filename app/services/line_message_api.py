@@ -7,7 +7,7 @@ settings = get_settings()
 LINE_MESSAGE_API_URL = "https://api.line.me/v2/bot/message/push"
 
 
-async def send_line_message(user_id: str, message: str) -> bool:
+async def send_line_message(user_id: str, message: str) -> dict:
     """
     Send a LINE message using Message API.
     
@@ -16,15 +16,23 @@ async def send_line_message(user_id: str, message: str) -> bool:
         message: Message text
     
     Returns:
-        True if successful, False otherwise
+        dict with keys: success (bool), http_status_code (int), error_message (str)
     """
     if not settings.line_channel_access_token:
         print("[LINE] No Channel Access Token configured, skipping.")
-        return False
+        return {
+            "success": False,
+            "http_status_code": None,
+            "error_message": "No Channel Access Token configured"
+        }
     
     if not user_id:
         print("[LINE] No user_id provided, skipping.")
-        return False
+        return {
+            "success": False,
+            "http_status_code": None,
+            "error_message": "No user_id provided"
+        }
     
     headers = {
         "Authorization": f"Bearer {settings.line_channel_access_token}",
@@ -50,14 +58,31 @@ async def send_line_message(user_id: str, message: str) -> bool:
             )
             success = resp.status_code == 200
             print(f"[LINE] Message sent {'OK' if success else 'FAILED'}: {resp.status_code}")
+            
             if not success:
-                print(f"[LINE] Response: {resp.text}")
+                error_text = resp.text
+                print(f"[LINE] HTTP {resp.status_code}: {error_text}")
                 print(f"[LINE] Debug - to: {user_id}, messages count: {len(payload.get('messages', []))}")
-            return success
+                return {
+                    "success": False,
+                    "http_status_code": resp.status_code,
+                    "error_message": error_text[:500]  # Truncate long responses
+                }
+            
+            return {
+                "success": True,
+                "http_status_code": 200,
+                "error_message": None
+            }
         except Exception as e:
-            print(f"[LINE] Error: {e}")
+            error_msg = str(e)
+            print(f"[LINE] Exception: {error_msg}")
             print(f"[LINE] Debug - to: {user_id}, message length: {len(message)}")
-            return False
+            return {
+                "success": False,
+                "http_status_code": None,
+                "error_message": error_msg
+            }
 
 
 def build_line_message(

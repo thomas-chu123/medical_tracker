@@ -13,7 +13,7 @@ from app.database import get_supabase
 from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_message_api import send_line_message, build_line_message
 from app.core.logger import logger as log
-from app.core.timezone import today_tw_str
+from app.core.timezone import today_tw_str, now_tw
 
 
 def _run(fn):
@@ -293,6 +293,9 @@ async def _send_and_log(
     coro=None,
 ):
     # Log the attempt FIRST with context
+    # Set sent_at to Taiwan time (UTC+8) in ISO format
+    sent_at_tw = now_tw().isoformat()
+    
     log_data = {
         "subscription_id": sub_id,
         "threshold": threshold,
@@ -301,6 +304,7 @@ async def _send_and_log(
         "message": message or "Notification sent",
         "success": False,
         "error_message": "Started sending...",
+        "sent_at": sent_at_tw,  # Explicitly set to Taiwan time
     }
     
     # Add optional context fields if available - only add non-empty values
@@ -327,26 +331,47 @@ async def _send_and_log(
         log_id = None
 
     success = False
-    error = None
+    error_message = None
+    http_status_code = None
+    
     try:
         if not recipient and channel == "email":
              raise ValueError("User email is missing")
         if coro:
-            success = await coro
+            result = await coro
+            
+            # Handle different return types (for backward compatibility)
+            if isinstance(result, dict):
+                # NEW: LINE API now returns dict with detailed error info
+                success = result.get("success", False)
+                http_status_code = result.get("http_status_code")
+                error_message = result.get("error_message")
+            else:
+                # OLD: Email or legacy boolean returns
+                success = bool(result)
+                error_message = None
     except Exception as e:
-        error = str(e)
+        success = False
+        error_message = str(e)
+        http_status_code = None
 
     # Update the log with final result
     if log_id:
         try:
+            update_data = {
+                "success": success,
+                "error_message": error_message,
+            }
+            # Add http_status_code if available
+            if http_status_code is not None:
+                update_data["http_status_code"] = http_status_code
+            
             await _run(
-                lambda: supabase.table("notification_logs").update({
-                    "success": success,
-                    "error_message": error,
-                }).eq("id", log_id).execute()
+                lambda: supabase.table("notification_logs").update(update_data).eq("id", log_id).execute()
             )
         except Exception as e:
             log.error(f"[Notification] Failed to update log row {log_id}: {e}")
+
 
 
 async def _get_user_email(supabase, user_id: str) -> str | None:

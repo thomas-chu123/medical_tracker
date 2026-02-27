@@ -1753,7 +1753,7 @@ function renderNotificationTable() {
 
     tbody.innerHTML = filteredLogs.map(l => `
     <tr>
-      <td style="color:var(--text-muted); font-size:13px">${new Date(l.sent_at).toLocaleString('zh-TW')}</td>
+      <td style="color:var(--text-muted); font-size:13px">${new Date(l.sent_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
       <td>
         <div style="font-weight:bold">${l.hospital_name ? escHtml(l.hospital_name) : '—'}</div>
         <div style="font-size:12px;color:var(--text-muted)">${l.department_name ? escHtml(l.department_name) : '—'}</div>
