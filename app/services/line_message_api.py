@@ -52,9 +52,11 @@ async def send_line_message(user_id: str, message: str) -> bool:
             print(f"[LINE] Message sent {'OK' if success else 'FAILED'}: {resp.status_code}")
             if not success:
                 print(f"[LINE] Response: {resp.text}")
+                print(f"[LINE] Debug - to: {user_id}, messages count: {len(payload.get('messages', []))}")
             return success
         except Exception as e:
             print(f"[LINE] Error: {e}")
+            print(f"[LINE] Debug - to: {user_id}, message length: {len(message)}")
             return False
 
 
