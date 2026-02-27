@@ -173,7 +173,6 @@ async def create_subscription(
         "notify_at_20": data.notify_at_20,
         "notify_at_10": data.notify_at_10,
         "notify_at_5": data.notify_at_5,
-        "line_user_id": data.line_user_id,
     }).execute()
 
     return TrackingOut(**sub.data[0])
