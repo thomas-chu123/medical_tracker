@@ -316,7 +316,8 @@ function navigate(btn, pageId, options = {}) {
 async function loadDashboard() {
     console.log('[Dashboard] loadDashboard() called');
 
-    // Fire fast requests immediately, load subscriptions asynchronously in background
+    // Build query string - only pass hospital_id for specific hospital selection
+    // Region filtering is handled on client side for tracking cards
     const qs = _selectedDashHospId ? `?hospital_id=${_selectedDashHospId}` : '';
 
     // 1. Load fast data immediately (hospitals, stats, crowdStats)
@@ -566,8 +567,18 @@ async function renderDashboardTracking() {
     // Get today's date in YYYY-MM-DD format (Taiwan timezone)
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    // Filter by selected hospital and date (only show active upcoming sessions)
+    // Filter by date (only show active upcoming sessions)
     let filtered = _allDashboardSubs.filter(s => (s.session_date || '') >= todayStr);
+    
+    // Filter by selected region (match hospital region)
+    if (_selectedDashRegion) {
+        const regionHospitalIds = _dashHospitals
+            .filter(h => h.region === _selectedDashRegion)
+            .map(h => h.id);
+        filtered = filtered.filter(s => regionHospitalIds.includes(s.hospital_id));
+    }
+    
+    // Filter by selected hospital
     if (_selectedDashHospId) {
         filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
