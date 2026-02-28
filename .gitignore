@@ -165,3 +165,6 @@ allure-results/
 allure-results/report/
 report/
 report/result/*.json
+
+# Documentation folder (may contain sensitive info like tokens/passwords)
+doc/
