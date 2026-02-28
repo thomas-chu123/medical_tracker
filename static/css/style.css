@@ -930,9 +930,14 @@ tbody td {
   color: var(--success);
 }
 
-.threshold-pill.active {
+.threshold-pill.pending {
   background: rgba(245, 158, 11, 0.15);
   color: var(--warning);
+}
+
+.threshold-pill.skipped {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--text-dim);
 }
 
 .threshold-pill.off {

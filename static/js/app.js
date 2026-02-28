@@ -286,7 +286,10 @@ async function loadDashboard() {
 async function _loadTrackingAsync() {
     try {
         console.log('[Dashboard] Starting _loadTrackingAsync...');
-        const subs = await apiFetch('/api/tracking/').catch(() => []);
+        const [subs, logs] = await Promise.all([
+            apiFetch('/api/tracking/').catch(() => []),
+            apiFetch('/api/tracking/logs/all').catch(() => [])
+        ]);
         console.log('[Dashboard] API response (raw):', subs);
         console.log('[Dashboard] API response type:', typeof subs);
         console.log('[Dashboard] API response is array:', Array.isArray(subs));
@@ -294,6 +297,20 @@ async function _loadTrackingAsync() {
         _allDashboardSubs = (subs || []).filter(s => s.is_active);
         console.log('[Dashboard] Loaded tracking subs (filtered):', _allDashboardSubs.length);
         console.log('[Dashboard] Filtered subs:', _allDashboardSubs);
+
+        // Build notification logs index
+        _notificationLogsBySubscription = {};
+        for (const log of (logs || [])) {
+            const subId = log.subscription_id;
+            const threshold = log.threshold;
+            if (!_notificationLogsBySubscription[subId]) {
+                _notificationLogsBySubscription[subId] = {};
+            }
+            if (!_notificationLogsBySubscription[subId][threshold]) {
+                _notificationLogsBySubscription[subId][threshold] = [];
+            }
+            _notificationLogsBySubscription[subId][threshold].push(log);
+        }
 
         document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
 
@@ -479,7 +496,27 @@ function renderClinicCard(sub, snap) {
 
     const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
-    const pillDone = (flag, label) => `<span class="threshold-pill ${flag ? 'done' : 'active'}">${label}</span>`;
+    
+    // Helper to check if notification was actually sent (has success log)
+    const hasSuccessfulNotification = (threshold) => {
+        const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
+        return logs.some(log => log.success === true);
+    };
+    
+    const pillDone = (flagNotified, label, threshold, shouldSkip = false) => {
+      // Check if actually sent (successful log exists)
+      if (hasSuccessfulNotification(threshold)) {
+        return `<span class="threshold-pill done">✅${label}</span>`;
+      }
+      
+      // If marked notified but no successful log, it was skipped
+      if (flagNotified || shouldSkip) {
+        return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+      }
+      
+      // Otherwise pending
+      return `<span class="threshold-pill pending">⏳${label}</span>`;
+    };
 
     // 4. Labels & Badges
     const doctorLabel = sub.doctor_name || ('ID: ' + sub.doctor_id?.slice(0, 8) + '…');
@@ -533,9 +570,9 @@ function renderClinicCard(sub, snap) {
     ${distanceHtml}
     ` : ''}
     <div class="threshold-pills" style="margin-top:10px">
-      ${sub.notify_at_20 ? pillDone(sub.notified_20, '前20人') : ''}
-      ${sub.notify_at_10 ? pillDone(sub.notified_10, '前10人') : ''}
-      ${sub.notify_at_5 ? pillDone(sub.notified_5, '前5人') : ''}
+      ${sub.notify_at_20 ? pillDone(sub.notified_20, '前20人', 20, typeof current === 'number' && sub.appointment_number && current > sub.appointment_number) : ''}
+      ${sub.notify_at_10 ? pillDone(sub.notified_10, '前10人', 10, typeof current === 'number' && sub.appointment_number && current > sub.appointment_number) : ''}
+      ${sub.notify_at_5 ? pillDone(sub.notified_5, '前5人', 5, typeof current === 'number' && sub.appointment_number && current > sub.appointment_number) : ''}
     </div>
   </div>`;
 }
@@ -1484,10 +1521,29 @@ async function showDoctorDetail(doctorId, name) {
 // ── Tracking list ─────────────────────────────────────────────
 let _allTrackingSubs = [];
 let _currentTrackingTab = 'current';
+let _notificationLogsBySubscription = {}; // Map: sub_id -> {20: [], 10: [], 5: []}
 
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking/') || [];
     _allTrackingSubs = subs;
+    
+    // Load notification logs to determine which notifications were actually sent
+    const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
+    
+    // Build index: sub_id -> {threshold -> [log records]}
+    _notificationLogsBySubscription = {};
+    for (const log of logs) {
+        const subId = log.subscription_id;
+        const threshold = log.threshold;
+        if (!_notificationLogsBySubscription[subId]) {
+            _notificationLogsBySubscription[subId] = {};
+        }
+        if (!_notificationLogsBySubscription[subId][threshold]) {
+            _notificationLogsBySubscription[subId][threshold] = [];
+        }
+        _notificationLogsBySubscription[subId][threshold].push(log);
+    }
+    
     renderTrackingList();
 }
 
@@ -1533,8 +1589,29 @@ function renderTrackingList() {
 
 function renderTrackingCard(sub, isExpired = false) {
     console.log('renderTrackingCard data - sub room:', sub.clinic_room);
-    const pill = (on, done, label) => !on ? '' :
-        `<span class="threshold-pill ${done ? 'done' : 'active'}">${label} ${done ? '✓' : '⏳'}</span>`;
+    
+    // Helper to check if notification was actually sent (has success log)
+    const hasSuccessfulNotification = (threshold) => {
+        const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
+        return logs.some(log => log.success === true);
+    };
+    
+    const pill = (on, notified, label, threshold) => {
+      if (!on) return '';
+      
+      // Check if actually sent (successful log exists)
+      if (hasSuccessfulNotification(threshold)) {
+        return `<span class="threshold-pill done">✅${label}</span>`;
+      }
+      
+      // If marked notified but no successful log, it was skipped
+      if (notified) {
+        return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+      }
+      
+      // Otherwise pending
+      return `<span class="threshold-pill pending">⏳${label}</span>`;
+    };
     const email = sub.notify_email ? '📧 Email' : '';
     const line = sub.notify_line ? '📲 LINE' : '';
 
@@ -1586,9 +1663,9 @@ function renderTrackingCard(sub, isExpired = false) {
       </div>`}
     </div>
     <div class="threshold-pills">
-      ${pill(sub.notify_at_20, sub.notified_20, '前20')}
-      ${pill(sub.notify_at_10, sub.notified_10, '前10')}
-      ${pill(sub.notify_at_5, sub.notified_5, '前5')}
+      ${pill(sub.notify_at_20, sub.notified_20, '前20', 20)}
+      ${pill(sub.notify_at_10, sub.notified_10, '前10', 10)}
+      ${pill(sub.notify_at_5, sub.notified_5, '前5', 5)}
     </div>
   </div>`;
 }
