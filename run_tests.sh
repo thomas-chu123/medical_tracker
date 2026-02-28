@@ -172,44 +172,50 @@ main() {
     check_server
     
     if [ $# -eq 0 ]; then
-        # 交互模式
-        while true; do
-            show_menu
-            read -p "選擇: " choice
-            
-            case $choice in
-                1)
-                    run_data_tests
-                    ;;
-                2)
-                    run_minimal_e2e
-                    ;;
-                3)
-                    check_server
-                    run_all_minimal_e2e
-                    ;;
-                4)
-                    check_server
-                    run_full_ui
-                    ;;
-                5)
-                    run_unit_tests
-                    ;;
-                6)
-                    start_server
-                    ;;
-                0)
-                    print_info "退出"
-                    exit 0
-                    ;;
-                *)
-                    print_error "無效選擇"
-                    ;;
-            esac
-            
-            echo ""
-            read -p "按 Enter 鍵繼續..."
-        done
+        # 交互模式 - 只在連接到終端時進入
+        if [ -t 0 ]; then
+            while true; do
+                show_menu
+                read -p "選擇: " choice
+                
+                case $choice in
+                    1)
+                        run_data_tests
+                        ;;
+                    2)
+                        run_minimal_e2e
+                        ;;
+                    3)
+                        check_server
+                        run_all_minimal_e2e
+                        ;;
+                    4)
+                        check_server
+                        run_full_ui
+                        ;;
+                    5)
+                        run_unit_tests
+                        ;;
+                    6)
+                        start_server
+                        ;;
+                    0)
+                        print_info "退出"
+                        exit 0
+                        ;;
+                    *)
+                        print_error "無效選擇"
+                        ;;
+                esac
+                
+                echo ""
+                read -p "按 Enter 鍵繼續..."
+            done
+        else
+            # 非交互模式（管道/重定向）- 執行默認操作
+            print_info "非交互模式：執行所有單元和集成測試"
+            run_unit_tests
+        fi
     else
         # 命令行模式
         case $1 in
