@@ -6,6 +6,73 @@ const API = '';   // Same origin; change to http://localhost:8000 if needed
 let authToken = localStorage.getItem('auth_token') || null;
 let currentUser = null;
 
+// ── AppState: Unified application state ───────────────────────
+const AppState = {
+  // Auth
+  authToken: localStorage.getItem('auth_token') || null,
+  currentUser: null,
+
+  // Dashboard
+  dashboard: {
+    hospitals: [],
+    selectedHospitalId: null,
+    subscriptions: [],
+  },
+
+  // Hospital Search
+  hospitalSearch: {
+    selectedHospitalId: null,
+    selectedHospitalName: '',
+    selectedDepartmentId: null,
+    selectedDepartmentName: '',
+    allDepartments: [],
+    allDoctors: [],
+    doctorSearchTimer: null,
+    departmentData: { depts: [], hospName: '', cat: '' },
+  },
+
+  // Add Tracking Stepper
+  stepper: {
+    step: 1,
+    hospitalId: '',
+    hospitalName: '',
+    category: '',
+    departmentId: '',
+    departmentName: '',
+    doctorId: '',
+    doctorName: '',
+    doctorSchedules: [],
+  },
+
+  // Tracking Management
+  tracking: {
+    subscriptions: [],
+    currentTab: 'current',
+  },
+
+  // Notifications
+  notifications: {
+    logs: [],
+    currentTab: 'current',
+  },
+
+  // Charts
+  charts: {
+    crowdChart: null,
+    deptComparisonChart: null,
+    doctorComparisonChart: null,
+    doctorSpeedChart: null,
+  },
+
+  // Analysis
+  analysis: {
+    ranking: [],
+  },
+
+  // Components
+  combos: {},
+};
+
 // ── Global State ──────────────────────────────────────────────
 let _dashHospitals = [];
 let _selectedDashHospId = null;
@@ -14,7 +81,7 @@ let _allDashboardSubs = [];
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    if (AppState.authToken) headers['Authorization'] = `Bearer ${AppState.authToken}`;
 
     let resp;
     try {
@@ -95,6 +162,7 @@ async function handleLogin(e) {
             throw new Error('伺服器未回傳 Token，請稍後再試');
         }
         authToken = data.access_token;
+        AppState.authToken = data.access_token;
         localStorage.setItem('auth_token', authToken);
 
         // Show success feedback before reloading
@@ -137,8 +205,10 @@ async function handleRegister(e) {
 
 function handleLogout() {
     authToken = null;
+    AppState.authToken = null;
     localStorage.removeItem('auth_token');
     currentUser = null;
+    AppState.currentUser = null;
     document.body.classList.remove('is-admin');
     document.getElementById('app').style.display = 'none';
     document.getElementById('auth-page').classList.add('show');
@@ -153,10 +223,12 @@ async function initApp(userFromLogin = null) {
     if (userFromLogin) {
         // Fresh login: use profile from login response
         currentUser = userFromLogin;
+        AppState.currentUser = userFromLogin;
     } else {
         // Page reload: fetch profile with stored token
         try {
             currentUser = await apiFetch('/api/users/me');
+            AppState.currentUser = currentUser;
             if (!currentUser) return;
         } catch (e) {
             console.error('[initApp] Failed to load profile:', e);
@@ -1866,6 +1938,7 @@ async function loadProfile() {
     console.log('[loadProfile] fetched profile:', profile);
     if (profile) {
         currentUser = profile;
+        AppState.currentUser = profile;
         const nameEl = document.getElementById('profile-name');
         const emailEl = document.getElementById('profile-email');
 
@@ -1895,6 +1968,7 @@ function startLineConnectionPolling() {
                 // Refresh profile
                 const profile = await apiFetch('/api/users/me');
                 currentUser = profile;
+                AppState.currentUser = profile;
                 toast('✓ LINE 連接成功！', 'success');
                 // Stop polling
                 clearInterval(_linePollingTimer);
