@@ -368,89 +368,56 @@ async def get_dept_ranking(hospital_id: str = None, category: str = None):
     """Returns detailed department ranking."""
     supabase = get_supabase()
     
-    # Query all snapshots with doctor and department info
-    # Using doctor's department to get more complete data
     query = supabase.table("appointment_snapshots").select(
-        "current_registered, doctor_id, doctors!inner(department_id,departments(id,name,hospital_id,category,hospitals(name)))"
+        "department_id, current_registered, departments(name, hospital_id, category, hospitals(name))"
     )
+    
+    if hospital_id:
+        query = query.eq("departments.hospital_id", hospital_id)
+    if category:
+        query = query.eq("departments.category", category)
         
     res = await asyncio.to_thread(
-        lambda: query.order("scraped_at", desc=True)
-        .limit(10000)  # Increase limit significantly
-        .execute()
+        lambda: query.order("scraped_at", desc=True).limit(5000).execute()
     )
     
     snapshots = res.data or []
-    print(f"[DEBUG] Retrieved {len(snapshots)} snapshots for ranking")
-    
     groups = {} # dept_id -> {sum, count, max, dept_name, hosp_name}
     
     for s in snapshots:
         val = s.get("current_registered")
-        if val is None:
+        d_id = s.get("department_id")
+        d_info = s.get("departments")
+        
+        if not d_id or val is None or not d_info:
             continue
-            
-        doc_info = s.get("doctors")
-        if not doc_info:
-            continue
-            
-        # Handle doctors join (could be list or dict)
-        if isinstance(doc_info, list):
-            if len(doc_info) == 0:
-                continue
-            doc_info = doc_info[0]
-                
-        if not isinstance(doc_info, dict):
-            continue
-            
-        d_id = doc_info.get("department_id")
-        if not d_id:
-            continue
-            
-        d_info = doc_info.get("departments")
-        if not d_info:
-            continue
-            
-        # Handle departments join
+        
+        # Handle departments join (could be list or dict)
         if isinstance(d_info, list):
             if len(d_info) == 0:
                 continue
             d_info = d_info[0]
-                
+        
         if not isinstance(d_info, dict):
             continue
-            
-        # Apply filters
-        hosp_id_val = d_info.get("hospital_id")
-        category_val = d_info.get("category")
         
-        if hospital_id and hosp_id_val != hospital_id:
-            continue
-        if category and category_val != category:
-            continue
-            
         h_info = d_info.get("hospitals")
         if h_info:
             if isinstance(h_info, list):
                 h_info = h_info[0] if len(h_info) > 0 else {}
-                
-        dept_name = d_info.get("name", "未知")
-        hosp_name = h_info.get("name", "未知") if isinstance(h_info, dict) else "未知"
-            
+        
         if d_id not in groups:
             groups[d_id] = {
                 "sum": 0, 
                 "count": 0, 
                 "max": 0, 
-                "dept_name": dept_name, 
-                "hosp_name": hosp_name,
-                "category": category_val
+                "dept_name": d_info.get("name", "未知"), 
+                "hosp_name": h_info.get("name", "未知") if isinstance(h_info, dict) else "未知",
+                "category": d_info.get("category")
             }
         groups[d_id]["sum"] += val
         groups[d_id]["count"] += 1
         groups[d_id]["max"] = max(groups[d_id]["max"], val)
-    
-    print(f"[DEBUG] Grouped into {len(groups)} departments")
             
     ranking = []
     for g in groups.values():
