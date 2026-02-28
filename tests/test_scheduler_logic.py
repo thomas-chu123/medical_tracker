@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import date, datetime
+from datetime import date, datetime, time
 from app.scheduler import _build_snapshot_row
 from app.scrapers.base import DoctorSlot, ClinicProgress
 
@@ -89,17 +89,18 @@ async def test_build_snapshot_row_afternoon_gate():
         clinic_room="101", session_type="2", current_number=10
     )
     
+    today = date.today()
     slot = DoctorSlot(
         doctor_no="D1", doctor_name="Doc1", department_code="01",
-        session_date=date.today(), session_type="下午",
+        session_date=today, session_type="下午",
         total_quota=50, registered=40, clinic_room="101", current_number=None
     )
     
     # 12:30 -> No fetch
     with patch("app.scheduler.now_tw") as mock_now_tw:
         with patch("app.scheduler.today_tw") as mock_today_tw:
-            mock_now_tw.return_value = datetime(2024, 1, 1, 12, 30)
-            mock_today_tw.return_value = date.today()
+            mock_now_tw.return_value = datetime.combine(today, time(12, 30))
+            mock_today_tw.return_value = today
             row = await _build_snapshot_row(scraper, slot, "doc_id", "dept_id", True)
             # Before 13:30, current_number should NOT be in the row
             assert "current_number" not in row
@@ -108,7 +109,7 @@ async def test_build_snapshot_row_afternoon_gate():
     # 13:30 -> Fetch
     with patch("app.scheduler.now_tw") as mock_now_tw:
         with patch("app.scheduler.today_tw") as mock_today_tw:
-            mock_now_tw.return_value = datetime(2024, 1, 1, 13, 30)
-            mock_today_tw.return_value = date.today()
+            mock_now_tw.return_value = datetime.combine(today, time(13, 30))
+            mock_today_tw.return_value = today
             row = await _build_snapshot_row(scraper, slot, "doc_id", "dept_id", True)
             assert row["current_number"] == 10
