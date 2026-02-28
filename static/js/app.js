@@ -1,6 +1,6 @@
 /* ============================================================
    app.js — 台灣醫療門診追蹤系統 Frontend Logic
-   Version: 2026.02.28-hotfix
+   Version: 2026.02.28-refactor
    ============================================================ */
 
 const API = '';   // Same origin; change to http://localhost:8000 if needed
@@ -79,9 +79,6 @@ let _dashHospitals = [];
 let _selectedDashHospId = null;
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
-
-// Shorthand reference to stepper state (for backward compatibility)
-const _st = AppState.stepper;
 
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
@@ -302,11 +299,11 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'admin') {
         switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, '_st BEFORE:', JSON.parse(JSON.stringify(_st)));
+        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
         if (!options.skipReset) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
-            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
-            console.log('[navigate] _st RESET');
+            Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            console.log('[navigate] stepper RESET');
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
             loadStepperHospitals();
@@ -1195,7 +1192,7 @@ function _stepperDeptButtons(depts) {
 }
 
 async function stepperSelectDept(deptId, deptName) {
-    _st.deptId = deptId; _st.deptName = deptName;
+    AppState.stepper.deptId = deptId; AppState.stepper.deptName = deptName;
     document.getElementById('modal-dept').value = deptId;
     _stepperBreadcrumb();
     stepperGoTo(3);
@@ -1216,7 +1213,7 @@ async function stepperSelectDept(deptId, deptName) {
 }
 
 async function stepperSelectDoctor(docId, docName) {
-    _st.doctorId = docId; _st.doctorName = docName;
+    AppState.stepper.doctorId = docId; AppState.stepper.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
 
@@ -1247,15 +1244,15 @@ function stepperNextFromStep4() {
         document.getElementById('notify-5').checked ? '前5號' : ''
     ].filter(Boolean).join('、');
 
-    const hName = _st.hospitalName || '（未知醫院）';
-    const dName = _st.deptName || '（未知科室）';
-    const docName = _st.doctorName || '（未知醫師）';
+    const hName = AppState.stepper.hospitalName || '（未知醫院）';
+    const dName = AppState.stepper.deptName || '（未知科室）';
+    const docName = AppState.stepper.doctorName || '（未知醫師）';
 
     console.log('[stepperNextFromStep4] 準備進入 Step 5', { hName, dName, docName, date, session });
 
     document.getElementById('confirm-summary').innerHTML = `
       <div>🏥 <b>醫院：</b>${escHtml(hName)}</div>
-      ${_st.cat ? `<div>🏷️ <b>類別：</b>${escHtml(_st.cat)}</div>` : ''}
+      ${AppState.stepper.cat ? `<div>🏷️ <b>類別：</b>${escHtml(AppState.stepper.cat)}</div>` : ''}
       <div>🩺 <b>科室：</b>${escHtml(dName)}</div>
       <div>👨‍⚕️ <b>醫師：</b>${escHtml(docName)}</div>
       <div>📅 <b>日期：</b>${date} ${session}診</div>
@@ -1266,7 +1263,7 @@ function stepperNextFromStep4() {
 }
 
 function stepperGoTo(step) {
-    _st.step = step;
+    AppState.stepper.step = step;
     for (let i = 1; i <= 5; i++) {
         document.getElementById(`step-${i}-content`).style.display = i === step ? '' : 'none';
     }
@@ -1288,19 +1285,19 @@ function stepperGoTo(step) {
 }
 
 function stepperPrevious() {
-    if (_st.step > 1) {
+    if (AppState.stepper.step > 1) {
         // Handle cleanup based on current step
-        if (_st.step === 3) {
+        if (AppState.stepper.step === 3) {
             // Going back from doctor selection
-            _st.doctorId = '';
-            _st.doctorName = '';
-        } else if (_st.step === 4) {
+            AppState.stepper.doctorId = '';
+            AppState.stepper.doctorName = '';
+        } else if (AppState.stepper.step === 4) {
             // Going back from date/settings
             document.getElementById('modal-date').value = '';
             document.getElementById('modal-session').value = '';
             document.getElementById('modal-appointment-number').value = '';
         }
-        stepperGoTo(_st.step - 1);
+        stepperGoTo(AppState.stepper.step - 1);
     }
 }
 
@@ -1315,7 +1312,7 @@ function _stepperBreadcrumb() {
 function cancelAddTracking() {
     console.log('[cancelAddTracking] 關閉追蹤表單，返回追蹤列表');
     // 重置表單狀態
-    _st = {};
+    Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
     // 導航回追蹤頁面
     navigate(document.querySelector('[data-page=tracking]'), 'tracking');
 }
@@ -1329,14 +1326,14 @@ async function quickTrack(doctorId, doctorName) {
     }
 
     // If we're in the Add Tracking stepper (Step 3), go to Step 4
-    if (_st && _st.step === 3) {
+    if (AppState.stepper && AppState.stepper.step === 3) {
         console.log('[quickTrack] Stepper mode detected, going to Step 4');
-        _st.doctorId = doctorId;
-        _st.doctorName = doctorName;
-        _st.hospitalId = info.hospital_id;
-        _st.hospitalName = info.hospital_name;
-        _st.departmentId = info.department_id;
-        _st.departmentName = info.department_name;
+        AppState.stepper.doctorId = doctorId;
+        AppState.stepper.doctorName = doctorName;
+        AppState.stepper.hospitalId = info.hospital_id;
+        AppState.stepper.hospitalName = info.hospital_name;
+        AppState.stepper.departmentId = info.department_id;
+        AppState.stepper.departmentName = info.department_name;
 
         document.getElementById('modal-doctor').value = doctorId;
         document.getElementById('modal-dept').value = info.department_id;
@@ -1505,9 +1502,9 @@ function closeTrackingModal() { cancelAddTracking(); }
 
 async function loadModalSchedules() {
     let docId = document.getElementById('modal-doctor').value;
-    // 🔴 FIX: Fallback to _st.doctorId if element value is empty
-    if (!docId && _st.doctorId) {
-        docId = _st.doctorId;
+    // 🔴 FIX: Fallback to AppState.stepper.doctorId if element value is empty
+    if (!docId && AppState.stepper.doctorId) {
+        docId = AppState.stepper.doctorId;
         document.getElementById('modal-doctor').value = docId;
     }
 
@@ -1577,7 +1574,7 @@ async function showDoctorDetail(doctorId, name) {
 
     // Check if we're in stepper mode (adding tracking) or just viewing
     // Show action buttons only if in stepper step 3 (doctor selection)
-    const isInStepper = _st && _st.step === 3;
+    const isInStepper = AppState.stepper && AppState.stepper.step === 3;
     const actionButtons = isInStepper
         ? `<div style="display:flex; gap:8px; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-subtle)">
              <button class="btn btn-secondary" onclick="document.getElementById('doctor-modal').classList.remove('open'); stepperGoTo(3)" style="flex:1">取消</button>
@@ -1837,7 +1834,7 @@ async function submitTracking(e) {
         // 延遲後重置表單並返回第一步，讓用戶看到成功訊息
         setTimeout(() => {
             // 重置追蹤表單狀態
-            Object.assign(_st, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
             // 重置表單輸入
             document.getElementById('modal-date').value = '';
             document.getElementById('modal-session').value = '';
