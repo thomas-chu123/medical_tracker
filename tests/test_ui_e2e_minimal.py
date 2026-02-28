@@ -7,11 +7,14 @@ To run:
 
 Set environment variables:
   TEST_BASE_URL=http://localhost:8000
+  TEST_EMAIL=test_e2e@example.com
+  TEST_PASSWORD=TestPassword123
   SELENIUM_HEADLESS=false  # Set to false to see browser
 """
 import pytest
 import logging
 import time
+import os
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.expected_conditions import (
     presence_of_element_located,
@@ -20,6 +23,10 @@ from selenium.webdriver.support.expected_conditions import (
 
 
 logger = logging.getLogger(__name__)
+
+# Read test credentials from environment variables
+TEST_EMAIL = os.getenv('TEST_EMAIL', 'test_e2e@example.com')
+TEST_PASSWORD = os.getenv('TEST_PASSWORD', 'TestPassword123')
 
 
 class TestE2EMinimal:
@@ -52,6 +59,8 @@ class TestE2EMinimal:
     
     def test_03_successful_login(self, browser, wait_driver):
         """測試 3: 成功登入"""
+        import time
+        
         browser.navigate_to("/")
         
         # Enter credentials
@@ -59,21 +68,30 @@ class TestE2EMinimal:
         password = browser.driver.find_element(By.ID, "login-password")
         login_btn = browser.driver.find_element(By.ID, "login-btn")
         
+        logger.info("✏️ Entering credentials...")
         email.clear()
-        email.send_keys("chu_liang_han@hotmail.com")
+        email.send_keys(TEST_EMAIL)
         password.clear()
-        password.send_keys("123456")
+        password.send_keys(TEST_PASSWORD)
+        
+        logger.info("🖱️ Clicking login button...")
         login_btn.click()
+        
+        # Wait for page transition
+        time.sleep(2)
+        current_url = browser.driver.current_url
+        logger.info(f"📍 URL after login: {current_url}")
         
         # Wait for dashboard to load
         try:
             wait_driver.until(
-                visibility_of_element_located((By.ID, "dashboard"))
+                visibility_of_element_located((By.ID, "page-dashboard"))
             )
             logger.info("✅ Successfully logged in")
             browser.screenshot("03_dashboard_loaded")
         except Exception as e:
             logger.error(f"❌ Login failed: {e}")
+            logger.error(f"📍 Final URL: {browser.driver.current_url}")
             browser.screenshot("03_login_error")
             raise
     
@@ -83,13 +101,13 @@ class TestE2EMinimal:
         browser.navigate_to("/")
         email = browser.driver.find_element(By.ID, "login-email")
         password = browser.driver.find_element(By.ID, "login-password")
-        email.send_keys("chu_liang_han@hotmail.com")
-        password.send_keys("123456")
+        email.send_keys(TEST_EMAIL)
+        password.send_keys(TEST_PASSWORD)
         browser.driver.find_element(By.ID, "login-btn").click()
         
-        # Wait for doctor list
+        # Wait for doctor list (use clinic-card class)
         doctor_rows = wait_driver.until(
-            lambda driver: driver.find_elements(By.CLASS_NAME, "doctor-row")
+            lambda driver: driver.find_elements(By.CLASS_NAME, "clinic-card")
         )
         
         assert len(doctor_rows) > 0, "Should have at least one doctor"
@@ -102,13 +120,13 @@ class TestE2EMinimal:
         browser.navigate_to("/")
         email = browser.driver.find_element(By.ID, "login-email")
         password = browser.driver.find_element(By.ID, "login-password")
-        email.send_keys("chu_liang_han@hotmail.com")
-        password.send_keys("123456")
+        email.send_keys(TEST_EMAIL)
+        password.send_keys(TEST_PASSWORD)
         browser.driver.find_element(By.ID, "login-btn").click()
         
         # Click first doctor
         doctor_rows = wait_driver.until(
-            lambda driver: driver.find_elements(By.CLASS_NAME, "doctor-row")
+            lambda driver: driver.find_elements(By.CLASS_NAME, "clinic-card")
         )
         
         if len(doctor_rows) > 0:
@@ -129,13 +147,13 @@ class TestE2EMinimal:
         browser.navigate_to("/")
         email = browser.driver.find_element(By.ID, "login-email")
         password = browser.driver.find_element(By.ID, "login-password")
-        email.send_keys("chu_liang_han@hotmail.com")
-        password.send_keys("123456")
+        email.send_keys(TEST_EMAIL)
+        password.send_keys(TEST_PASSWORD)
         browser.driver.find_element(By.ID, "login-btn").click()
         
         # Click add tracking
         wait_driver.until(
-            visibility_of_element_located((By.ID, "dashboard"))
+            visibility_of_element_located((By.ID, "page-dashboard"))
         )
         
         try:
@@ -196,7 +214,7 @@ class TestE2EMinimal:
         
         # Check for LINE notifications
         line_logs = supabase.table("notification_logs").select("*").eq(
-            "notification_type", "line"
+            "channel", "line"
         ).limit(5).execute()
         
         if len(line_logs.data) > 0:
@@ -215,7 +233,7 @@ class TestE2EMinimal:
         
         # Check for email notifications
         email_logs = supabase.table("notification_logs").select("*").eq(
-            "notification_type", "email"
+            "channel", "email"
         ).limit(5).execute()
         
         assert len(email_logs.data) > 0, "Should have email notification logs"
@@ -239,11 +257,11 @@ class TestUIManualOnly:
         # 2. Login
         email = browser.driver.find_element(By.ID, "login-email")
         password = browser.driver.find_element(By.ID, "login-password")
-        email.send_keys("chu_liang_han@hotmail.com")
-        password.send_keys("123456")
+        email.send_keys(TEST_EMAIL)
+        password.send_keys(TEST_PASSWORD)
         browser.driver.find_element(By.ID, "login-btn").click()
         
-        wait_driver.until(visibility_of_element_located((By.ID, "dashboard")))
+        wait_driver.until(visibility_of_element_located((By.ID, "page-dashboard")))
         logger.info("Step 2: Logged in successfully")
         browser.screenshot("flow_02_after_login")
         

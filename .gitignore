@@ -168,3 +168,8 @@ report/result/*.json
 
 # Documentation folder (may contain sensitive info like tokens/passwords)
 doc/
+
+# E2E test artifacts (may contain sensitive data like email addresses, tokens)
+tests/screenshots/
+test_*.report
+*.png
