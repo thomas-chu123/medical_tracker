@@ -38,10 +38,10 @@ class TestE2EMinimal:
         
         # Check login form elements exist
         email_input = wait_driver.until(
-            presence_of_element_located((By.ID, "email"))
+            presence_of_element_located((By.ID, "login-email"))
         )
-        password_input = browser.driver.find_element(By.ID, "password")
-        login_button = browser.driver.find_element(By.ID, "loginBtn")
+        password_input = browser.driver.find_element(By.ID, "login-password")
+        login_button = browser.driver.find_element(By.ID, "login-btn")
         
         assert email_input.is_displayed()
         assert password_input.is_displayed()
@@ -55,9 +55,9 @@ class TestE2EMinimal:
         browser.navigate_to("/")
         
         # Enter credentials
-        email = browser.driver.find_element(By.ID, "email")
-        password = browser.driver.find_element(By.ID, "password")
-        login_btn = browser.driver.find_element(By.ID, "loginBtn")
+        email = browser.driver.find_element(By.ID, "login-email")
+        password = browser.driver.find_element(By.ID, "login-password")
+        login_btn = browser.driver.find_element(By.ID, "login-btn")
         
         email.clear()
         email.send_keys("chu_liang_han@hotmail.com")
@@ -81,11 +81,11 @@ class TestE2EMinimal:
         """測試 4: 儀表板顯示醫生列表"""
         # Login first
         browser.navigate_to("/")
-        email = browser.driver.find_element(By.ID, "email")
-        password = browser.driver.find_element(By.ID, "password")
+        email = browser.driver.find_element(By.ID, "login-email")
+        password = browser.driver.find_element(By.ID, "login-password")
         email.send_keys("chu_liang_han@hotmail.com")
         password.send_keys("123456")
-        browser.driver.find_element(By.ID, "loginBtn").click()
+        browser.driver.find_element(By.ID, "login-btn").click()
         
         # Wait for doctor list
         doctor_rows = wait_driver.until(
@@ -100,11 +100,11 @@ class TestE2EMinimal:
         """測試 5: 查看醫生狀態"""
         # Login
         browser.navigate_to("/")
-        email = browser.driver.find_element(By.ID, "email")
-        password = browser.driver.find_element(By.ID, "password")
+        email = browser.driver.find_element(By.ID, "login-email")
+        password = browser.driver.find_element(By.ID, "login-password")
         email.send_keys("chu_liang_han@hotmail.com")
         password.send_keys("123456")
-        browser.driver.find_element(By.ID, "loginBtn").click()
+        browser.driver.find_element(By.ID, "login-btn").click()
         
         # Click first doctor
         doctor_rows = wait_driver.until(
@@ -127,11 +127,11 @@ class TestE2EMinimal:
         """測試 6: 快速追蹤彈窗開啟"""
         # Login
         browser.navigate_to("/")
-        email = browser.driver.find_element(By.ID, "email")
-        password = browser.driver.find_element(By.ID, "password")
+        email = browser.driver.find_element(By.ID, "login-email")
+        password = browser.driver.find_element(By.ID, "login-password")
         email.send_keys("chu_liang_han@hotmail.com")
         password.send_keys("123456")
-        browser.driver.find_element(By.ID, "loginBtn").click()
+        browser.driver.find_element(By.ID, "login-btn").click()
         
         # Click add tracking
         wait_driver.until(
@@ -237,11 +237,11 @@ class TestUIManualOnly:
         logger.info("Step 1: Navigated to home")
         
         # 2. Login
-        email = browser.driver.find_element(By.ID, "email")
-        password = browser.driver.find_element(By.ID, "password")
+        email = browser.driver.find_element(By.ID, "login-email")
+        password = browser.driver.find_element(By.ID, "login-password")
         email.send_keys("chu_liang_han@hotmail.com")
         password.send_keys("123456")
-        browser.driver.find_element(By.ID, "loginBtn").click()
+        browser.driver.find_element(By.ID, "login-btn").click()
         
         wait_driver.until(visibility_of_element_located((By.ID, "dashboard")))
         logger.info("Step 2: Logged in successfully")

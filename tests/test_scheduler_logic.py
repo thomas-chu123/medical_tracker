@@ -37,18 +37,19 @@ async def test_build_snapshot_row_morning_post_gate():
         total_quota=60, registered_count=45, status="看診中"
     )
     
+    today = date.today()
     slot = DoctorSlot(
         doctor_no="D1", doctor_name="Doc1", department_code="01",
-        session_date=date.today(), session_type="上午",
-        total_quota=50, registered=40, clinic_room="101"
+        session_date=today, session_type="上午",
+        total_quota=50, registered=40, clinic_room="101", current_number=None
     )
     
-    # Mock now_tw() to return 09:00 Taiwan time
-    mock_now = datetime(2024, 1, 1, 9, 0)
+    # Mock now_tw() to return 09:00 Taiwan time on today's date
+    mock_now = datetime.combine(today, time(9, 0))
     with patch("app.scheduler.now_tw") as mock_now_tw:
         mock_now_tw.return_value = mock_now
         with patch("app.scheduler.today_tw") as mock_today_tw:
-            mock_today_tw.return_value = date.today()
+            mock_today_tw.return_value = today
             
             row = await _build_snapshot_row(scraper, slot, "doc_id", "dept_id", True)
             
@@ -91,7 +92,7 @@ async def test_build_snapshot_row_afternoon_gate():
     slot = DoctorSlot(
         doctor_no="D1", doctor_name="Doc1", department_code="01",
         session_date=date.today(), session_type="下午",
-        total_quota=50, registered=40, clinic_room="101"
+        total_quota=50, registered=40, clinic_room="101", current_number=None
     )
     
     # 12:30 -> No fetch
