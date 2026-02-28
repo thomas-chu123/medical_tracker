@@ -2309,6 +2309,7 @@ async function switchAnalysisSheet(sheetId) {
     } else if (sheetId === 'sheet2') {
         loadAnalysisHospitals('analysis-sheet2-hosp-select');
         loadAnalysisCategories('analysis-sheet2-cat-select');
+        refreshDoctorComparison();
     } else if (sheetId === 'sheet3') {
         loadAnalysisHospitals('rank-hosp-filter', true);
         loadRankingTable();
