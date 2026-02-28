@@ -365,72 +365,82 @@ async def get_doctor_comparison(hospital_id: str = None, dept_id: str = None, ca
 
 @router.get("/dept-ranking", response_model=list[DeptRankingItem])
 async def get_dept_ranking(hospital_id: str = None, category: str = None):
-    """Returns detailed department ranking."""
+    """Returns detailed department ranking using stratified sampling across all departments."""
     supabase = get_supabase()
     
-    query = supabase.table("appointment_snapshots").select(
-        "department_id, current_registered, departments(name, hospital_id, category, hospitals(name))"
-    )
+    # Strategy: Get all departments first, then sample recent snapshots from each
+    # This ensures we show ALL departments with data, not just recently tracked ones
+    dept_query = supabase.table("departments").select("id, name, hospital_id, category, hospitals(name)")
     
     if hospital_id:
-        query = query.eq("departments.hospital_id", hospital_id)
+        dept_query = dept_query.eq("hospital_id", hospital_id)
     if category:
-        query = query.eq("departments.category", category)
-        
+        dept_query = dept_query.eq("category", category)
+    
+    dept_res = await asyncio.to_thread(lambda: dept_query.execute())
+    all_depts = dept_res.data or []
+    
+    if not all_depts:
+        return []
+    
+    # Build department info map
+    dept_map = {}
+    for d in all_depts:
+        h_info = d.get("hospitals")
+        if isinstance(h_info, list):
+            h_info = h_info[0] if h_info else {}
+        dept_map[d["id"]] = {
+            "name": d.get("name", "未知"),
+            "hosp_name": h_info.get("name", "未知") if isinstance(h_info, dict) else "未知",
+            "category": d.get("category")
+        }
+    
+    dept_ids = list(dept_map.keys())
+    
+    # Key fix: Order by session_date DESC (not scraped_at) to get latest clinic dates
+    # This ensures we cover all departments' recent clinics, not just frequently tracked ones
+    query = supabase.table("appointment_snapshots").select(
+        "department_id, current_registered, session_date"
+    ).in_("department_id", dept_ids).not_.is_("current_registered", "null")
+    
     res = await asyncio.to_thread(
-        lambda: query.order("scraped_at", desc=True).limit(5000).execute()
+        lambda: query.order("session_date", desc=True).limit(30000).execute()
     )
     
     snapshots = res.data or []
-    groups = {} # dept_id -> {sum, count, max, dept_name, hosp_name}
+    groups = {}
     
     for s in snapshots:
-        val = s.get("current_registered")
         d_id = s.get("department_id")
-        d_info = s.get("departments")
+        val = s.get("current_registered")
         
-        if not d_id or val is None or not d_info:
+        if not d_id or val is None or d_id not in dept_map:
             continue
-        
-        # Handle departments join (could be list or dict)
-        if isinstance(d_info, list):
-            if len(d_info) == 0:
-                continue
-            d_info = d_info[0]
-        
-        if not isinstance(d_info, dict):
-            continue
-        
-        h_info = d_info.get("hospitals")
-        if h_info:
-            if isinstance(h_info, list):
-                h_info = h_info[0] if len(h_info) > 0 else {}
         
         if d_id not in groups:
             groups[d_id] = {
-                "sum": 0, 
-                "count": 0, 
-                "max": 0, 
-                "dept_name": d_info.get("name", "未知"), 
-                "hosp_name": h_info.get("name", "未知") if isinstance(h_info, dict) else "未知",
-                "category": d_info.get("category")
+                "sum": 0,
+                "count": 0,
+                "max": 0,
+                "info": dept_map[d_id]
             }
+        
         groups[d_id]["sum"] += val
         groups[d_id]["count"] += 1
         groups[d_id]["max"] = max(groups[d_id]["max"], val)
-            
+    
     ranking = []
     for g in groups.values():
         if g["count"] == 0:
             continue
         ranking.append(DeptRankingItem(
-            hospital_name=g["hosp_name"],
-            dept_name=g["dept_name"],
-            category=g.get("category"),
+            hospital_name=g["info"]["hosp_name"],
+            dept_name=g["info"]["name"],
+            category=g["info"].get("category"),
             max_registered=g["max"],
             avg_registered=round(g["sum"] / g["count"], 1)
         ))
-        
+    
     return sorted(ranking, key=lambda x: x.avg_registered, reverse=True)
 
 
