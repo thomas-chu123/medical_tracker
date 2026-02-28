@@ -31,7 +31,7 @@ def selenium_config():
 
 @pytest.fixture
 def chrome_driver(selenium_config):
-    """建立 Chrome WebDriver"""
+    """建立 Chrome WebDriver - 每個測試後關閉"""
     chrome_options = Options()
     
     if selenium_config["headless"]:
@@ -51,8 +51,16 @@ def chrome_driver(selenium_config):
     
     yield driver
     
-    # 清理
-    driver.quit()
+    # 確保在每個測試後關閉所有窗口
+    try:
+        driver.quit()
+        logger.info("✅ Chrome driver closed successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ Error closing Chrome driver: {e}")
+        try:
+            driver.close_all_windows()
+        except:
+            pass
 
 
 @pytest.fixture

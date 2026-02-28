@@ -996,9 +996,6 @@ async function hsSelectDeptFromSearch(deptId, deptName, hospName) {
     await hsSelectDept(deptId, deptName, hospName, cat);
 }
 
-// Obsolete, replaced by filterHospitalSearch
-
-
 function renderDoctorCards(doctors) {
     const grid = document.getElementById('doctors-grid');
     if (!doctors || doctors.length === 0) {
@@ -1018,8 +1015,6 @@ function renderDoctorCards(doctors) {
 }
 
 // ── Add Tracking Stepper ───────────────────────────────────────
-const _st = { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' };
-
 async function loadStepperHospitals() {
     const grid = document.getElementById('step1-hospital-grid');
     const hospitals = await apiFetch('/api/hospitals') || [];
@@ -1030,8 +1025,13 @@ async function loadStepperHospitals() {
 }
 
 async function stepperSelectHospital(hospId, hospName) {
-    _st.hospitalId = hospId; _st.hospitalName = hospName;
-    _st.cat = ''; _st.deptId = ''; _st.deptName = ''; _st.doctorId = ''; _st.doctorName = '';
+    AppState.stepper.hospitalId = hospId;
+    AppState.stepper.hospitalName = hospName;
+    AppState.stepper.category = '';
+    AppState.stepper.departmentId = '';
+    AppState.stepper.departmentName = '';
+    AppState.stepper.doctorId = '';
+    AppState.stepper.doctorName = '';
     _stepperBreadcrumb();
     stepperGoTo(2);
     // Load categories or depts
@@ -1052,12 +1052,12 @@ async function stepperSelectHospital(hospId, hospName) {
 }
 
 async function stepperSelectCategory(cat) {
-    _st.cat = cat;
+    AppState.stepper.category = cat;
     document.querySelectorAll('#step2-category-chips .cat-chip').forEach(b =>
         b.classList.toggle('active', b.textContent === cat));
     const grid = document.getElementById('step2-dept-grid');
     grid.innerHTML = '<div class="spinner"></div>';
-    const depts = await apiFetch(`/api/hospitals/${_st.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
+    const depts = await apiFetch(`/api/hospitals/${AppState.stepper.hospitalId}/departments?category=${encodeURIComponent(cat)}`) || [];
     grid.innerHTML = _stepperDeptButtons(depts);
     _stepperBreadcrumb();
 }
@@ -1179,7 +1179,7 @@ function stepperPrevious() {
 }
 
 function _stepperBreadcrumb() {
-    const parts = [_st.hospitalName, _st.cat, _st.deptName, _st.doctorName].filter(Boolean);
+    const parts = [AppState.stepper.hospitalName, AppState.stepper.category, AppState.stepper.departmentName, AppState.stepper.doctorName].filter(Boolean);
     const el = document.getElementById('stepper-breadcrumb');
     el.innerHTML = parts.map((p, i) => i < parts.length - 1
         ? `<span class="bc-link">${escHtml(p)}</span><span class="bc-sep">›</span>`
@@ -1372,9 +1372,6 @@ async function submitQuickTrack() {
 function openTrackingModal() { openAddTracking(); }
 function closeTrackingModal() { cancelAddTracking(); }
 
-// 醫師數據 – 傳給日期選單
-let _doctorSchedules = [];
-
 async function loadModalSchedules() {
     let docId = document.getElementById('modal-doctor').value;
     // 🔴 FIX: Fallback to _st.doctorId if element value is empty
@@ -1391,14 +1388,14 @@ async function loadModalSchedules() {
     sessionSel.disabled = true;
     if (!docId) return;
 
-    _doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
+    AppState.stepper.doctorSchedules = await apiFetch(`/api/doctors/${docId}/schedules`) || [];
 
-    if (!_doctorSchedules.length) {
+    if (!AppState.stepper.doctorSchedules.length) {
         dateSel.innerHTML = '<option value="">— 尚無門診資料 —</option>';
         return;
     }
 
-    const dates = [...new Set(_doctorSchedules.map(s => s.session_date))];
+    const dates = [...new Set(AppState.stepper.doctorSchedules.map(s => s.session_date))];
     dateSel.innerHTML = '<option value="">— 選擇就診日期 —</option>' +
         dates.map(d => {
             const label = new Date(d + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
@@ -1414,7 +1411,7 @@ function loadModalSessionsFromDate() {
     sessionSel.innerHTML = '<option value="">— 選擇診次 —</option>';
     sessionSel.disabled = true;
     if (!date) return;
-    const sessions = _doctorSchedules
+    const sessions = AppState.stepper.doctorSchedules
         .filter(s => s.session_date === date && s.session_type)
         .map(s => s.session_type);
     const unique = [...new Set(sessions)];
@@ -1547,9 +1544,9 @@ function renderTrackingCard(sub, isExpired = false) {
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNo = sub.appointment_number ? `${sub.appointment_number}` : '<span style="opacity:0.6">(未填寫)</span>';
 
-    const emailDisplay = sub.notify_email && currentUser?.email ? `📧 Email (${currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
+    const emailDisplay = sub.notify_email && AppState.currentUser?.email ? `📧 Email (${AppState.currentUser.email})` : (sub.notify_email ? '📧 Email' : '');
     if (sub.notify_email) {
-        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', currentUser);
+        console.log('[renderTrackingCard] emailDisplay result:', emailDisplay, 'currentUser:', AppState.currentUser);
     }
     const lineDisplay = sub.notify_line ? '📲 LINE' : '';
 
@@ -1856,7 +1853,7 @@ async function loadAdminUsers() {
         const adminBtnClass = u.is_admin ? 'btn-danger' : 'btn-secondary';
         const verified = u.is_verified ? '✅' : '❌';
         const createdAt = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-TW') : '—';
-        const isSelf = currentUser && u.id === currentUser.id;
+        const isSelf = AppState.currentUser && u.id === AppState.currentUser.id;
         const displayName = escHtml(u.display_name || '—');
 
         const actions = isSelf
@@ -1996,17 +1993,6 @@ async function loadSchedulerStatus() {
     }
 }
 
-async function toggleScheduler(resume) {
-    try {
-        const endpoint = resume ? '/api/admin/scheduler/resume' : '/api/admin/scheduler/pause';
-        await apiPost(endpoint, {});
-        toast(`排程已${resume ? '恢復' : '暫停'}`, 'success');
-        loadSchedulerStatus();
-    } catch (e) {
-        toast(e.message, 'error');
-    }
-}
-
 async function loadServerLogs() {
     try {
         const res = await apiFetch('/api/admin/logs?lines=200');
@@ -2131,10 +2117,6 @@ async function deleteAdminTracking(id) {
 }
 
 /* ── Chart Analysis ─────────────────────────────────────────── */
-let deptComparisonChart = null;
-let doctorComparisonChart = null;
-let doctorSpeedChart = null;
-let allRankingData = [];
 
 async function switchAnalysisSheet(sheetId) {
     document.querySelectorAll('.analysis-tab-content').forEach(el => el.style.display = 'none');
@@ -2178,8 +2160,8 @@ async function loadDeptComparison() {
         const stats = await apiFetch(`/api/stats/dept-comparison?hospital_id=${hospId}&category=${encodeURIComponent(cat)}`);
         if (!stats) return;
 
-        if (deptComparisonChart) deptComparisonChart.destroy();
-        deptComparisonChart = new Chart(ctx, {
+        if (AppState.charts.deptComparisonChart) AppState.charts.deptComparisonChart.destroy();
+        AppState.charts.deptComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -2272,8 +2254,8 @@ async function refreshDoctorComparison() {
         const stats = await apiFetch(url);
         if (!stats) return;
 
-        if (doctorComparisonChart) doctorComparisonChart.destroy();
-        doctorComparisonChart = new Chart(ctx, {
+        if (AppState.charts.doctorComparisonChart) AppState.charts.doctorComparisonChart.destroy();
+        AppState.charts.doctorComparisonChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -2312,8 +2294,8 @@ async function loadDoctorSpeedAnalysis() {
         const stats = await apiFetch(url);
         if (!stats) return;
 
-        if (doctorSpeedChart) doctorSpeedChart.destroy();
-        doctorSpeedChart = new Chart(ctx, {
+        if (AppState.charts.doctorSpeedChart) AppState.charts.doctorSpeedChart.destroy();
+        AppState.charts.doctorSpeedChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: stats.labels,
@@ -2345,8 +2327,8 @@ async function loadDoctorSpeedAnalysis() {
 async function loadRankingTable() {
     const tbody = document.getElementById('ranking-table-body');
     try {
-        allRankingData = await apiFetch('/api/stats/dept-ranking') || [];
-        renderRankingTable(allRankingData);
+        AppState.analysis.ranking = await apiFetch('/api/stats/dept-ranking') || [];
+        renderRankingTable(AppState.analysis.ranking);
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger)">載入失敗: ${e.message}</td></tr>`;
     }
@@ -2374,7 +2356,7 @@ function filterRankingTable() {
     const hospName = hospId ? hospSelect.options[hospSelect.selectedIndex].text : '';
     const deptQ = document.getElementById('rank-dept-filter').value.toLowerCase();
 
-    const filtered = allRankingData.filter(v => {
+    const filtered = AppState.analysis.ranking.filter(v => {
         const matchHosp = !hospName || v.hospital_name === hospName;
         const matchDept = !deptQ || v.dept_name.toLowerCase().includes(deptQ);
         return matchHosp && matchDept;

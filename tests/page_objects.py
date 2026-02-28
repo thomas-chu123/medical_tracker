@@ -121,14 +121,16 @@ class QuickTrackModal:
     
     # Locators
     MODAL = (By.ID, "quick-track-modal")
-    DOCTOR_SELECT = (By.ID, "modal-doctor")
-    THRESHOLD_20 = (By.ID, "notify-20")
-    THRESHOLD_10 = (By.ID, "notify-10")
-    THRESHOLD_5 = (By.ID, "notify-5")
-    NOTIFY_EMAIL = (By.ID, "notify-email")
-    NOTIFY_LINE = (By.ID, "notify-line")
-    APPOINTMENT_NUMBER = (By.ID, "modal-appointment-number")
-    SUBMIT_BUTTON = (By.ID, "submit-tracking-btn")
+    DOCTOR_SELECT = (By.ID, "qt-doctor-name")
+    DATE_SELECT = (By.ID, "qt-date")
+    SESSION_SELECT = (By.ID, "qt-session")
+    THRESHOLD_20 = (By.ID, "qt-notify-20")
+    THRESHOLD_10 = (By.ID, "qt-notify-10")
+    THRESHOLD_5 = (By.ID, "qt-notify-5")
+    NOTIFY_EMAIL = (By.ID, "qt-notify-email")
+    NOTIFY_LINE = (By.ID, "qt-notify-line")
+    APPOINTMENT_NUMBER = (By.ID, "qt-appointment-number")
+    SUBMIT_BUTTON = (By.XPATH, "//button[contains(text(), '確認追蹤')]")
     CLOSE_BUTTON = (By.CLASS_NAME, "modal-close")
     SUCCESS_MESSAGE = (By.CLASS_NAME, "success-message")
     ERROR_MESSAGE = (By.CLASS_NAME, "error-message")
@@ -137,17 +139,31 @@ class QuickTrackModal:
         """檢查彈窗是否開啟"""
         try:
             modal = self.wait.until(visibility_of_element_located(self.MODAL))
-            return modal.is_displayed()
+            return "open" in modal.get_attribute("class") or modal.is_displayed()
         except:
             return False
     
     def select_doctor(self, doctor_id: str):
         """選擇醫生"""
         logger.info(f"Selecting doctor: {doctor_id}")
-        select = self.wait.until(visibility_of_element_located(self.DOCTOR_SELECT))
-        select.click()
-        # 等待下拉菜單開啟並選擇
-        option = self.driver.find_element(By.CSS_SELECTOR, f"option[value='{doctor_id}']")
+        # 實際上是通過點擊診生卡來選擇
+        doctor_elem = self.driver.find_element(By.XPATH, f"//div[@class='clinic-card'][contains(., '{doctor_id}')]")
+        doctor_elem.click()
+    
+    def set_date(self, date_value: str):
+        """設定就診日期"""
+        logger.info(f"Setting appointment date: {date_value}")
+        date_select = self.wait.until(visibility_of_element_located(self.DATE_SELECT))
+        date_select.click()
+        option = self.driver.find_element(By.CSS_SELECTOR, f"option[value='{date_value}']")
+        option.click()
+    
+    def set_session(self, session_value: str):
+        """設定診次"""
+        logger.info(f"Setting session: {session_value}")
+        session_select = self.wait.until(visibility_of_element_located(self.SESSION_SELECT))
+        session_select.click()
+        option = self.driver.find_element(By.CSS_SELECTOR, f"option[value='{session_value}']")
         option.click()
     
     def set_appointment_number(self, number: int):
