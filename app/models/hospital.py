@@ -9,6 +9,7 @@ class HospitalBase(BaseModel):
     name: str
     code: str
     base_url: str
+    region: Optional[str] = None
 
 class HospitalOut(HospitalBase):
     id: UUID

@@ -128,6 +128,12 @@
             <div class="subtitle" id="last-update-label">讀取中…</div>
           </div>
           <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <!-- Region Filter -->
+            <div class="form-group" style="margin:0; min-width:160px;">
+              <select id="dash-region-select" onchange="filterDashByRegion()" style="height:38px;">
+                <option value="">📍 全部地區</option>
+              </select>
+            </div>
             <!-- Hospital Filter Combobox -->
             <div class="combobox" id="dash-hosp-combo" style="width:280px">
               <input type="text" placeholder="🔍 過濾醫院 (預設全部)..." autocomplete="off" oninput="filterDashHosp(this.value)"
@@ -338,6 +344,12 @@
         <!-- Hospital select + Search bars -->
         <div class="card" style="margin-bottom:20px">
           <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+            <div class="form-group" style="margin:0; min-width:180px;">
+              <label>醫院所在地</label>
+              <select id="hs-region-select" onchange="filterHospitalsByRegion()">
+                <option value="">📍 全部地區</option>
+              </select>
+            </div>
             <div class="form-group" style="margin:0; min-width:240px; flex:2">
               <label>選擇醫院</label>
               <div class="combobox" id="cb-hospital">
@@ -813,7 +825,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/js/app.js?v=20260228g"></script>
+    <script src="/static/js/app.js?v=20260228h"></script>
 </body>
 
 </html>

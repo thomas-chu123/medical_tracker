@@ -77,6 +77,7 @@ const AppState = {
 // ── Global State ──────────────────────────────────────────────
 let _dashHospitals = [];
 let _selectedDashHospId = null;
+let _selectedDashRegion = ''; // Selected region filter
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
 
@@ -330,6 +331,7 @@ async function loadDashboard() {
     // Update hospital list if fetched
     if (!_dashHospitals.length && hospList) {
         _dashHospitals = hospList;
+        initDashRegionSelect(); // Initialize region dropdown
         renderDashHospList();
     }
 
@@ -401,6 +403,38 @@ async function _loadTrackingAsync() {
     }
 }
 
+/** Dashboard Region Filter **/
+function initDashRegionSelect() {
+    const select = document.getElementById('dash-region-select');
+    if (!select) return;
+    
+    // Extract unique regions from hospitals
+    const regions = [...new Set(_dashHospitals.map(h => h.region).filter(r => r))];
+    
+    // Populate select options
+    let html = '<option value="">📍 全部地區</option>';
+    regions.forEach(region => {
+        html += `<option value="${escHtml(region)}">${escHtml(region)}</option>`;
+    });
+    select.innerHTML = html;
+}
+
+function filterDashByRegion() {
+    const select = document.getElementById('dash-region-select');
+    _selectedDashRegion = select ? select.value : '';
+    
+    // Reset hospital selection when region changes
+    _selectedDashHospId = null;
+    const inp = document.querySelector('#dash-hosp-combo input');
+    if (inp) inp.value = '';
+    
+    // Re-render hospital list with region filter
+    renderDashHospList();
+    
+    // Refresh dashboard data
+    loadDashboard();
+}
+
 /** Dashboard Hospital Filter Logic **/
 function renderDashHospList(filterText = '') {
     const list = document.getElementById('dash-hosp-list');
@@ -411,8 +445,14 @@ function renderDashHospList(filterText = '') {
         q = ''; // Skip filtering if input matches the currently selected hospital
     }
 
+    // Filter by region first
+    let filteredHospitals = _dashHospitals;
+    if (_selectedDashRegion) {
+        filteredHospitals = _dashHospitals.filter(h => h.region === _selectedDashRegion);
+    }
+
     // Add "All Hospitals" option
-    let items = [{ id: null, name: '全部醫院' }, ..._dashHospitals];
+    let items = [{ id: null, name: '全部醫院' }, ...filteredHospitals];
     if (q) {
         items = items.filter(h => h.name.toLowerCase().includes(q));
     }
@@ -424,7 +464,7 @@ function renderDashHospList(filterText = '') {
 
     list.innerHTML = items.map(h => `
         <div class="combo-opt" onclick="selectDashHosp('${h.id}', '${escHtml(h.name)}')">
-            ${h.id === null ? '🌐' : '🏥'} ${escHtml(h.name)}
+            ${h.id === null ? '🌐' : '🏥'} ${escHtml(h.name)}${h.region ? ` <span style="color:#888; font-size:0.85em">( ${escHtml(h.region)} )</span>` : ''}
         </div>
     `).join('');
 }
@@ -847,6 +887,8 @@ document.addEventListener('click', e => {
 let allDoctors = [];
 let _hsHospitalId = null;
 let _hsHospitalName = '';
+let _hsAllHospitals = []; // Store all hospitals for region filtering
+let _hsSelectedRegion = ''; // Selected region for hospital search
 
 let allDepts = [];   // stores current category's dept list for filtering
 
@@ -857,7 +899,13 @@ async function loadHospitalsPage() {
     inp.dataset.loaded = '1';
 
     const hospitals = await apiFetch('/api/hospitals') || [];
-    buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name })), async (hospId, hospName) => {
+    _hsAllHospitals = hospitals; // Store all hospitals
+    
+    // Initialize region select
+    initHsRegionSelect(hospitals);
+    
+    // Build hospital combobox with all hospitals initially
+    buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name, region: h.region })), async (hospId, hospName) => {
         _hsHospitalId = hospId;
         _hsHospitalName = hospName;
         // 🔴 FIX: Clear previous state when switching hospitals
@@ -882,6 +930,74 @@ async function loadHospitalsPage() {
             _hsRenderDeptGrid(hospId, hospName, null, depts);
         }
     });
+}
+
+/** Hospital Search Region Filter **/
+function initHsRegionSelect(hospitals) {
+    const select = document.getElementById('hs-region-select');
+    if (!select) return;
+    
+    // Extract unique regions from hospitals
+    const regions = [...new Set(hospitals.map(h => h.region).filter(r => r))];
+    
+    // Populate select options
+    let html = '<option value="">📍 全部地區</option>';
+    regions.forEach(region => {
+        html += `<option value="${escHtml(region)}">${escHtml(region)}</option>`;
+    });
+    select.innerHTML = html;
+}
+
+function filterHospitalsByRegion() {
+    const select = document.getElementById('hs-region-select');
+    _hsSelectedRegion = select ? select.value : '';
+    
+    // Filter hospitals by region
+    let filteredHospitals = _hsAllHospitals;
+    if (_hsSelectedRegion) {
+        filteredHospitals = _hsAllHospitals.filter(h => h.region === _hsSelectedRegion);
+    }
+    
+    // Rebuild hospital combobox with filtered list
+    buildCombo('cb-hospital', filteredHospitals.map(h => ({ value: h.id, label: h.name, region: h.region })), async (hospId, hospName) => {
+        _hsHospitalId = hospId;
+        _hsHospitalName = hospName;
+        _currentHsDeptId = null;
+        allDoctors = [];
+        document.getElementById('hs-category-wrap').style.display = 'none';
+        document.getElementById('hs-dept-wrap').style.display = 'none';
+        document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
+        const searchWrap = document.getElementById('hs-search-controls');
+        searchWrap.style.display = 'flex';
+        const deptSearchEl = document.getElementById('dept-search');
+        if (deptSearchEl) deptSearchEl.value = '';
+        _hsBreadcrumb([hospName]);
+
+        const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
+        if (cats.length) {
+            _hsRenderCategoryChips(hospId, hospName, cats);
+        } else {
+            const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
+            _hsRenderDeptGrid(hospId, hospName, null, depts);
+        }
+    });
+    
+    // Reset hospital selection
+    _hsHospitalId = null;
+    _hsHospitalName = '';
+    const inp = document.getElementById('hospital-input');
+    if (inp) inp.value = '';
+    
+    // Hide category and department sections
+    document.getElementById('hs-category-wrap').style.display = 'none';
+    document.getElementById('hs-dept-wrap').style.display = 'none';
+    document.getElementById('hs-search-controls').style.display = 'none';
+    document.getElementById('doctors-grid').innerHTML = `
+        <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <p>請先選擇醫院與科室</p>
+        </div>
+    `;
 }
 
 function _hsBreadcrumb(parts) {

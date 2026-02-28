@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
 from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
+from app.scrapers.hmmh import HMMHScraper
 from app.services.data_writer import (
     get_hospital_id,
     upsert_department,
@@ -41,7 +42,7 @@ def get_scheduler() -> AsyncIOScheduler:
 async def run_cmuh_master_data():
     """Scrapes and updates departments, doctors, and full schedule snapshots. Runs 00:00-06:00."""
     logger.info(f"[Scheduler] Starting master data scrape at {today_tw()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = [CMUHScraper(), CMUHHsinchuScraper(), HMMHScraper()]
     
     # Run scrapers for different hospitals concurrently
     await asyncio.gather(*[_scrape_hospital_master_data(s) for s in scrapers])
@@ -50,7 +51,7 @@ async def run_cmuh_master_data():
 async def run_morning_tracked_snapshot_sync():
     """Triggered at 08:00 AM to update progress for all currently tracked clinics for today."""
     logger.info(f"[Scheduler] Starting 08:00 AM tracked snapshot sync for {today_tw()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = [CMUHScraper(), CMUHHsinchuScraper(), HMMHScraper()]
     await asyncio.gather(*[_sync_hospital_morning_progress(s) for s in scrapers])
     logger.info("[Scheduler] 08:00 AM tracked snapshot sync complete.")
 
@@ -209,7 +210,7 @@ async def _scrape_hospital_master_data(scraper):
 async def run_tracked_appointments():
     """Scrapes appointments and clinic progress ONLY for actively tracked targets. Runs 07:00-23:00."""
     logger.info(f"[Scheduler] Starting targeted appointments scrape at {date.today()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = [CMUHScraper(), CMUHHsinchuScraper(), HMMHScraper()]
     
     # Run tracked scrapes for different hospitals concurrently
     await asyncio.gather(*[_scrape_hospital_tracked_data(s) for s in scrapers])
