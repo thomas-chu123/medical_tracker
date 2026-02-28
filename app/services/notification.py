@@ -76,6 +76,7 @@ async def _process_subscription(supabase, sub: dict):
     current_number = snap.get("current_number")
     total_quota = snap.get("total_quota")
     waiting_list = snap.get("waiting_list") or []
+    clinic_queue_details = snap.get("clinic_queue_details") or []
 
     if current_number is None:
         log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: current_number is None, skipping")
@@ -89,15 +90,26 @@ async def _process_subscription(supabase, sub: dict):
         # Standard: target_number = total_quota or 0
         target_number = total_quota or 0
 
-    if waiting_list:
-        # Calculate people waiting AHEAD of the user
+    # Calculate remaining people BETWEEN current_number and target_number
+    # Using clinic_queue_details with status check (exclude "完成")
+    if clinic_queue_details:
+        # Count items where: number > current_number AND number < target_number AND status != "完成"
+        remaining = len([
+            item for item in clinic_queue_details
+            if item.get("number", 0) > current_number 
+            and item.get("number", 0) < target_number 
+            and item.get("status") != "完成"
+        ])
+        # If user's number is already past current, no one is ahead
+        if current_number >= target_number:
+            remaining = 0
+    elif waiting_list:
+        # Fallback to waiting_list if clinic_queue_details is missing
         remaining = len([x for x in waiting_list if x < target_number])
-        # If the user's number is already passed, this count will correctly be 0
-        # However, we check if the current number already passed the target to be sure
         if current_number > target_number:
             remaining = 0
     else:
-        # Fallback to old behavior if waiting_list is missing
+        # Last resort: simple calculation
         remaining = max(0, target_number - current_number)
 
     # Build context for notifications

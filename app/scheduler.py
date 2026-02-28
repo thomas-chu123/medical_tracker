@@ -7,7 +7,7 @@ blocking the FastAPI event loop while scraping.
 
 import asyncio
 import random
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from app.core.timezone import now_tw, today_tw, today_tw_str, now_utc_str
 
@@ -388,21 +388,34 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         clinic_queue_details = []
 
         # User's dynamic time gates for real-time progress (current_number):
-        # 上午診: 08:00, 下午診: 13:30, 晚上診: 18:00
+        # 上午診: 08:00-16:00 (8 hours)
+        # 下午診: 13:30-21:30 (8 hours)
+        # 晚上診: 18:00-02:00 (8 hours, next day)
         # For non-today sessions (e.g., future tracked appointments), we still upsert
         # the current_registered (headcount) so the dashboard stays up to date.
         # We just skip the real-time progress fetch (current_number).
+        
         now = now_tw()
         is_today = slot.session_date == today_tw()
 
         should_fetch_realtime = False
         if is_today and needs_progress:
-            if slot.session_type == "上午" and now.hour >= 8:
-                should_fetch_realtime = True
-            elif slot.session_type == "下午" and (now.hour > 13 or (now.hour == 13 and now.minute >= 30)):
-                should_fetch_realtime = True
-            elif slot.session_type == "晚上" and now.hour >= 18:
-                should_fetch_realtime = True
+            # Define session start times
+            session_start_times = {
+                "上午": time(8, 0),      # 08:00
+                "下午": time(13, 30),   # 13:30
+                "晚上": time(18, 0),    # 18:00
+            }
+            
+            # Check if current session type is within its scheduled window
+            if slot.session_type in session_start_times:
+                start_time = session_start_times[slot.session_type]
+                session_start_dt = datetime.combine(slot.session_date, start_time)
+                session_end_dt = session_start_dt + timedelta(hours=8)
+                
+                # Only fetch realtime if we're between session start and 8 hours later
+                if now >= session_start_dt and now < session_end_dt:
+                    should_fetch_realtime = True
 
         # If it's time to fetch real-time progress
         if should_fetch_realtime and slot.clinic_room:
@@ -483,7 +496,7 @@ def start_scheduler():
 
     scheduler.add_job(
         run_tracked_appointments,
-        trigger=CronTrigger(hour='7-23', minute=f'*/{interval}'),
+        trigger=CronTrigger(hour='6-23,0-2', minute=f'*/{interval}'),
         id="cmuh_appointments",
         name="CMUH Appointments Scraper (Tracked)",
         replace_existing=True,
@@ -491,7 +504,7 @@ def start_scheduler():
     )
 
     scheduler.start()
-    logger.info(f"[Scheduler] Started. Master Data: 00-06 h. Morning Sync: 08:00. Appointments(Tracked): 07-23 h. Interval: {interval}m.")
+    logger.info(f"[Scheduler] Started. Master Data: 00-06 h. Morning Sync: 08:00. Appointments(Tracked): 06-02 h (next day). Interval: {interval}m.")
     return scheduler
 
 

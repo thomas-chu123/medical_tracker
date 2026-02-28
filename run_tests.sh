@@ -55,16 +55,20 @@ check_dependencies() {
 # 檢查 Chrome
 check_chrome() {
     print_header "檢查 Chrome"
-    if command -v google-chrome &> /dev/null; then
+    
+    # macOS: 設置 CHROME_BIN 環境變量（解決 Framework 路徑問題）
+    if [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+        export CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        CHROME_PATH="$CHROME_BIN"
+    elif command -v google-chrome &> /dev/null; then
         CHROME_PATH="google-chrome"
     elif command -v 'google-chrome-stable' &> /dev/null; then
         CHROME_PATH="google-chrome-stable"
-    elif command -v /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome &> /dev/null; then
-        CHROME_PATH="/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome"
     else
         print_error "Chrome 未找到"
         exit 1
     fi
+    
     CHROME_VERSION=$("$CHROME_PATH" --version)
     print_success "Found: $CHROME_VERSION"
 }
