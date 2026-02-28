@@ -23,9 +23,9 @@ class LoginPage:
         self.wait = wait
     
     # Locators
-    EMAIL_INPUT = (By.ID, "email")
-    PASSWORD_INPUT = (By.ID, "password")
-    LOGIN_BUTTON = (By.ID, "loginBtn")
+    EMAIL_INPUT = (By.ID, "login-email")
+    PASSWORD_INPUT = (By.ID, "login-password")
+    LOGIN_BUTTON = (By.ID, "login-btn")
     ERROR_MESSAGE = (By.CLASS_NAME, "error-message")
     
     def enter_email(self, email: str):
@@ -73,12 +73,12 @@ class DashboardPage:
         self.wait = wait
     
     # Locators
-    DASHBOARD_CONTAINER = (By.ID, "dashboard")
+    DASHBOARD_CONTAINER = (By.ID, "page-dashboard")
     STATS_TOTAL = (By.ID, "statsTotalRegion")
     DOCTOR_LIST = (By.ID, "doctorList")
-    ADD_TRACKING_BUTTON = (By.ID, "addTrackingBtn")
-    LOGOUT_BUTTON = (By.ID, "logoutBtn")
-    DOCTOR_ROW = (By.CLASS_NAME, "doctor-row")
+    ADD_TRACKING_BUTTON = (By.ID, "submit-tracking-btn")
+    LOGOUT_BUTTON = (By.ID, "btn-logout")
+    DOCTOR_ROW = (By.CLASS_NAME, "clinic-card")
     
     def is_loaded(self) -> bool:
         """檢查儀表板是否載入"""
@@ -120,16 +120,16 @@ class QuickTrackModal:
         self.wait = wait
     
     # Locators
-    MODAL = (By.ID, "quickTrackModal")
-    DOCTOR_SELECT = (By.ID, "qtDoctorSelect")
-    THRESHOLD_20 = (By.ID, "notifyAt20")
-    THRESHOLD_10 = (By.ID, "notifyAt10")
-    THRESHOLD_5 = (By.ID, "notifyAt5")
-    NOTIFY_EMAIL = (By.ID, "notifyEmail")
-    NOTIFY_LINE = (By.ID, "notifyLine")
-    APPOINTMENT_NUMBER = (By.ID, "appointmentNumber")
-    SUBMIT_BUTTON = (By.ID, "submitTracking")
-    CLOSE_BUTTON = (By.ID, "closeModal")
+    MODAL = (By.ID, "quick-track-modal")
+    DOCTOR_SELECT = (By.ID, "modal-doctor")
+    THRESHOLD_20 = (By.ID, "notify-20")
+    THRESHOLD_10 = (By.ID, "notify-10")
+    THRESHOLD_5 = (By.ID, "notify-5")
+    NOTIFY_EMAIL = (By.ID, "notify-email")
+    NOTIFY_LINE = (By.ID, "notify-line")
+    APPOINTMENT_NUMBER = (By.ID, "modal-appointment-number")
+    SUBMIT_BUTTON = (By.ID, "submit-tracking-btn")
+    CLOSE_BUTTON = (By.CLASS_NAME, "modal-close")
     SUCCESS_MESSAGE = (By.CLASS_NAME, "success-message")
     ERROR_MESSAGE = (By.CLASS_NAME, "error-message")
     
@@ -216,8 +216,8 @@ class TrackingListPage:
         self.wait = wait
     
     # Locators
-    TRACKING_LIST = (By.ID, "trackingList")
-    TRACKING_ITEM = (By.CLASS_NAME, "tracking-item")
+    TRACKING_LIST = (By.ID, "tracking-list")
+    TRACKING_ITEM = (By.CLASS_NAME, "tracking-card")
     DELETE_BUTTON = (By.CLASS_NAME, "delete-tracking-btn")
     EDIT_BUTTON = (By.CLASS_NAME, "edit-tracking-btn")
     DOCTOR_NAME = (By.CLASS_NAME, "tracking-doctor-name")
