@@ -238,11 +238,14 @@
             <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
               <div class="form-group" style="margin:0; min-width:180px;">
                 <label>選擇醫院</label>
-                <select id="analysis-sheet2-hosp-select" onchange="loadAnalysisDepts()"></select>
+                <select id="analysis-sheet2-hosp-select"
+                  onchange="(async()=>{ await loadAnalysisDepts('analysis-sheet2-hosp-select','analysis-sheet2-cat-select','analysis-sheet2-dept-select'); refreshDoctorComparison(); })()">
+                </select>
               </div>
               <div class="form-group" style="margin:0; min-width:180px;">
                 <label>科室類別</label>
-                <select id="analysis-sheet2-cat-select" onchange="loadAnalysisDepts()">
+                <select id="analysis-sheet2-cat-select"
+                  onchange="(async()=>{ await loadAnalysisDepts('analysis-sheet2-hosp-select','analysis-sheet2-cat-select','analysis-sheet2-dept-select'); refreshDoctorComparison(); })()">
                   <option value="">所有類別</option>
                 </select>
               </div>
@@ -810,7 +813,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/js/app.js?v=20260228f"></script></script>
+    <script src="/static/js/app.js?v=20260228g"></script>
 </body>
 
 </html>
