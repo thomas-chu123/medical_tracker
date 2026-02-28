@@ -1,5 +1,6 @@
 /* ============================================================
    app.js — 台灣醫療門診追蹤系統 Frontend Logic
+   Version: 2026.02.28-hotfix
    ============================================================ */
 
 const API = '';   // Same origin; change to http://localhost:8000 if needed
@@ -77,6 +78,10 @@ const AppState = {
 let _dashHospitals = [];
 let _selectedDashHospId = null;
 let _allDashboardSubs = [];
+let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
+
+// Shorthand reference to stepper state (for backward compatibility)
+const _st = AppState.stepper;
 
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
@@ -569,25 +574,37 @@ function renderClinicCard(sub, snap) {
     const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
     
-    // Helper to check if notification was actually sent (has success log)
+    // Helper function outside of pillDone for better performance
     const hasSuccessfulNotification = (threshold) => {
+      try {
+        if (!_notificationLogsBySubscription || !sub.id) return false;
         const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
         return logs.some(log => log.success === true);
+      } catch (e) {
+        console.warn('[pillDone] Error checking notification logs:', e);
+        return false;
+      }
     };
     
     const pillDone = (flagNotified, label, threshold, shouldSkip = false) => {
-      // Check if actually sent (successful log exists)
-      if (hasSuccessfulNotification(threshold)) {
-        return `<span class="threshold-pill done">✅${label}</span>`;
+      try {
+        // Check if actually sent (successful log exists)
+        if (hasSuccessfulNotification(threshold)) {
+          return `<span class="threshold-pill done">✅${label}</span>`;
+        }
+        
+        // If marked notified but no successful log, it was skipped
+        if (flagNotified || shouldSkip) {
+          return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+        }
+        
+        // Otherwise pending
+        return `<span class="threshold-pill pending">⏳${label}</span>`;
+      } catch (e) {
+        console.warn('[pillDone] Error rendering pill:', e);
+        // Fallback: just show basic status
+        return flagNotified ? `<span class="threshold-pill done">✅${label}</span>` : `<span class="threshold-pill pending">⏳${label}</span>`;
       }
-      
-      // If marked notified but no successful log, it was skipped
-      if (flagNotified || shouldSkip) {
-        return `<span class="threshold-pill skipped">⏸️${label}</span>`;
-      }
-      
-      // Otherwise pending
-      return `<span class="threshold-pill pending">⏳${label}</span>`;
     };
 
     // 4. Labels & Badges
@@ -1473,7 +1490,12 @@ async function submitQuickTrack() {
     } catch (e) {
         console.error('Error creating tracking:', e);
         console.error('Stack:', e.stack);
-        toast('追蹤失敗，請重試', 'error');
+        // Check for duplicate subscription error (409 Conflict)
+        if (e.message && e.message.includes('此門診已在您的追蹤列表中')) {
+            toast('此門診已在您的追蹤列表中', 'warning');
+        } else {
+            toast('追蹤失敗，請重試', 'error');
+        }
     }
 }
 
@@ -1593,7 +1615,6 @@ async function showDoctorDetail(doctorId, name) {
 // ── Tracking list ─────────────────────────────────────────────
 let _allTrackingSubs = [];
 let _currentTrackingTab = 'current';
-let _notificationLogsBySubscription = {}; // Map: sub_id -> {20: [], 10: [], 5: []}
 
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking/') || [];
@@ -1664,6 +1685,7 @@ function renderTrackingCard(sub, isExpired = false) {
     
     // Helper to check if notification was actually sent (has success log)
     const hasSuccessfulNotification = (threshold) => {
+        if (!_notificationLogsBySubscription || !sub.id) return false;
         const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
         return logs.some(log => log.success === true);
     };

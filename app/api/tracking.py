@@ -112,9 +112,11 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         d_id = s.get("department_id") or doc.get("department_id")
         dept = depts_map.get(d_id, {})
         
-        hosp_name = hospitals_map.get(doc.get("hospital_id"), "")
+        hosp_id = doc.get("hospital_id")
+        hosp_name = hospitals_map.get(hosp_id, "")
         s["doctor_name"] = doc.get("name", "")
         s["department_name"] = dept.get("name", "")
+        s["hospital_id"] = hosp_id
         s["hospital_name"] = hosp_name
         
         # Determine current_number and clinic_room
@@ -152,6 +154,8 @@ async def create_subscription(
     data: TrackingCreate,
     current_user: dict = Depends(get_current_user),
 ):
+    from postgrest.exceptions import APIError
+    
     supabase = get_supabase()
 
     # Verify doctor exists
@@ -164,7 +168,16 @@ async def create_subscription(
     sub_data["user_id"] = str(current_user["id"])
     sub_data["is_active"] = True
 
-    sub = supabase.table("tracking_subscriptions").insert(sub_data).execute()
+    try:
+        sub = supabase.table("tracking_subscriptions").insert(sub_data).execute()
+    except APIError as e:
+        # Handle duplicate subscription
+        if e.code == '23505':  # Unique constraint violation
+            raise HTTPException(
+                status_code=409,
+                detail="此門診已在您的追蹤列表中"
+            )
+        raise HTTPException(status_code=500, detail=str(e))
 
     return TrackingOut(**sub.data[0])
 

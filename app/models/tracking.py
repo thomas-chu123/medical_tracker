@@ -54,6 +54,7 @@ class TrackingRichOut(TrackingOut):
     """TrackingOut enriched with joined doctor/dept/hospital names."""
     doctor_name: Optional[str] = None
     department_name: Optional[str] = None
+    hospital_id: Optional[str] = None
     hospital_name: Optional[str] = None
     clinic_room: Optional[str] = None
     current_number: Optional[int] = None
