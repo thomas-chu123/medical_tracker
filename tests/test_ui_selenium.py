@@ -8,10 +8,16 @@ Tests cover:
 - Email notification verification
 - LINE notification verification
 - Doctor status checking
+
+Set environment variables:
+  TEST_EMAIL=test_e2e@example.com
+  TEST_PASSWORD=TestPassword123
+  TEST_BASE_URL=http://localhost:8000
 """
 import pytest
 import logging
 import time
+import os
 from datetime import date
 from tests.page_objects import (
     LoginPage,
@@ -25,6 +31,10 @@ from app.database import get_supabase
 
 logger = logging.getLogger(__name__)
 
+# Read test credentials from environment variables
+TEST_EMAIL = os.getenv('TEST_EMAIL', 'test_e2e@example.com')
+TEST_PASSWORD = os.getenv('TEST_PASSWORD', 'TestPassword123')
+
 
 class TestAuthFlow:
     """用戶認證流程測試"""
@@ -36,8 +46,8 @@ class TestAuthFlow:
         
         # Perform login
         login_page = LoginPage(browser.driver, wait_driver)
-        login_page.enter_email("chu_liang_han@hotmail.com")
-        login_page.enter_password("123456")
+        login_page.enter_email(TEST_EMAIL)
+        login_page.enter_password(TEST_PASSWORD)
         login_page.click_login()
         
         # Verify dashboard loads
@@ -66,8 +76,8 @@ class TestAuthFlow:
         # First login
         browser.navigate_to("/")
         login_page = LoginPage(browser.driver, wait_driver)
-        login_page.enter_email("chu_liang_han@hotmail.com")
-        login_page.enter_password("123456")
+        login_page.enter_email(TEST_EMAIL)
+        login_page.enter_password(TEST_PASSWORD)
         login_page.click_login()
         
         # Verify logged in
@@ -93,8 +103,8 @@ class TestTrackingManagement:
         """自動登入"""
         browser.navigate_to("/")
         login_page = LoginPage(browser.driver, wait_driver)
-        login_page.enter_email("chu_liang_han@hotmail.com")
-        login_page.enter_password("123456")
+        login_page.enter_email(TEST_EMAIL)
+        login_page.enter_password(TEST_PASSWORD)
         login_page.click_login()
         
         dashboard = DashboardPage(browser.driver, wait_driver)
@@ -214,8 +224,8 @@ class TestDoctorStatus:
         """自動登入"""
         browser.navigate_to("/")
         login_page = LoginPage(browser.driver, wait_driver)
-        login_page.enter_email("chu_liang_han@hotmail.com")
-        login_page.enter_password("123456")
+        login_page.enter_email(TEST_EMAIL)
+        login_page.enter_password(TEST_PASSWORD)
         login_page.click_login()
         
         dashboard = DashboardPage(browser.driver, wait_driver)
@@ -300,7 +310,7 @@ class TestNotifications:
         
         log = logs.data[0]
         assert log["success"] is True, "Email notification should be successful"
-        assert "chu_liang_han@hotmail.com" in log.get("target", "")
+        assert TEST_EMAIL in log.get("target", "")
         
         logger.info(f"✅ Email notification verified: {log['target']}")
     
