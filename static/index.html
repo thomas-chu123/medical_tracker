@@ -73,6 +73,8 @@
 
     <!-- Topbar -->
     <header class="topbar">
+      <!-- Hamburger button (mobile only) -->
+      <button id="menu-toggle" class="menu-toggle" onclick="toggleMobileMenu()" aria-label="開啟選單">☰</button>
       <div class="logo">
         <div class="icon">🏥</div>
         門診追蹤系統
@@ -694,6 +696,9 @@
       </section>
 
     </main>
+
+    <!-- Mobile sidebar overlay -->
+    <div id="mobile-overlay" class="mobile-overlay" onclick="closeMobileMenu()"></div>
   </div>
 
   <!-- Old tracking modal removed; replaced by #page-add-tracking stepper -->

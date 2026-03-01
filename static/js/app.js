@@ -9,69 +9,69 @@ let currentUser = null;
 
 // ── AppState: Unified application state ───────────────────────
 const AppState = {
-  // Auth
-  authToken: localStorage.getItem('auth_token') || null,
-  currentUser: null,
+    // Auth
+    authToken: localStorage.getItem('auth_token') || null,
+    currentUser: null,
 
-  // Dashboard
-  dashboard: {
-    hospitals: [],
-    selectedHospitalId: null,
-    subscriptions: [],
-  },
+    // Dashboard
+    dashboard: {
+        hospitals: [],
+        selectedHospitalId: null,
+        subscriptions: [],
+    },
 
-  // Hospital Search
-  hospitalSearch: {
-    selectedHospitalId: null,
-    selectedHospitalName: '',
-    selectedDepartmentId: null,
-    selectedDepartmentName: '',
-    allDepartments: [],
-    allDoctors: [],
-    doctorSearchTimer: null,
-    departmentData: { depts: [], hospName: '', cat: '' },
-  },
+    // Hospital Search
+    hospitalSearch: {
+        selectedHospitalId: null,
+        selectedHospitalName: '',
+        selectedDepartmentId: null,
+        selectedDepartmentName: '',
+        allDepartments: [],
+        allDoctors: [],
+        doctorSearchTimer: null,
+        departmentData: { depts: [], hospName: '', cat: '' },
+    },
 
-  // Add Tracking Stepper
-  stepper: {
-    step: 1,
-    hospitalId: '',
-    hospitalName: '',
-    category: '',
-    departmentId: '',
-    departmentName: '',
-    doctorId: '',
-    doctorName: '',
-    doctorSchedules: [],
-  },
+    // Add Tracking Stepper
+    stepper: {
+        step: 1,
+        hospitalId: '',
+        hospitalName: '',
+        category: '',
+        departmentId: '',
+        departmentName: '',
+        doctorId: '',
+        doctorName: '',
+        doctorSchedules: [],
+    },
 
-  // Tracking Management
-  tracking: {
-    subscriptions: [],
-    currentTab: 'current',
-  },
+    // Tracking Management
+    tracking: {
+        subscriptions: [],
+        currentTab: 'current',
+    },
 
-  // Notifications
-  notifications: {
-    logs: [],
-    currentTab: 'current',
-  },
+    // Notifications
+    notifications: {
+        logs: [],
+        currentTab: 'current',
+    },
 
-  // Charts
-  charts: {
-    crowdChart: null,
-    deptComparisonChart: null,
-    doctorComparisonChart: null,
-    doctorSpeedChart: null,
-  },
+    // Charts
+    charts: {
+        crowdChart: null,
+        deptComparisonChart: null,
+        doctorComparisonChart: null,
+        doctorSpeedChart: null,
+    },
 
-  // Analysis
-  analysis: {
-    ranking: [],
-  },
+    // Analysis
+    analysis: {
+        ranking: [],
+    },
 
-  // Components
-  combos: {},
+    // Components
+    combos: {},
 };
 
 // ── Global State ──────────────────────────────────────────────
@@ -266,8 +266,31 @@ async function initApp(userFromLogin = null) {
     loadDashboard();
 }
 
+// ── Mobile Navigation Drawer ──────────────────────────────────
+function toggleMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('mobile-overlay');
+    const isOpen = sidebar.classList.contains('open');
+    if (isOpen) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+    } else {
+        sidebar.classList.add('open');
+        overlay.classList.add('open');
+    }
+}
+
+function closeMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('mobile-overlay');
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+}
+
 // ── Navigation ────────────────────────────────────────────────
 function navigate(btn, pageId, options = {}) {
+    // Close mobile drawer when navigating
+    closeMobileMenu();
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -570,38 +593,38 @@ function renderClinicCard(sub, snap) {
 
     const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
-    
+
     // Helper function outside of pillDone for better performance
     const hasSuccessfulNotification = (threshold) => {
-      try {
-        if (!_notificationLogsBySubscription || !sub.id) return false;
-        const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
-        return logs.some(log => log.success === true);
-      } catch (e) {
-        console.warn('[pillDone] Error checking notification logs:', e);
-        return false;
-      }
+        try {
+            if (!_notificationLogsBySubscription || !sub.id) return false;
+            const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
+            return logs.some(log => log.success === true);
+        } catch (e) {
+            console.warn('[pillDone] Error checking notification logs:', e);
+            return false;
+        }
     };
-    
+
     const pillDone = (flagNotified, label, threshold, shouldSkip = false) => {
-      try {
-        // Check if actually sent (successful log exists)
-        if (hasSuccessfulNotification(threshold)) {
-          return `<span class="threshold-pill done">✅${label}</span>`;
+        try {
+            // Check if actually sent (successful log exists)
+            if (hasSuccessfulNotification(threshold)) {
+                return `<span class="threshold-pill done">✅${label}</span>`;
+            }
+
+            // If marked notified but no successful log, it was skipped
+            if (flagNotified || shouldSkip) {
+                return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+            }
+
+            // Otherwise pending
+            return `<span class="threshold-pill pending">⏳${label}</span>`;
+        } catch (e) {
+            console.warn('[pillDone] Error rendering pill:', e);
+            // Fallback: just show basic status
+            return flagNotified ? `<span class="threshold-pill done">✅${label}</span>` : `<span class="threshold-pill pending">⏳${label}</span>`;
         }
-        
-        // If marked notified but no successful log, it was skipped
-        if (flagNotified || shouldSkip) {
-          return `<span class="threshold-pill skipped">⏸️${label}</span>`;
-        }
-        
-        // Otherwise pending
-        return `<span class="threshold-pill pending">⏳${label}</span>`;
-      } catch (e) {
-        console.warn('[pillDone] Error rendering pill:', e);
-        // Fallback: just show basic status
-        return flagNotified ? `<span class="threshold-pill done">✅${label}</span>` : `<span class="threshold-pill pending">⏳${label}</span>`;
-      }
     };
 
     // 4. Labels & Badges
@@ -1616,10 +1639,10 @@ let _currentTrackingTab = 'current';
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking/') || [];
     _allTrackingSubs = subs;
-    
+
     // Load notification logs to determine which notifications were actually sent
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
-    
+
     // Build index: sub_id -> {threshold -> [log records]}
     _notificationLogsBySubscription = {};
     for (const log of logs) {
@@ -1633,7 +1656,7 @@ async function loadTracking() {
         }
         _notificationLogsBySubscription[subId][threshold].push(log);
     }
-    
+
     renderTrackingList();
 }
 
@@ -1679,29 +1702,29 @@ function renderTrackingList() {
 
 function renderTrackingCard(sub, isExpired = false) {
     console.log('renderTrackingCard data - sub room:', sub.clinic_room);
-    
+
     // Helper to check if notification was actually sent (has success log)
     const hasSuccessfulNotification = (threshold) => {
         if (!_notificationLogsBySubscription || !sub.id) return false;
         const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
         return logs.some(log => log.success === true);
     };
-    
+
     const pill = (on, notified, label, threshold) => {
-      if (!on) return '';
-      
-      // Check if actually sent (successful log exists)
-      if (hasSuccessfulNotification(threshold)) {
-        return `<span class="threshold-pill done">✅${label}</span>`;
-      }
-      
-      // If marked notified but no successful log, it was skipped
-      if (notified) {
-        return `<span class="threshold-pill skipped">⏸️${label}</span>`;
-      }
-      
-      // Otherwise pending
-      return `<span class="threshold-pill pending">⏳${label}</span>`;
+        if (!on) return '';
+
+        // Check if actually sent (successful log exists)
+        if (hasSuccessfulNotification(threshold)) {
+            return `<span class="threshold-pill done">✅${label}</span>`;
+        }
+
+        // If marked notified but no successful log, it was skipped
+        if (notified) {
+            return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+        }
+
+        // Otherwise pending
+        return `<span class="threshold-pill pending">⏳${label}</span>`;
     };
     const email = sub.notify_email ? '📧 Email' : '';
     const line = sub.notify_line ? '📲 LINE' : '';
