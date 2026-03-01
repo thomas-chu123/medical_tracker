@@ -49,7 +49,7 @@ def _decode_big5_response(content: bytes) -> str:
 
 
 class CMUHScraper(BaseScraper):
-    HOSPITAL_CODE = "CMUH"
+    HOSPITAL_CODE = "CMUH_TAICHUNG"
     BASE_URL = "https://www.cmuh.cmu.edu.tw"
     CGI_BASE_URL = "https://appointment.cmuh.org.tw/cgi-bin"
     PROGRESS_CGI = "reg64.cgi"
@@ -464,7 +464,7 @@ class CMUHScraper(BaseScraper):
 
 
 class CMUHHsinchuScraper(CMUHScraper):
-    HOSPITAL_CODE = "CMUH_HS"
+    HOSPITAL_CODE = "CMUH_HSINCHU"
     BASE_URL = "https://www.cmu-hch.cmu.edu.tw"
     CGI_BASE_URL = "https://www.cmu-hch.com/cgi-bin/hc"
     PROGRESS_CGI = "reg64x.cgi"
