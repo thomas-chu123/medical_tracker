@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Scraper
     scrape_interval_minutes: int = 3
     request_timeout: int = 30
+    # 啟用的醫院爬蟲列表（逗號分隔）
+    # 預設值支持中榮台中院和中榮新竹院
+    # 若要新增台大新竹分院，添加 "NTUH_HSINCHU" 到此列表
+    enabled_hospitals: list = ["CMUH_TAICHUNG", "CMUH_HSINCHU"]
 
     # Notion Integration (Optional)
     notion_api: str = ""

@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
+from app.scrapers.hospital_registry import get_enabled_scrapers, validate_scrapers
 from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
 from app.services.data_writer import (
     get_hospital_id,
@@ -38,10 +39,14 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
-async def run_cmuh_master_data():
+async def run_master_data():
     """Scrapes and updates departments, doctors, and full schedule snapshots. Runs 00:00-06:00."""
     logger.info(f"[Scheduler] Starting master data scrape at {today_tw()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = get_enabled_scrapers()
+    
+    if not scrapers:
+        logger.error("[Scheduler] No scrapers enabled. Check ENABLED_HOSPITALS configuration.")
+        return
     
     # Run scrapers for different hospitals concurrently
     await asyncio.gather(*[_scrape_hospital_master_data(s) for s in scrapers])
@@ -50,7 +55,12 @@ async def run_cmuh_master_data():
 async def run_morning_tracked_snapshot_sync():
     """Triggered at 08:00 AM to update progress for all currently tracked clinics for today."""
     logger.info(f"[Scheduler] Starting 08:00 AM tracked snapshot sync for {today_tw()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = get_enabled_scrapers()
+    
+    if not scrapers:
+        logger.error("[Scheduler] No scrapers enabled. Skipping morning sync.")
+        return
+    
     await asyncio.gather(*[_sync_hospital_morning_progress(s) for s in scrapers])
     logger.info("[Scheduler] 08:00 AM tracked snapshot sync complete.")
 
@@ -209,7 +219,11 @@ async def _scrape_hospital_master_data(scraper):
 async def run_tracked_appointments():
     """Scrapes appointments and clinic progress ONLY for actively tracked targets. Runs 07:00-23:00."""
     logger.info(f"[Scheduler] Starting targeted appointments scrape at {date.today()}")
-    scrapers = [CMUHScraper(), CMUHHsinchuScraper()]
+    scrapers = get_enabled_scrapers()
+    
+    if not scrapers:
+        logger.error("[Scheduler] No scrapers enabled. Skipping tracked appointments scrape.")
+        return
     
     # Run tracked scrapes for different hospitals concurrently
     await asyncio.gather(*[_scrape_hospital_tracked_data(s) for s in scrapers])
@@ -476,11 +490,23 @@ def start_scheduler():
     scheduler = get_scheduler()
     interval = settings.scrape_interval_minutes
 
+    # 驗證爬蟲配置
+    if not validate_scrapers():
+        logger.warning("[Scheduler] Some scrapers have invalid configuration. Check logs for details.")
+
+    # 記錄啟用的醫院
+    scrapers = get_enabled_scrapers()
+    if scrapers:
+        hospital_names = ", ".join([f"{s.HOSPITAL_CODE}" for s in scrapers])
+        logger.info(f"[Scheduler] Enabled hospitals: {hospital_names}")
+    else:
+        logger.error("[Scheduler] No hospitals enabled! Check ENABLED_HOSPITALS configuration.")
+
     scheduler.add_job(
-        run_cmuh_master_data,
+        run_master_data,
         trigger=CronTrigger(hour='0-6', minute=f'*/{interval}'),
-        id="cmuh_master_data",
-        name="CMUH Master Data Scraper",
+        id="master_data",
+        name="Master Data Scraper",
         replace_existing=True,
         max_instances=1,
     )
@@ -497,8 +523,8 @@ def start_scheduler():
     scheduler.add_job(
         run_tracked_appointments,
         trigger=CronTrigger(hour='6-23,0-2', minute=f'*/{interval}'),
-        id="cmuh_appointments",
-        name="CMUH Appointments Scraper (Tracked)",
+        id="tracked_appointments",
+        name="Appointments Scraper (Tracked)",
         replace_existing=True,
         max_instances=1,
     )
