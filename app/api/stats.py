@@ -505,19 +505,29 @@ async def get_categories():
 # Background Cache Refresher
 async def refresh_stats_cache_task():
     """Periodically refreshes the global and crowd statistics cache."""
-    # Initial fill - only pre-cache the "all" view to avoid connection exhaustion at startup
-    try:
-        logger.info("🔄 Initializing dashboard stats cache (global view only)...")
-        # Only pre-calculate the global "all" stats, per-hospital will be done on-demand
-        g_stats, c_stats = await asyncio.gather(
-            calculate_global_stats(None),
-            calculate_crowd_analysis(None)
-        )
-        _STATS_CACHE["global"]["all"] = g_stats
-        _STATS_CACHE["crowd"]["all"] = c_stats
-        logger.info("✅ Dashboard stats cache initialized (global view).")
-    except Exception as e:
-        logger.error(f"❌ Error during initial stats cache fill: {e}")
+    # Wait for Supabase connection to stabilize before initial cache fill
+    await asyncio.sleep(2)
+    
+    # Initial fill with retry - only pre-cache the "all" view to avoid connection exhaustion at startup
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            logger.info("🔄 Initializing dashboard stats cache (global view only)...")
+            # Only pre-calculate the global "all" stats, per-hospital will be done on-demand
+            g_stats, c_stats = await asyncio.gather(
+                calculate_global_stats(None),
+                calculate_crowd_analysis(None)
+            )
+            _STATS_CACHE["global"]["all"] = g_stats
+            _STATS_CACHE["crowd"]["all"] = c_stats
+            logger.info("✅ Dashboard stats cache initialized (global view).")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️ Initial stats cache fill failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in 5s...")
+                await asyncio.sleep(5)
+            else:
+                logger.error(f"❌ Error during initial stats cache fill after {max_retries} attempts: {e}")
     
     # Hour Periodic refresh
     while True:
