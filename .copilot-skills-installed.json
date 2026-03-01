@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "suggest-awesome-github-copilot-agents",
+      "repo": "https://github.com/github/awesome-copilot",
+      "installedAt": "2026-03-01T02:06:43.911Z",
+      "files": [
+        "/Users/skynet/PycharmProjects/medical_tracker/.github/skills/suggest-awesome-github-copilot-agents/SKILL.md"
+      ]
+    },
+    {
+      "name": "suggest-awesome-github-copilot-instructions",
+      "repo": "https://github.com/github/awesome-copilot",
+      "installedAt": "2026-03-01T02:06:44.094Z",
+      "files": [
+        "/Users/skynet/PycharmProjects/medical_tracker/.github/skills/suggest-awesome-github-copilot-instructions/SKILL.md"
+      ]
+    },
+    {
+      "name": "suggest-awesome-github-copilot-prompts",
+      "repo": "https://github.com/github/awesome-copilot",
+      "installedAt": "2026-03-01T02:06:44.267Z",
+      "files": [
+        "/Users/skynet/PycharmProjects/medical_tracker/.github/skills/suggest-awesome-github-copilot-prompts/SKILL.md"
+      ]
+    },
+    {
+      "name": "suggest-awesome-github-copilot-skills",
+      "repo": "https://github.com/github/awesome-copilot",
+      "installedAt": "2026-03-01T02:06:44.468Z",
+      "files": [
+        "/Users/skynet/PycharmProjects/medical_tracker/.github/skills/suggest-awesome-github-copilot-skills/SKILL.md"
+      ]
+    }
+  ]
+}
