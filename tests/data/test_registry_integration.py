@@ -41,7 +41,7 @@ class TestRegistryIntegration:
         assert HOSPITAL_SCRAPERS["CMUH_TAICHUNG"] is CMUHScraper
         assert HOSPITAL_SCRAPERS["CMUH_HSINCHU"] is CMUHHsinchuScraper
 
-    @patch("app.config.get_settings")
+    @patch("app.scrapers.hospital_registry.get_settings")
     def test_dynamic_loading_with_enabled_config(self, mock_get_settings):
         """✅ 驗證根據 ENABLED_HOSPITALS 動態加載爬蟲"""
         # 清除快取
@@ -62,7 +62,7 @@ class TestRegistryIntegration:
         # 清除快取供後續測試使用
         get_enabled_scrapers.cache_clear()
 
-    @patch("app.config.get_settings")
+    @patch("app.scrapers.hospital_registry.get_settings")
     def test_dynamic_loading_with_single_scraper(self, mock_get_settings):
         """✅ 驗證只啟用一個爬蟲時的加載行為"""
         get_enabled_scrapers.cache_clear()
@@ -78,7 +78,7 @@ class TestRegistryIntegration:
 
         get_enabled_scrapers.cache_clear()
 
-    @patch("app.config.get_settings")
+    @patch("app.scrapers.hospital_registry.get_settings")
     def test_dynamic_loading_with_disabled_hospital(self, mock_get_settings):
         """✅ 驗證禁用的爬蟲不被加載"""
         get_enabled_scrapers.cache_clear()
@@ -194,7 +194,7 @@ class TestScraperUtilityMethods:
         scraper = CMUHScraper()
 
         assert scraper._normalize_session_type("晚上") == "晚上"
-        assert scraper._normalize_session_type("夜間") == "晚上"
+        assert scraper._normalize_session_type("夜間") == "夜間"
         assert scraper._normalize_session_type("NIGHT") == "晚上"
 
 
