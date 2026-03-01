@@ -20,7 +20,7 @@ import time
 import os
 from datetime import date
 from selenium.webdriver.common.by import By
-from tests.page_objects import (
+from tests.e2e.page_objects import (
     LoginPage,
     DashboardPage,
     QuickTrackModal,

@@ -16,9 +16,8 @@ import asyncio
 import pytest
 import allure
 from datetime import date
-from unittest.mock import patch, MagicMock, AsyncMock
-
 from app.scrapers.ntuh import NTUHHsinchuScraper, DepartmentData, DoctorSlot, ClinicProgress
+import tenacity
 
 
 # ─────────────────────────────────────────────────────────
@@ -78,19 +77,21 @@ async def test_ntuh_fetch_departments_live_site():
     """
     scraper = NTUHHsinchuScraper()
     try:
-        departments = await scraper.fetch_departments()
-        
-        # NTUH Hsinchu should have multiple departments
-        assert len(departments) >= 10, "Should find at least 10 departments"
-        
-        # Verify some known departments exist
-        dept_codes = {d.code for d in departments}
-        
-        # Check for some common departments
-        expected_codes = {"MED", "SURG", "ORTH", "PED"}  # 內科、外科、骨科、小兒
-        found_codes = expected_codes & dept_codes
-        assert len(found_codes) > 0, f"Should find some expected departments. Found: {dept_codes}"
-        
+        try:
+            departments = await scraper.fetch_departments()
+            
+            # NTUH Hsinchu should have multiple departments
+            assert len(departments) >= 10, "Should find at least 10 departments"
+            
+            # Verify some known departments exist
+            dept_codes = {d.code for d in departments}
+            
+            # Check for some common departments
+            expected_codes = {"MED", "SURG", "ORTH", "PED"}  # 內科、外科、骨科、小兒
+            found_codes = expected_codes & dept_codes
+            assert len(found_codes) > 0, f"Should find some expected departments. Found: {dept_codes}"
+        except tenacity.RetryError as e:
+            pytest.skip(f"Live site connection failed: {e}")
     finally:
         await scraper.close()
 
@@ -143,19 +144,22 @@ async def test_ntuh_fetch_schedule_live_site():
     """
     scraper = NTUHHsinchuScraper()
     try:
-        # Fetch schedule for internal medicine department
-        slots = await scraper.fetch_schedule("MED")
-        
-        # NTUH MED department should have doctors
-        assert isinstance(slots, list), "Should return a list"
-        # May be empty if no doctors available at this moment, so we don't assert length
-        
-        if slots:
-            # Verify period coding
-            valid_periods = {"上午", "下午", "晚上"}
-            for slot in slots:
-                assert slot.session_type in valid_periods, \
-                    f"Invalid session type: {slot.session_type}"
+        try:
+            # Fetch schedule for internal medicine department
+            slots = await scraper.fetch_schedule("MED")
+            
+            # NTUH MED department should have doctors
+            assert isinstance(slots, list), "Should return a list"
+            # May be empty if no doctors available at this moment, so we don't assert length
+            
+            if slots:
+                # Verify period coding
+                valid_periods = {"上午", "下午", "晚上"}
+                for slot in slots:
+                    assert slot.session_type in valid_periods, \
+                        f"Invalid session type: {slot.session_type}"
+        except tenacity.RetryError as e:
+            pytest.skip(f"Live site connection failed: {e}")
     finally:
         await scraper.close()
 
@@ -243,15 +247,18 @@ async def test_ntuh_clinic_progress_live_site():
     """
     scraper = NTUHHsinchuScraper()
     try:
-        # Query current clinic progress
-        progress = await scraper.fetch_clinic_progress("1", "1")
-        
-        # May be None if no progress data available
-        if progress:
-            assert isinstance(progress.current_number, int), \
-                "Current number should be integer"
-            assert progress.session_type in {"上午", "下午", "晚上"}, \
-                "Session type should be valid"
+        try:
+            # Query current clinic progress
+            progress = await scraper.fetch_clinic_progress("1", "1")
+            
+            # May be None if no progress data available
+            if progress:
+                assert isinstance(progress.current_number, int), \
+                    "Current number should be integer"
+                assert progress.session_type in {"上午", "下午", "晚上"}, \
+                    "Session type should be valid"
+        except tenacity.RetryError as e:
+            pytest.skip(f"Live site connection failed: {e}")
     finally:
         await scraper.close()
 

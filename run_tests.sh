@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Selenium Test Runner Script
-# 便捷運行 Selenium UI 測試的腳本
+# Medical Tracker Test Runner Wrapper
+# 這是 python run_tests.py 的互動式封裝腳本
 
 set -e
 
@@ -42,21 +42,31 @@ check_python() {
     print_success "Found: $PYTHON_VERSION"
 }
 
+# 檢查環境變量和虛擬環境
+check_env() {
+    if [ -z "$VIRTUAL_ENV" ]; then
+        if [ -d "venv" ]; then
+            print_info "自動激活虛擬環境 (venv)..."
+            source venv/bin/activate
+        else
+            print_error "未檢測到虛擬環境，請確保已激活或存在 venv 目錄"
+        fi
+    fi
+}
+
 # 檢查依賴
 check_dependencies() {
     print_header "檢查依賴"
-    if ! python3 -m pip show selenium &> /dev/null; then
-        print_info "Installing Selenium dependencies..."
+    if ! python3 -m pip show pytest &> /dev/null; then
+        print_info "Installing dependencies..."
         python3 -m pip install -r requirements.txt -q
     fi
     print_success "All dependencies installed"
 }
 
-# 檢查 Chrome
+# 檢查 Chrome (用於 UI 測試)
 check_chrome() {
     print_header "檢查 Chrome"
-    
-    # macOS: 設置 CHROME_BIN 環境變量（解決 Framework 路徑問題）
     if [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
         export CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         CHROME_PATH="$CHROME_BIN"
@@ -65,8 +75,8 @@ check_chrome() {
     elif command -v 'google-chrome-stable' &> /dev/null; then
         CHROME_PATH="google-chrome-stable"
     else
-        print_error "Chrome 未找到"
-        exit 1
+        print_info "Chrome 未找到 (非 UI 測試可忽略)"
+        return
     fi
     
     CHROME_VERSION=$("$CHROME_PATH" --version)
@@ -75,69 +85,44 @@ check_chrome() {
 
 # 檢查服務器
 check_server() {
-    print_header "檢查服務器"
+    print_header "檢查服務器狀態"
     if curl -s http://localhost:8000/health &> /dev/null; then
         print_success "服務器運行中: http://localhost:8000"
         SERVER_RUNNING=true
     else
         print_error "服務器未運行"
-        print_info "啟動服務器: python -m uvicorn app.main:app --reload"
+        print_info "請確保在需要時先選擇 [A] 啟動服務器"
         SERVER_RUNNING=false
     fi
 }
 
-# 運行數據驗證測試（無需服務器）
-run_data_tests() {
-    print_header "運行數據驗證測試（無需服務器）"
+# 運行特定測試類別
+run_category() {
+    local category=$1
+    local requires_server=$2
     
-    python3 -m pytest tests/test_ui_e2e_minimal.py::TestE2EMinimal::test_07_notification_logs_exist \
-                     tests/test_ui_e2e_minimal.py::TestE2EMinimal::test_08_tracking_subscriptions_exist \
-                     tests/test_ui_e2e_minimal.py::TestE2EMinimal::test_09_line_notification_system \
-                     tests/test_ui_e2e_minimal.py::TestE2EMinimal::test_10_email_notification_system \
-                     -v --tb=short
-}
-
-# 運行最小 E2E 測試（無需服務器）
-run_minimal_e2e() {
-    print_header "運行最小 E2E 測試"
+    print_header "運行 $category 測試"
     
-    python3 -m pytest tests/test_ui_e2e_minimal.py::TestE2EMinimal::test_01_navigate_to_home \
-                     -v --tb=short
-}
-
-# 運行所有最小 E2E 測試（需要服務器）
-run_all_minimal_e2e() {
-    print_header "運行所有最小 E2E 測試"
-    
-    if [ "$SERVER_RUNNING" = false ]; then
-        print_error "需要運行中的服務器"
-        exit 1
+    if [ "$requires_server" = true ] && [ "$SERVER_RUNNING" = false ]; then
+        print_error "此測試類別需要運行中的服務器 (E2E 或 Performance)"
+        print_info "正在取消測試"
+        return 1
     fi
     
-    python3 -m pytest tests/test_ui_e2e_minimal.py -v -s --tb=short
+    python3 run_tests.py --category "$category"
 }
 
-# 運行完整 UI 測試（需要服務器）
-run_full_ui() {
-    print_header "運行完整 UI 功能測試"
+# 運行所有測試
+run_all() {
+    print_header "運行所有測試 (完整測試套件)"
     
     if [ "$SERVER_RUNNING" = false ]; then
-        print_error "需要運行中的服務器"
-        exit 1
+        print_error "此操作包含 E2E 和 Performance 測試，需要運行中的服務器"
+        print_info "正在取消測試"
+        return 1
     fi
     
-    export SELENIUM_HEADLESS=false
-    python3 -m pytest tests/test_ui_selenium.py -v -s --tb=short
-}
-
-# 運行所有單元測試
-run_unit_tests() {
-    print_header "運行所有單元和集成測試"
-    
-    python3 -m pytest tests/ \
-                     --ignore=tests/test_ui_selenium.py \
-                     --ignore=tests/test_ui_e2e_minimal.py \
-                     -v --tb=short
+    python3 run_tests.py
 }
 
 # 啟動開發服務器
@@ -148,100 +133,86 @@ start_server() {
     python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 }
 
+# 生成並伺服 Allure 報告
+serve_report() {
+    print_header "開啟 Allure 測試報告"
+    python3 run_tests.py --serve-only
+}
+
 # 顯示菜單
 show_menu() {
     echo ""
-    echo -e "${BLUE}選擇要運行的測試:${NC}"
-    echo "  1. 數據驗證測試 (無需服務器)"
-    echo "  2. 最小 E2E 測試 (無需服務器)"
-    echo "  3. 所有最小 E2E 測試 (需要服務器)"
-    echo "  4. 完整 UI 功能測試 (需要服務器)"
-    echo "  5. 所有單元和集成測試 (無需服務器)"
-    echo "  6. 啟動開發服務器"
-    echo "  0. 退出"
+    echo -e "${BLUE}======================== Medical Tracker 測試運行工具 ========================${NC}"
+    echo -e "${YELLOW}選擇要運行的測試類別:${NC}"
+    echo "  1. 單元測試 (Unit Tests)                 [無需服務器]"
+    echo "  2. API 測試 (API Tests)                  [無需服務器]"
+    echo "  3. E2E UI 測試 (E2E Tests)               [需要服務器]"
+    echo "  4. 數據驗證測試 (Data Tests)             [無需服務器]"
+    echo "  5. 爬蟲測試 (Scraper Tests)              [無需服務器]"
+    echo "  6. 通知系統測試 (Notification Tests)     [無需服務器]"
+    echo "  7. 系統集成測試 (System Tests)           [無需服務器]"
+    echo "  8. 性能測試 (Performance Tests)          [需要服務器]"
+    echo "  9. 運行所有測試 (All Categories)         [需要服務器]"
+    echo -e "${YELLOW}其他操作:${NC}"
+    echo "  A. 啟動開發服務器 (Start Local Server)"
+    echo "  S. 查看測試報告 (Serve Allure Report)"
+    echo "  0. 退出 (Exit)"
+    echo -e "${BLUE}==============================================================================${NC}"
     echo ""
 }
 
 # 主函數
 main() {
-    print_header "Selenium UI 測試運行工具"
+    print_header "初始化 Medical Tracker 測試運行環境"
     
+    check_env
     check_python
     check_dependencies
     check_chrome
-    check_server
     
-    if [ $# -eq 0 ]; then
-        # 交互模式 - 只在連接到終端時進入
-        if [ -t 0 ]; then
-            while true; do
-                show_menu
-                read -p "選擇: " choice
-                
-                case $choice in
-                    1)
-                        run_data_tests
-                        ;;
-                    2)
-                        run_minimal_e2e
-                        ;;
-                    3)
-                        check_server
-                        run_all_minimal_e2e
-                        ;;
-                    4)
-                        check_server
-                        run_full_ui
-                        ;;
-                    5)
-                        run_unit_tests
-                        ;;
-                    6)
-                        start_server
-                        ;;
-                    0)
-                        print_info "退出"
-                        exit 0
-                        ;;
-                    *)
-                        print_error "無效選擇"
-                        ;;
-                esac
-                
-                echo ""
-                read -p "按 Enter 鍵繼續..."
-            done
-        else
-            # 非交互模式（管道/重定向）- 執行默認操作
-            print_info "非交互模式：執行所有單元和集成測試"
-            run_unit_tests
-        fi
+    # 交互模式
+    if [ -t 0 ] || [ -p /dev/stdin ]; then
+        while true; do
+            check_server
+            show_menu
+            read -p "選擇 (0-9, A, S): " choice
+            
+            case $choice in
+                1) run_category "unit" false ;;
+                2) run_category "api" false ;;
+                3) run_category "e2e" true ;;
+                4) run_category "data" false ;;
+                5) run_category "scraper" false ;;
+                6) run_category "notification" false ;;
+                7) run_category "system" false ;;
+                8) run_category "performance" true ;;
+                9) run_all ;;
+                A|a) start_server ;;
+                S|s) serve_report ;;
+                0) print_info "退出"; exit 0 ;;
+                *) print_error "無效選擇" ;;
+            esac
+            
+            echo ""
+            read -p "按 Enter 鍵返回主選單..."
+        done
     else
-        # 命令行模式
+        # 非交互模式
         case $1 in
-            data)
-                run_data_tests
-                ;;
-            minimal)
-                run_minimal_e2e
-                ;;
-            e2e)
-                check_server
-                run_all_minimal_e2e
-                ;;
-            full)
-                check_server
-                run_full_ui
-                ;;
-            unit)
-                run_unit_tests
-                ;;
-            server)
-                start_server
-                ;;
+            unit) run_category "unit" false ;;
+            api) run_category "api" false ;;
+            e2e) run_category "e2e" true ;;
+            data) run_category "data" false ;;
+            scraper) run_category "scraper" false ;;
+            notification) run_category "notification" false ;;
+            system) run_category "system" false ;;
+            performance) run_category "performance" true ;;
+            all) run_all ;;
+            server) start_server ;;
+            report) serve_report ;;
             *)
-                print_error "未知命令: $1"
-                echo "用法: ./run_tests.sh [data|minimal|e2e|full|unit|server]"
+                echo "用法: ./run_tests.sh [category|all|server|report]"
+                echo "Categories: unit, api, e2e, data, scraper, notification, system, performance"
                 exit 1
                 ;;
         esac
