@@ -114,6 +114,30 @@ medial_help/
 | DELETE | /api/tracking/{id} | 刪除追蹤 |
 | POST | /api/admin/scrape-now | 手動觸發爬蟲（測試用）|
 
+## 支援醫院
+
+目前系統支援以下醫療機構：
+
+| 醫院名稱 | 簡稱 | 位置 | 爬蟲狀態 |
+|---------|------|------|--------|
+| 中國醫藥大學附設醫院 | CMUH | 台中市 | ✅ 已實現 |
+| 中國醫藥大學新竹附設醫院 | CMUH HS | 新竹市 | ✅ 已實現 |
+| 國立臺灣大學醫學院附設醫院新竹分院 | NTUH Hsinchu | 新竹市 | ✅ 已實現 |
+| 馬偕紀念醫院新竹分院 | HMMH | 新竹市 | 🔄 規劃中 |
+| 臺北榮民總醫院 | VGH | 台北市 | 🔄 規劃中 |
+
+### 新增醫院流程
+
+要新增新的醫院支援，請按照以下步驟：
+
+1. 在 `app/scrapers/` 建立新的爬蟲類別，繼承 `BaseScraper`
+2. 實現三個抽象方法：`fetch_departments()`、`fetch_schedule()`、`fetch_clinic_progress()`
+3. 在 `app/scrapers/hospital_registry.py` 的 `HOSPITAL_SCRAPERS` 中註冊新爬蟲
+4. 在 `.env` 的 `ENABLED_HOSPITALS` 中啟用新醫院
+5. 在 Supabase `hospitals` 表中新增醫院記錄
+
+詳見架構文檔：[BaseScraper 設計模式](app/scrapers/base.py)
+
 ## LINE Notify 設定
 
 1. 前往 [LINE Notify](https://notify-bot.line.me/zh_TW/) → 登入 → 發行權杖
@@ -122,9 +146,9 @@ medial_help/
 
 ## 未來擴充計畫
 
-- **Phase 2**：加入台大醫院、榮總、長庚、馬偕等
 - **Phase 3**：門診速度圖表（Chart.js）、等待時間預測
 - **Phase 4**：「最容易掛到號」智慧推薦
+- **Phase 5**：加入更多醫院（臺北榮民總醫院、長庚、馬偕等）
 
 ---
 

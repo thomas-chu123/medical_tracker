@@ -106,11 +106,20 @@ async def batch_insert_snapshots(rows: list[dict]):
     """Batch upsert multiple appointment snapshots in chunks to avoid server disconnects."""
     if not rows:
         return
+    
+    # Deduplicate rows by the exact unique constraint to avoid "ON CONFLICT DO UPDATE command cannot affect row a second time"
+    # This happens when hospitals list multiple general slots (like "主治醫師") on the same day/period.
+    unique_rows = {}
+    for r in rows:
+        key = (r["doctor_id"], r["department_id"], r["session_date"], r["session_type"])
+        unique_rows[key] = r
+    deduped_rows = list(unique_rows.values())
+
     supabase = get_supabase()
     
     chunk_size = 200
-    for i in range(0, len(rows), chunk_size):
-        chunk = rows[i:i + chunk_size]
+    for i in range(0, len(deduped_rows), chunk_size):
+        chunk = deduped_rows[i:i + chunk_size]
         await _run(
             lambda c=chunk: supabase.table("appointment_snapshots")
             .upsert(
@@ -127,7 +136,7 @@ async def get_hospital_id(hospital_code: str) -> Optional[str]:
         lambda: supabase.table("hospitals")
         .select("id")
         .eq("code", hospital_code)
-        .single()
+        .maybe_single()
         .execute()
     )
-    return result.data["id"] if result.data else None
+    return result.data["id"] if result and hasattr(result, "data") and result.data else None
