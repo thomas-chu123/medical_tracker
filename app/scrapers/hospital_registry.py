@@ -22,6 +22,7 @@ from typing import Dict, Type, List
 from functools import lru_cache
 from app.scrapers.base import BaseScraper
 from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
+from app.scrapers.ntuh import NTUHHsinchuScraper
 from app.config import get_settings
 import logging
 
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 HOSPITAL_SCRAPERS: Dict[str, Type[BaseScraper]] = {
     "CMUH_TAICHUNG": CMUHScraper,           # 中榮台中院
     "CMUH_HSINCHU": CMUHHsinchuScraper,    # 中榮新竹院
-    # "NTUH_HSINCHU": NTUHHsinchuScraper,  # 未來：台大新竹分院（待實現）
+    "NTUH_HSINCHU": NTUHHsinchuScraper,    # 台大新竹分院
     # "HSINCHU_HOSPITAL": HsinchuHospitalScraper,  # 未來範例
 }
 
