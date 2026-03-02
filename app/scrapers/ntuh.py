@@ -26,7 +26,7 @@ Data flow:
 
 import asyncio
 import re
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from typing import Optional
 
 import httpx
@@ -172,7 +172,9 @@ class NTUHHsinchuScraper(BaseScraper):
         # Cache for today's clinic list to avoid redundant parsing
         self._today_clinic_list_cache: list[dict] = []
         self._cache_timestamp: Optional[date] = None
-        self._cache_expiry: Optional[now_tw] = None
+        self._cache_expiry: Optional[datetime] = None
+        self._cache: dict = {}
+        self._cache_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -209,11 +211,11 @@ class NTUHHsinchuScraper(BaseScraper):
         return content
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def _post(self, url: str, data: dict) -> str:
+    async def _post(self, url: str, data: dict, **kwargs) -> str:
         """Execute POST request with retry logic."""
-        log.info(f"[NTUH] POST {url} data keys={list(data.keys())}")
+        log.info(f"[NTUH] POST {url} data keys={list(data.keys())} kwargs={kwargs}")
         client = await self._get_client()
-        resp = await client.post(url, data=data)
+        resp = await client.post(url, data=data, **kwargs)
         resp.raise_for_status()
         return resp.text
 
@@ -342,6 +344,30 @@ class NTUHHsinchuScraper(BaseScraper):
         slots = await self._parse_schedule_page(soup, dept_code)
         log.info(f"[NTUH] fetch_schedule dept={dept_code}: {len(slots)} slots")
         return slots
+
+    async def _fetch_doctor_slots(
+        self, doctor_no: str, doctor_name: str, dept_code: str
+    ) -> list[DoctorSlot]:
+        """
+        個別補足抓取特定醫師的排班時段。
+        NTUH 做法：抓取該醫師所屬科別的完整課表，並過濾出目標醫師。
+        """
+        log.info(f"[NTUH] _fetch_doctor_slots for {doctor_name} ({doctor_no}) in dept={dept_code}")
+        try:
+            # 優先嘗試抓取傳入的 dept_code
+            all_slots = await self.fetch_schedule(dept_code)
+        except Exception as e:
+            log.error(f"[NTUH] Error fetching schedule for dept={dept_code} during supplement: {e}")
+            return []
+
+        # 比對姓名或醫師編號
+        matched = []
+        for s in all_slots:
+            if s.doctor_name == doctor_name or s.doctor_no == doctor_no:
+                matched.append(s)
+        
+        log.info(f"[NTUH] Found {len(matched)} slots for {doctor_name} via dept scan")
+        return matched
 
     async def _parse_schedule_page(
         self, soup: BeautifulSoup, dept_code: str
@@ -803,65 +829,92 @@ class NTUHHsinchuScraper(BaseScraper):
     # ─────────────────────────────────────────────────────────
     async def fetch_today_clinic_list(self, dept_code: str = "") -> list[dict]:
         """
-        抓取今日上診的所有診間列表，包含 ServiceIDSE。
-        實作緩存機制（5 分鐘有效期），避免重複抓取。
+        獲取今日診間列表。
+        NTUH 做法：透過 AJAX 請求 DeptLightTable 獲得該科別的即時看診列表。
         """
+        # 使用科別代碼作為緩存鍵
+        cache_key = f"clinic_list_{dept_code}"
         now = now_tw()
-        if self._today_clinic_list_cache and self._cache_expiry and now < self._cache_expiry:
-            log.info(f"[NTUH] Using cached clinic list (expires at {self._cache_expiry})")
-            if dept_code:
-                return [c for c in self._today_clinic_list_cache if c.get("dept_code") == dept_code]
-            return self._today_clinic_list_cache
+        
+        # 檢查緩存（需要加鎖防止競態）
+        async with self._cache_lock:
+            if cache_key in self._cache:
+                data, expiry = self._cache[cache_key]
+                if now < expiry:
+                    log.info(f"[NTUH] Using cached clinic list for dept={dept_code!r} (expires at {expiry})")
+                    return data
 
-        log.info(f"[NTUH] Cache expired or missing, fetching new clinic list (dept_code={dept_code!r})")
-
+        log.info(f"[NTUH] Fetching clinic list via AJAX for dept={dept_code!r}")
+        
+        # 1. 先獲取頁面以取得最新的 RequestVerificationToken
         url = f"{self.BASE_URL}/ClinicCurrentLightNo"
-
-        # Step 1: fetch form with hidden ViewState tokens
         try:
             html_form = await self._get(url, params={"vHospCode": "T4"})
         except Exception as e:
-            log.error(f"[NTUH] Failed to fetch ClinicCurrentLightNo form: {e}")
+            log.error(f"[NTUH] Failed to get ClinicCurrentLightNo form: {e}")
             return []
 
         soup_form = BeautifulSoup(html_form, "html.parser")
+        token = ""
+        # 找尋包含 DropListHosp 的 form 內的 token
+        target_form = None
+        for f in soup_form.find_all("form"):
+            if f.find("select", {"id": "DropListHosp"}):
+                target_form = f
+                break
+        
+        container = target_form if target_form else soup_form
+        for inp in container.find_all("input", {"name": "__RequestVerificationToken"}):
+            token = inp.get("value", "")
+            if token:
+                break
 
-        # Collect all hidden form fields (ASP.NET ViewState etc.)
-        form_data: dict[str, str] = {}
-        for inp in soup_form.find_all("input"):
-            name = inp.get("name", "")
-            value = inp.get('value', '')
-            if name:
-                form_data[name] = value
-
-        # Set query parameters — submit with dept if given, else query all
-        form_data["DropListHosp"] = "T4"
-        form_data["DropListRegion"] = ""
-        form_data["DropDownDept"] = dept_code
-        form_data["DropDownAMPM"] = ""
-
-        # Try to find the submit button name
-        btn = soup_form.find("input", id="btnQuery") or soup_form.find("input", type="submit")
-        if btn:
-            bname = btn.get("name", "")
-            if bname:
-                form_data[bname] = btn.get("value", "查詢")
-
-        # Step 2: POST to get clinic card results
-        try:
-            html = await self._post(url, form_data)
-        except Exception as e:
-            log.error(f"[NTUH] Failed to POST ClinicCurrentLightNo: {e}")
+        if not token:
+            log.warning("[NTUH] Could not find __RequestVerificationToken for AJAX request")
             return []
 
-        clinics = self._parse_clinic_list(html)
+        # 2. 發送 AJAX POST 請求
+        ajax_url = f"{self.BASE_URL}/DeptLightTable"
         
-        # Update cache if we fetched the full list (dept_code == "")
-        if not dept_code:
+        # 自動判定時段 (1:上午, 2:下午, 3:夜間)
+        if now.hour < 12:
+            ampm = "1"
+        elif now.hour < 17:
+            ampm = "2"
+        else:
+            ampm = "3"
+
+        payload = {
+            "__RequestVerificationToken": token,
+            "vHospitalCode": "T4",
+            "DeptCode": dept_code or "MED", # 若無科別，預設內科
+            "RegionCode": "",
+            "AmpmCode": ampm
+        }
+        
+        headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+        }
+
+        try:
+            html_results = await self._post(ajax_url, payload, headers=headers)
+        except Exception as e:
+            log.error(f"[NTUH] AJAX request to DeptLightTable failed: {e}")
+            return []
+
+        # 3. 解析結果
+        clinics = self._parse_clinic_list(html_results)
+        
+        # 4. 存入緩存 (5分鐘) - 需要加鎖防止競態
+        if clinics:
+            expiry = now + timedelta(minutes=5)
+            async with self._cache_lock:
+                self._cache[cache_key] = (clinics, expiry)
+            # 為了向後相容
             self._today_clinic_list_cache = clinics
-            from datetime import timedelta
-            self._cache_expiry = now + timedelta(minutes=5)
-            log.info(f"[NTUH] Cached {len(clinics)} clinics, expires at {self._cache_expiry}")
+            self._cache_expiry = expiry
+            log.info(f"[NTUH] Cached {len(clinics)} clinics for dept={dept_code}")
         
         return clinics
 
@@ -920,6 +973,7 @@ class NTUHHsinchuScraper(BaseScraper):
             room = room_m.group(1).zfill(2)
             doctor = ""
             dept = ""
+            current_number = None
 
             # Try to extract doctor name from nested elements
             doc_el = card.find(class_=re.compile(r"(doctor|doc|lightno-doctor|lightno-name)", re.I))
@@ -1141,7 +1195,7 @@ class NTUHHsinchuScraper(BaseScraper):
     # 5. Fetch clinic progress (舊介面，向後相容)
     # ─────────────────────────────────────────────────────────
     async def fetch_clinic_progress(
-        self, room: str, period: str, service_id: str = ""
+        self, room: str, period: str, service_id: str = "", **kwargs
     ) -> Optional[ClinicProgress]:
         """
         抓取診間即時看診進度。
@@ -1152,11 +1206,12 @@ class NTUHHsinchuScraper(BaseScraper):
             room:       診間號碼，例如 "02"、"1"
             period:     時段 "1"=上午, "2"=下午, "3"=晚上
             service_id: 若已知 ServiceIDSE 可直接傳入（效率較高）
+            **kwargs:   支援傳入 dept_code 以提高查詢準確度（台大必須）
 
         Returns:
             Optional[ClinicProgress]
         """
-        log.info(f"[NTUH] fetch_clinic_progress room={room} period={period} service_id={service_id!r}")
+        log.info(f"[NTUH] fetch_clinic_progress room={room} period={period} service_id={service_id!r} kwargs={kwargs}")
 
         # ── 若已有 ServiceIDSE，直接查詢 Detail 頁 ──────────────
         if service_id:
@@ -1167,9 +1222,10 @@ class NTUHHsinchuScraper(BaseScraper):
                 return result
 
         # ── 若無 ServiceIDSE：從今日列表頁找對應診間 ─────────────
-        log.info(f"[NTUH] No service_id, fetching clinic list to find room={room}")
+        dept_code = kwargs.get("dept_code", "")
+        log.info(f"[NTUH] No service_id, fetching clinic list to find room={room} (dept_code={dept_code!r})")
         try:
-            clinic_list = await self.fetch_today_clinic_list()
+            clinic_list = await self.fetch_today_clinic_list(dept_code)
         except Exception as e:
             log.error(f"[NTUH] Failed to fetch clinic list: {e}")
             return None
