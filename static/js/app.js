@@ -409,7 +409,7 @@ async function _loadTrackingAsync() {
             _notificationLogsBySubscription[subId][threshold].push(log);
         }
 
-        document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
+        // Note: stat-tracking count is updated in renderDashboardTracking() after hospital filtering
 
         const grid = document.getElementById('dashboard-tracking-grid');
         console.log('[Dashboard] Grid element found:', !!grid);
@@ -554,6 +554,9 @@ async function renderDashboardTracking() {
     if (_selectedDashHospId) {
         filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
+
+    // Update the "追蹤中門診" stat card to reflect the filtered count
+    document.getElementById('stat-tracking').textContent = filtered.length;
 
     console.log('[renderDashboardTracking] Filtered items:', filtered.length);
 
