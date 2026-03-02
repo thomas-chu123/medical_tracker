@@ -77,6 +77,7 @@ const AppState = {
 // ── Global State ──────────────────────────────────────────────
 let _dashHospitals = [];
 let _selectedDashHospId = null;
+let _selectedDashRegion = ''; // Selected region filter for dashboard
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
 
@@ -549,8 +550,18 @@ async function renderDashboardTracking() {
     // Get today's date in YYYY-MM-DD format (Taiwan timezone)
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    // Filter by selected hospital and date (only show active upcoming sessions)
+    // Filter by date (only show active upcoming sessions)
     let filtered = _allDashboardSubs.filter(s => (s.session_date || '') >= todayStr);
+
+    // Filter by selected region (match hospital region)
+    if (_selectedDashRegion) {
+        const regionHospitalIds = _dashHospitals
+            .filter(h => h.region === _selectedDashRegion)
+            .map(h => h.id);
+        filtered = filtered.filter(s => regionHospitalIds.includes(s.hospital_id));
+    }
+
+    // Filter by selected hospital
     if (_selectedDashHospId) {
         filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
