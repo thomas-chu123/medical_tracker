@@ -56,7 +56,7 @@ async def test_build_snapshot_row_morning_post_gate():
             assert row["current_number"] == 25
             assert row["total_quota"] == 60
             assert row["current_registered"] == 45
-            scraper.fetch_clinic_progress.assert_called_once_with("101", "1")
+            scraper.fetch_clinic_progress.assert_called_once_with("101", "1", dept_code="01")
 
 @pytest.mark.asyncio
 async def test_build_snapshot_row_future_date():

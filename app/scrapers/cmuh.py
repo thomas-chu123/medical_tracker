@@ -334,7 +334,7 @@ class CMUHScraper(BaseScraper):
     # 4. Fetch clinic queue progress
     # ─────────────────────────────────────────────────────────
     async def fetch_clinic_progress(
-        self, room: str, period: str
+        self, room: str, period: str, **kwargs
     ) -> Optional[ClinicProgress]:
         """
         Query current calling number and clinic status using reg64.cgi.

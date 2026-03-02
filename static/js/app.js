@@ -9,74 +9,75 @@ let currentUser = null;
 
 // ── AppState: Unified application state ───────────────────────
 const AppState = {
-  // Auth
-  authToken: localStorage.getItem('auth_token') || null,
-  currentUser: null,
+    // Auth
+    authToken: localStorage.getItem('auth_token') || null,
+    currentUser: null,
 
-  // Dashboard
-  dashboard: {
-    hospitals: [],
-    selectedHospitalId: null,
-    subscriptions: [],
-  },
+    // Dashboard
+    dashboard: {
+        hospitals: [],
+        selectedHospitalId: null,
+        subscriptions: [],
+    },
 
-  // Hospital Search
-  hospitalSearch: {
-    selectedHospitalId: null,
-    selectedHospitalName: '',
-    selectedDepartmentId: null,
-    selectedDepartmentName: '',
-    allDepartments: [],
-    allDoctors: [],
-    doctorSearchTimer: null,
-    departmentData: { depts: [], hospName: '', cat: '' },
-  },
+    // Hospital Search
+    hospitalSearch: {
+        selectedHospitalId: null,
+        selectedHospitalName: '',
+        selectedDepartmentId: null,
+        selectedDepartmentName: '',
+        allDepartments: [],
+        allDoctors: [],
+        doctorSearchTimer: null,
+        departmentData: { depts: [], hospName: '', cat: '' },
+    },
 
-  // Add Tracking Stepper
-  stepper: {
-    step: 1,
-    hospitalId: '',
-    hospitalName: '',
-    category: '',
-    departmentId: '',
-    departmentName: '',
-    doctorId: '',
-    doctorName: '',
-    doctorSchedules: [],
-  },
+    // Add Tracking Stepper
+    stepper: {
+        step: 1,
+        hospitalId: '',
+        hospitalName: '',
+        category: '',
+        departmentId: '',
+        departmentName: '',
+        doctorId: '',
+        doctorName: '',
+        doctorSchedules: [],
+    },
 
-  // Tracking Management
-  tracking: {
-    subscriptions: [],
-    currentTab: 'current',
-  },
+    // Tracking Management
+    tracking: {
+        subscriptions: [],
+        currentTab: 'current',
+    },
 
-  // Notifications
-  notifications: {
-    logs: [],
-    currentTab: 'current',
-  },
+    // Notifications
+    notifications: {
+        logs: [],
+        currentTab: 'current',
+    },
 
-  // Charts
-  charts: {
-    crowdChart: null,
-    deptComparisonChart: null,
-    doctorComparisonChart: null,
-    doctorSpeedChart: null,
-  },
+    // Charts
+    charts: {
+        crowdChart: null,
+        deptComparisonChart: null,
+        doctorComparisonChart: null,
+        doctorSpeedChart: null,
+    },
 
-  // Analysis
-  analysis: {
-    ranking: [],
-  },
+    // Analysis
+    analysis: {
+        ranking: [],
+    },
 
-  // Components
-  combos: {},
+    // Components
+    combos: {},
 };
 
 // ── Global State ──────────────────────────────────────────────
 let _dashHospitals = [];
 let _selectedDashHospId = null;
+let _selectedDashRegion = ''; // Selected region filter for dashboard
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
 
@@ -266,8 +267,31 @@ async function initApp(userFromLogin = null) {
     loadDashboard();
 }
 
+// ── Mobile Navigation Drawer ──────────────────────────────────
+function toggleMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('mobile-overlay');
+    const isOpen = sidebar.classList.contains('open');
+    if (isOpen) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+    } else {
+        sidebar.classList.add('open');
+        overlay.classList.add('open');
+    }
+}
+
+function closeMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('mobile-overlay');
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+}
+
 // ── Navigation ────────────────────────────────────────────────
 function navigate(btn, pageId, options = {}) {
+    // Close mobile drawer when navigating
+    closeMobileMenu();
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -330,6 +354,7 @@ async function loadDashboard() {
     // Update hospital list if fetched
     if (!_dashHospitals.length && hospList) {
         _dashHospitals = hospList;
+        initDashRegionSelect(); // Initialize region dropdown
         renderDashHospList();
     }
 
@@ -386,7 +411,7 @@ async function _loadTrackingAsync() {
             _notificationLogsBySubscription[subId][threshold].push(log);
         }
 
-        document.getElementById('stat-tracking').textContent = _allDashboardSubs.length;
+        // Note: stat-tracking count is updated in renderDashboardTracking() after hospital filtering
 
         const grid = document.getElementById('dashboard-tracking-grid');
         console.log('[Dashboard] Grid element found:', !!grid);
@@ -401,6 +426,38 @@ async function _loadTrackingAsync() {
     }
 }
 
+/** Dashboard Region Filter **/
+function initDashRegionSelect() {
+    const select = document.getElementById('dash-region-select');
+    if (!select) return;
+
+    // Extract unique regions from hospitals
+    const regions = [...new Set(_dashHospitals.map(h => h.region).filter(r => r))];
+
+    // Populate select options
+    let html = '<option value="">📍 全部地區</option>';
+    regions.forEach(region => {
+        html += `<option value="${escHtml(region)}">${escHtml(region)}</option>`;
+    });
+    select.innerHTML = html;
+}
+
+function filterDashByRegion() {
+    const select = document.getElementById('dash-region-select');
+    _selectedDashRegion = select ? select.value : '';
+
+    // Reset hospital selection when region changes
+    _selectedDashHospId = null;
+    const inp = document.querySelector('#dash-hosp-combo input');
+    if (inp) inp.value = '';
+
+    // Re-render hospital list with region filter
+    renderDashHospList();
+
+    // Refresh dashboard data
+    loadDashboard();
+}
+
 /** Dashboard Hospital Filter Logic **/
 function renderDashHospList(filterText = '') {
     const list = document.getElementById('dash-hosp-list');
@@ -411,8 +468,14 @@ function renderDashHospList(filterText = '') {
         q = ''; // Skip filtering if input matches the currently selected hospital
     }
 
+    // Filter by region first
+    let filteredHospitals = _dashHospitals;
+    if (_selectedDashRegion) {
+        filteredHospitals = _dashHospitals.filter(h => h.region === _selectedDashRegion);
+    }
+
     // Add "All Hospitals" option
-    let items = [{ id: null, name: '全部醫院' }, ..._dashHospitals];
+    let items = [{ id: null, name: '全部醫院' }, ...filteredHospitals];
     if (q) {
         items = items.filter(h => h.name.toLowerCase().includes(q));
     }
@@ -424,7 +487,7 @@ function renderDashHospList(filterText = '') {
 
     list.innerHTML = items.map(h => `
         <div class="combo-opt" onclick="selectDashHosp('${h.id}', '${escHtml(h.name)}')">
-            ${h.id === null ? '🌐' : '🏥'} ${escHtml(h.name)}
+            ${h.id === null ? '🌐' : '🏥'} ${escHtml(h.name)}${h.region ? ` <span style="color:#888; font-size:0.85em">( ${escHtml(h.region)} )</span>` : ''}
         </div>
     `).join('');
 }
@@ -526,11 +589,24 @@ async function renderDashboardTracking() {
     // Get today's date in YYYY-MM-DD format (Taiwan timezone)
     const todayStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }).substring(0, 10);
 
-    // Filter by selected hospital and date (only show active upcoming sessions)
+    // Filter by date (only show active upcoming sessions)
     let filtered = _allDashboardSubs.filter(s => (s.session_date || '') >= todayStr);
+
+    // Filter by selected region (match hospital region)
+    if (_selectedDashRegion) {
+        const regionHospitalIds = _dashHospitals
+            .filter(h => h.region === _selectedDashRegion)
+            .map(h => h.id);
+        filtered = filtered.filter(s => regionHospitalIds.includes(s.hospital_id));
+    }
+
+    // Filter by selected hospital
     if (_selectedDashHospId) {
         filtered = filtered.filter(s => s.hospital_id === _selectedDashHospId);
     }
+
+    // Update the "追蹤中門診" stat card to reflect the filtered count
+    document.getElementById('stat-tracking').textContent = filtered.length;
 
     console.log('[renderDashboardTracking] Filtered items:', filtered.length);
 
@@ -570,38 +646,38 @@ function renderClinicCard(sub, snap) {
 
     const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
-    
+
     // Helper function outside of pillDone for better performance
     const hasSuccessfulNotification = (threshold) => {
-      try {
-        if (!_notificationLogsBySubscription || !sub.id) return false;
-        const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
-        return logs.some(log => log.success === true);
-      } catch (e) {
-        console.warn('[pillDone] Error checking notification logs:', e);
-        return false;
-      }
+        try {
+            if (!_notificationLogsBySubscription || !sub.id) return false;
+            const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
+            return logs.some(log => log.success === true);
+        } catch (e) {
+            console.warn('[pillDone] Error checking notification logs:', e);
+            return false;
+        }
     };
-    
+
     const pillDone = (flagNotified, label, threshold, shouldSkip = false) => {
-      try {
-        // Check if actually sent (successful log exists)
-        if (hasSuccessfulNotification(threshold)) {
-          return `<span class="threshold-pill done">✅${label}</span>`;
+        try {
+            // Check if actually sent (successful log exists)
+            if (hasSuccessfulNotification(threshold)) {
+                return `<span class="threshold-pill done">✅${label}</span>`;
+            }
+
+            // If marked notified but no successful log, it was skipped
+            if (flagNotified || shouldSkip) {
+                return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+            }
+
+            // Otherwise pending
+            return `<span class="threshold-pill pending">⏳${label}</span>`;
+        } catch (e) {
+            console.warn('[pillDone] Error rendering pill:', e);
+            // Fallback: just show basic status
+            return flagNotified ? `<span class="threshold-pill done">✅${label}</span>` : `<span class="threshold-pill pending">⏳${label}</span>`;
         }
-        
-        // If marked notified but no successful log, it was skipped
-        if (flagNotified || shouldSkip) {
-          return `<span class="threshold-pill skipped">⏸️${label}</span>`;
-        }
-        
-        // Otherwise pending
-        return `<span class="threshold-pill pending">⏳${label}</span>`;
-      } catch (e) {
-        console.warn('[pillDone] Error rendering pill:', e);
-        // Fallback: just show basic status
-        return flagNotified ? `<span class="threshold-pill done">✅${label}</span>` : `<span class="threshold-pill pending">⏳${label}</span>`;
-      }
     };
 
     // 4. Labels & Badges
@@ -847,6 +923,8 @@ document.addEventListener('click', e => {
 let allDoctors = [];
 let _hsHospitalId = null;
 let _hsHospitalName = '';
+let _hsAllHospitals = []; // Store all hospitals for region filtering
+let _hsSelectedRegion = ''; // Selected region for hospital search
 
 let allDepts = [];   // stores current category's dept list for filtering
 
@@ -857,7 +935,13 @@ async function loadHospitalsPage() {
     inp.dataset.loaded = '1';
 
     const hospitals = await apiFetch('/api/hospitals') || [];
-    buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name })), async (hospId, hospName) => {
+    _hsAllHospitals = hospitals; // Store all hospitals
+
+    // Initialize region select
+    initHsRegionSelect(hospitals);
+
+    // Build hospital combobox with all hospitals initially
+    buildCombo('cb-hospital', hospitals.map(h => ({ value: h.id, label: h.name, region: h.region })), async (hospId, hospName) => {
         _hsHospitalId = hospId;
         _hsHospitalName = hospName;
         // 🔴 FIX: Clear previous state when switching hospitals
@@ -882,6 +966,74 @@ async function loadHospitalsPage() {
             _hsRenderDeptGrid(hospId, hospName, null, depts);
         }
     });
+}
+
+/** Hospital Search Region Filter **/
+function initHsRegionSelect(hospitals) {
+    const select = document.getElementById('hs-region-select');
+    if (!select) return;
+
+    // Extract unique regions from hospitals
+    const regions = [...new Set(hospitals.map(h => h.region).filter(r => r))];
+
+    // Populate select options
+    let html = '<option value="">📍 全部地區</option>';
+    regions.forEach(region => {
+        html += `<option value="${escHtml(region)}">${escHtml(region)}</option>`;
+    });
+    select.innerHTML = html;
+}
+
+function filterHospitalsByRegion() {
+    const select = document.getElementById('hs-region-select');
+    _hsSelectedRegion = select ? select.value : '';
+
+    // Filter hospitals by region
+    let filteredHospitals = _hsAllHospitals;
+    if (_hsSelectedRegion) {
+        filteredHospitals = _hsAllHospitals.filter(h => h.region === _hsSelectedRegion);
+    }
+
+    // Rebuild hospital combobox with filtered list
+    buildCombo('cb-hospital', filteredHospitals.map(h => ({ value: h.id, label: h.name, region: h.region })), async (hospId, hospName) => {
+        _hsHospitalId = hospId;
+        _hsHospitalName = hospName;
+        _currentHsDeptId = null;
+        allDoctors = [];
+        document.getElementById('hs-category-wrap').style.display = 'none';
+        document.getElementById('hs-dept-wrap').style.display = 'none';
+        document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
+        const searchWrap = document.getElementById('hs-search-controls');
+        searchWrap.style.display = 'flex';
+        const deptSearchEl = document.getElementById('dept-search');
+        if (deptSearchEl) deptSearchEl.value = '';
+        _hsBreadcrumb([hospName]);
+
+        const cats = await apiFetch(`/api/hospitals/${hospId}/categories`) || [];
+        if (cats.length) {
+            _hsRenderCategoryChips(hospId, hospName, cats);
+        } else {
+            const depts = await apiFetch(`/api/hospitals/${hospId}/departments`) || [];
+            _hsRenderDeptGrid(hospId, hospName, null, depts);
+        }
+    });
+
+    // Reset hospital selection
+    _hsHospitalId = null;
+    _hsHospitalName = '';
+    const inp = document.getElementById('hospital-input');
+    if (inp) inp.value = '';
+
+    // Hide category and department sections
+    document.getElementById('hs-category-wrap').style.display = 'none';
+    document.getElementById('hs-dept-wrap').style.display = 'none';
+    document.getElementById('hs-search-controls').style.display = 'none';
+    document.getElementById('doctors-grid').innerHTML = `
+        <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <p>請先選擇醫院與科室</p>
+        </div>
+    `;
 }
 
 function _hsBreadcrumb(parts) {
@@ -1616,10 +1768,10 @@ let _currentTrackingTab = 'current';
 async function loadTracking() {
     const subs = await apiFetch('/api/tracking/') || [];
     _allTrackingSubs = subs;
-    
+
     // Load notification logs to determine which notifications were actually sent
     const logs = await apiFetch('/api/tracking/logs/all').catch(() => []) || [];
-    
+
     // Build index: sub_id -> {threshold -> [log records]}
     _notificationLogsBySubscription = {};
     for (const log of logs) {
@@ -1633,7 +1785,7 @@ async function loadTracking() {
         }
         _notificationLogsBySubscription[subId][threshold].push(log);
     }
-    
+
     renderTrackingList();
 }
 
@@ -1679,29 +1831,29 @@ function renderTrackingList() {
 
 function renderTrackingCard(sub, isExpired = false) {
     console.log('renderTrackingCard data - sub room:', sub.clinic_room);
-    
+
     // Helper to check if notification was actually sent (has success log)
     const hasSuccessfulNotification = (threshold) => {
         if (!_notificationLogsBySubscription || !sub.id) return false;
         const logs = _notificationLogsBySubscription[sub.id]?.[threshold] || [];
         return logs.some(log => log.success === true);
     };
-    
+
     const pill = (on, notified, label, threshold) => {
-      if (!on) return '';
-      
-      // Check if actually sent (successful log exists)
-      if (hasSuccessfulNotification(threshold)) {
-        return `<span class="threshold-pill done">✅${label}</span>`;
-      }
-      
-      // If marked notified but no successful log, it was skipped
-      if (notified) {
-        return `<span class="threshold-pill skipped">⏸️${label}</span>`;
-      }
-      
-      // Otherwise pending
-      return `<span class="threshold-pill pending">⏳${label}</span>`;
+        if (!on) return '';
+
+        // Check if actually sent (successful log exists)
+        if (hasSuccessfulNotification(threshold)) {
+            return `<span class="threshold-pill done">✅${label}</span>`;
+        }
+
+        // If marked notified but no successful log, it was skipped
+        if (notified) {
+            return `<span class="threshold-pill skipped">⏸️${label}</span>`;
+        }
+
+        // Otherwise pending
+        return `<span class="threshold-pill pending">⏳${label}</span>`;
     };
     const email = sub.notify_email ? '📧 Email' : '';
     const line = sub.notify_line ? '📲 LINE' : '';

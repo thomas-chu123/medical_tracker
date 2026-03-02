@@ -424,7 +424,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             # Check if current session type is within its scheduled window
             if slot.session_type in session_start_times:
                 start_time = session_start_times[slot.session_type]
-                session_start_dt = datetime.combine(slot.session_date, start_time)
+                session_start_dt = datetime.combine(slot.session_date, start_time, tzinfo=now.tzinfo)
                 session_end_dt = session_start_dt + timedelta(hours=8)
                 
                 # Only fetch realtime if we're between session start and 8 hours later
@@ -437,7 +437,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             period = period_map.get(slot.session_type, "1")
             try:
                 logger.debug(f"[Scheduler] Fetching realtime for {slot.clinic_room}診 period={period}")
-                progress = await scraper.fetch_clinic_progress(slot.clinic_room, period)
+                progress = await scraper.fetch_clinic_progress(slot.clinic_room, period, dept_code=slot.department_code)
                 if progress:
                     logger.debug(f"[Scheduler] Got progress: current_number={progress.current_number}, queue_items={len(progress.clinic_queue_details) if progress.clinic_queue_details else 0}")
                     current_number = progress.current_number

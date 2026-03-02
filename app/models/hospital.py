@@ -13,6 +13,7 @@ class HospitalBase(BaseModel):
 class HospitalOut(HospitalBase):
     id: UUID
     is_active: bool
+    region: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

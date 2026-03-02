@@ -73,6 +73,8 @@
 
     <!-- Topbar -->
     <header class="topbar">
+      <!-- Hamburger button (mobile only) -->
+      <button id="menu-toggle" class="menu-toggle" onclick="toggleMobileMenu()" aria-label="開啟選單">☰</button>
       <div class="logo">
         <div class="icon">🏥</div>
         門診追蹤系統
@@ -128,6 +130,12 @@
             <div class="subtitle" id="last-update-label">讀取中…</div>
           </div>
           <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <!-- Region Filter -->
+            <div class="form-group" style="margin:0; min-width:160px;">
+              <select id="dash-region-select" onchange="filterDashByRegion()" style="height:38px;">
+                <option value="">📍 全部地區</option>
+              </select>
+            </div>
             <!-- Hospital Filter Combobox -->
             <div class="combobox" id="dash-hosp-combo" style="width:280px">
               <input type="text" placeholder="🔍 過濾醫院 (預設全部)..." autocomplete="off" oninput="filterDashHosp(this.value)"
@@ -338,6 +346,12 @@
         <!-- Hospital select + Search bars -->
         <div class="card" style="margin-bottom:20px">
           <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap">
+            <div class="form-group" style="margin:0; min-width:180px;">
+              <label>醫院所在地</label>
+              <select id="hs-region-select" onchange="filterHospitalsByRegion()" style="height:38px;">
+                <option value="">📍 全部地區</option>
+              </select>
+            </div>
             <div class="form-group" style="margin:0; min-width:240px; flex:2">
               <label>選擇醫院</label>
               <div class="combobox" id="cb-hospital">
@@ -591,8 +605,10 @@
             <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px">
               掃描 QR Code 連結 LINE Bot 接收門診通知
             </p>
-            <div style="background: linear-gradient(135deg, #00B900, #0AFF0A); border-radius: 12px; padding: 20px; text-align: center;">
-              <div style="background: #fff; padding: 12px; border-radius: 8px; display: inline-block; margin-bottom: 12px;">
+            <div
+              style="background: linear-gradient(135deg, #00B900, #0AFF0A); border-radius: 12px; padding: 20px; text-align: center;">
+              <div
+                style="background: #fff; padding: 12px; border-radius: 8px; display: inline-block; margin-bottom: 12px;">
                 <img src="/static/images/line-qr-code.png" alt="LINE QR Code" style="width: 180px; height: 180px;">
               </div>
               <p style="font-size: 12px; color: #fff; margin: 8px 0; font-weight: 500;">
@@ -611,7 +627,8 @@
             <div class="subtitle" id="stepper-subtitle">選擇醫院開始</div>
           </div>
           <div style="display:flex; gap:8px">
-            <button class="btn btn-secondary btn-sm" id="stepper-back-btn" onclick="stepperPrevious()" style="display:none">← 上一步</button>
+            <button class="btn btn-secondary btn-sm" id="stepper-back-btn" onclick="stepperPrevious()"
+              style="display:none">← 上一步</button>
             <button class="btn btn-secondary btn-sm" onclick="cancelAddTracking()">✕ 取消</button>
           </div>
         </div>
@@ -694,6 +711,9 @@
       </section>
 
     </main>
+
+    <!-- Mobile sidebar overlay -->
+    <div id="mobile-overlay" class="mobile-overlay" onclick="closeMobileMenu()"></div>
   </div>
 
   <!-- Old tracking modal removed; replaced by #page-add-tracking stepper -->
@@ -703,11 +723,11 @@
     <div class="modal" style="max-width:500px">
       <div class="modal-header">
         <h3 id="quick-track-title">快速追蹤</h3>
-        <button class="modal-close"
-          onclick="closeQuickTrackModal()">✕</button>
+        <button class="modal-close" onclick="closeQuickTrackModal()">✕</button>
       </div>
       <div class="modal-body">
-        <div id="quick-track-doctor-info" style="padding:12px; background:var(--bg-hover); border-radius:8px; margin-bottom:16px">
+        <div id="quick-track-doctor-info"
+          style="padding:12px; background:var(--bg-hover); border-radius:8px; margin-bottom:16px">
           <div style="font-weight:600">👨‍⚕️ <span id="qt-doctor-name">—</span></div>
           <div style="font-size:12px; color:var(--text-muted)"><span id="qt-hospital-dept">—</span></div>
         </div>
@@ -758,7 +778,8 @@
           <h3 id="clinic-waiting-title">診間等候列表</h3>
           <div style="font-size:12px; color:var(--text-muted); margin-top:4px" id="clinic-waiting-subtitle">—</div>
         </div>
-        <button class="modal-close" onclick="document.getElementById('clinic-waiting-modal').classList.remove('open')">✕</button>
+        <button class="modal-close"
+          onclick="document.getElementById('clinic-waiting-modal').classList.remove('open')">✕</button>
       </div>
       <div id="clinic-waiting-body" class="modal-body">
         <div class="spinner"></div>
@@ -813,7 +834,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/js/app.js?v=20260228g"></script>
+  <script src="/static/js/app.js?v=20260302a"></script>
 </body>
 
 </html>

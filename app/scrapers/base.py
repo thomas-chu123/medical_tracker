@@ -53,5 +53,5 @@ class BaseScraper(ABC):
         ...
 
     @abstractmethod
-    async def fetch_clinic_progress(self, room: str, period: str) -> Optional[ClinicProgress]:
+    async def fetch_clinic_progress(self, room: str, period: str, **kwargs) -> Optional[ClinicProgress]:
         ...
