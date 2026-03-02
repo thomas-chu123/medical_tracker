@@ -794,35 +794,36 @@ class NTUHHsinchuScraper(BaseScraper):
         return None
 
     # ─────────────────────────────────────────────────────────
-    # 3. Fetch clinic progress (current queue number)
+    # 3. Fetch today's clinic list (for progress tracking)
     # ─────────────────────────────────────────────────────────
-    async def fetch_clinic_progress(
-        self, room: str, period: str
-    ) -> Optional[ClinicProgress]:
+    async def fetch_today_clinic_list(self, dept_code: str = "") -> list[dict]:
         """
-        Fetch current clinic progress from ClinicCurrentLightNo.
+        抓取今日上診的所有診間列表，包含 ServiceIDSE。
+
+        使用 ClinicCurrentLightNo 頁面，透過 POST 查詢指定科部（空字串=全部）。
+        回傳格式: [{"service_id": "7651238", "room": "02", "doctor": "高健能",
+                    "dept": "內科部", "current_number": 3}, ...]
 
         Args:
-            room: Clinic room number (e.g., "1", "05", "10")
-            period: Period code "1"=上午, "2"=下午, "3"=晚上
+            dept_code: 科部代碼（可空白，空白=全部科部）
 
         Returns:
-            Optional[ClinicProgress]: Current clinic progress or None if unavailable.
+            包含 ServiceIDSE 與診間資訊的 dict list
         """
-        log.info(f"[NTUH] fetch_clinic_progress room={room} period={period}")
+        log.info(f"[NTUH] fetch_today_clinic_list dept_code={dept_code!r}")
 
         url = f"{self.BASE_URL}/ClinicCurrentLightNo"
 
-        # First, load the query form to get session tokens
+        # Step 1: fetch form with hidden ViewState tokens
         try:
             html_form = await self._get(url, params={"vHospCode": "T4"})
         except Exception as e:
             log.error(f"[NTUH] Failed to fetch ClinicCurrentLightNo form: {e}")
-            return None
+            return []
 
         soup_form = BeautifulSoup(html_form, "html.parser")
 
-        # Collect hidden form fields (ASP.NET ViewState etc.)
+        # Collect all hidden form fields (ASP.NET ViewState etc.)
         form_data: dict[str, str] = {}
         for inp in soup_form.find_all("input"):
             name = inp.get("name", "")
@@ -830,102 +831,359 @@ class NTUHHsinchuScraper(BaseScraper):
             if name:
                 form_data[name] = value
 
-        # Add query parameters
+        # Set query parameters — submit with dept if given, else query all
         form_data["DropListHosp"] = "T4"
-        form_data["DropListClinicRoom"] = room.strip()
-        form_data["DropListPeriod"] = period
-        # Some versions use these field names
-        form_data["ClinicRoom"] = room.strip()
-        form_data["Period"] = period
+        form_data["DropListDept"] = dept_code
+        # Try to find the submit button name
+        for btn in soup_form.find_all("input", type="submit"):
+            bname = btn.get("name", "")
+            if bname:
+                form_data[bname] = btn.get("value", "查詢")
 
+        # Step 2: POST to get clinic card results
         try:
             html = await self._post(url, form_data)
         except Exception as e:
             log.error(f"[NTUH] Failed to POST ClinicCurrentLightNo: {e}")
+            return []
+
+        return self._parse_clinic_list(html)
+
+    def _parse_clinic_list(self, html: str) -> list[dict]:
+        """
+        解析 ClinicCurrentLightNo 結果頁的診間卡片。
+
+        頁面卡片結構:
+          <div class="clinic-card" onclick="...ServiceIDSE=7651238...">
+            <div class="clinic-number">02 診</div>
+            <div class="doctor-name">高健能</div>
+            <div class="dept-name">普通門診</div>
+            <div class="lightno-number">001</div>  ← 目前燈號（紅色）
+          </div>
+
+        也可能用 <a href="...ServiceIDSE=..."> 包裹。
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        results: list[dict] = []
+        seen_ids: set[str] = set()
+
+        SERVICE_RE = re.compile(r"ServiceIDSE=(\d+)", re.IGNORECASE)
+
+        def _extract_service_id(tag) -> str | None:
+            # Check onclick, href, and all attributes
+            for attr in ("onclick", "href", "data-url"):
+                val = tag.get(attr, "")
+                if val:
+                    m = SERVICE_RE.search(val)
+                    if m:
+                        return m.group(1)
+            # Check all string attributes
+            for val in tag.attrs.values():
+                if isinstance(val, str):
+                    m = SERVICE_RE.search(val)
+                    if m:
+                        return m.group(1)
             return None
 
-        return self._parse_clinic_progress(html, room, period)
+        # Strategy A: look for clickable clinic cards
+        for card in soup.find_all(["div", "a", "li", "td"]):
+            service_id = _extract_service_id(card)
+            if not service_id or service_id in seen_ids:
+                continue
 
-    def _parse_clinic_progress(
-        self, html: str, room: str, period: str
+            text = card.get_text(separator=" ", strip=True)
+            # Heuristic: clinic cards usually mention 診 and a doctor name
+            room_m = re.search(r"(\d{1,3})\s*診", text)
+            if not room_m:
+                continue
+
+            room = room_m.group(1)
+            doctor = ""
+            dept = ""
+            current_number = None
+
+            # Try to extract doctor name from nested elements
+            for cls in ("doctor-name", "doc-name", "lightno-name", "lightno-doctor"):
+                el = card.find(class_=re.compile(cls, re.I))
+                if el:
+                    doctor = el.get_text(strip=True)
+                    break
+
+            # Try department
+            for cls in ("dept-name", "dept", "department", "lightno-dept"):
+                el = card.find(class_=re.compile(cls, re.I))
+                if el:
+                    dept = el.get_text(strip=True)
+                    break
+
+            # Try current light number (the red number shown on the card)
+            for cls in ("lightno-number", "current-no", "now-no", "light-no"):
+                el = card.find(class_=re.compile(cls, re.I))
+                if el:
+                    n = _parse_int(el.get_text(strip=True))
+                    if n is not None:
+                        current_number = n
+                    break
+
+            seen_ids.add(service_id)
+            results.append({
+                "service_id": service_id,
+                "room": room,
+                "doctor": doctor,
+                "dept": dept,
+                "current_number": current_number,
+            })
+
+        # Strategy B: scan all onclick/href for ServiceIDSE in case A found nothing
+        if not results:
+            for m in SERVICE_RE.finditer(html):
+                sid = m.group(1)
+                if sid not in seen_ids:
+                    seen_ids.add(sid)
+                    results.append({"service_id": sid, "room": "", "doctor": "", "dept": "", "current_number": None})
+
+        log.info(f"[NTUH] _parse_clinic_list: found {len(results)} clinics")
+        return results
+
+    # ─────────────────────────────────────────────────────────
+    # 4. Fetch clinic progress by ServiceIDSE (new API)
+    # ─────────────────────────────────────────────────────────
+    async def fetch_clinic_progress_by_service_id(
+        self, service_id: str
     ) -> Optional[ClinicProgress]:
-        """Parse ClinicCurrentLightNo response HTML into ClinicProgress."""
+        """
+        用 ServiceIDSE 抓取指定診間的即時看診進度。
+
+        URL 格式: ClinicCurrentLightNoDetail?ServiceIDSE={id}&vHospitalCode=T4
+
+        Args:
+            service_id: 診間的 ServiceIDSE 數字（字串格式）
+
+        Returns:
+            ClinicProgress 物件，包含目前燈號、已叫最大號、預計叫號、掛號總數、燈號狀態列表。
+        """
+        log.info(f"[NTUH] fetch_clinic_progress_by_service_id service_id={service_id}")
+
+        url = f"{self.BASE_URL}/ClinicCurrentLightNoDetail"
+        try:
+            html = await self._get(
+                url,
+                params={"ServiceIDSE": service_id, "vHospitalCode": "T4"},
+            )
+        except Exception as e:
+            log.error(f"[NTUH] Failed to fetch ClinicCurrentLightNoDetail service_id={service_id}: {e}")
+            return None
+
+        return self._parse_clinic_progress_detail(html, service_id)
+
+    def _parse_clinic_progress_detail(
+        self, html: str, service_id: str = ""
+    ) -> Optional[ClinicProgress]:
+        """
+        解析 ClinicCurrentLightNoDetail 頁面。
+
+        HTML 結構 (2026-03):
+          <div class="room-number">內科部 02診</div>
+
+          <div class="now-number">
+            目前燈號
+            <div class="number">3</div>      ← 目前叫到的號碼（可能空白）
+          </div>
+          <div class="biggest-number">
+            已叫最大號
+            <div class="number">43</div>     ← 已叫過的最大號（可能空白）
+          </div>
+          <div class="next-number">
+            預計叫號
+            <div class="number">44</div>     ← 預計下一個叫到的號（可能空白）
+          </div>
+
+          <div class="progress-number">1未報到</div>   ← 每個掛號者
+          <div class="progress-number">3已報到</div>
+          <div class="progress-number">11已報到</div>  ← 已到院，等待看診
+          <div class="progress-number">15已報到</div>
+          ...
+
+        狀態對應:
+          未報到 → 尚未到院
+          已報到 → 已到院，等待看診 (registered)
+          看診中 → 正在診間 (current)
+          初診   → 本院初診病患
+
+        回傳 ClinicProgress:
+          current_number  = 目前燈號
+          total_quota     = max(所有號碼) ← 代表掛號總額（實際最大號）
+          registered_count = 掛號人數（所有 progress-number 的數量）
+          waiting_list    = 尚在等待的號碼列表（未報到＋已報到）
+        """
         soup = BeautifulSoup(html, "html.parser")
-        text_all = soup.get_text(separator=" ", strip=True)
 
+        # ── 1. 診間名稱 ──────────────────────────────────────────
+        room_div = soup.find("div", class_="room-number")
+        room_text = room_div.get_text(strip=True) if room_div else ""
+        # 從 "內科部 02診" 提取診間號碼
+        room_match = CLINIC_ROOM_RE.search(room_text)
+        clinic_room = room_match.group(1) if room_match else service_id
+
+        # ── 2. 目前燈號（now-number > .number）──────────────────
         current_number: Optional[int] = None
+        now_div = soup.find("div", class_="now-number")
+        if now_div:
+            num_div = now_div.find("div", class_="number")
+            if num_div:
+                current_number = _parse_int(num_div.get_text(strip=True))
+
+        # ── 3. 已叫最大號（biggest-number > .number）────────────
+        biggest_number: Optional[int] = None
+        big_div = soup.find("div", class_="biggest-number")
+        if big_div:
+            num_div = big_div.find("div", class_="number")
+            if num_div:
+                biggest_number = _parse_int(num_div.get_text(strip=True))
+
+        # ── 4. 預計叫號（next-number > .number）─────────────────
+        next_number: Optional[int] = None
+        next_div = soup.find("div", class_="next-number")
+        if next_div:
+            num_div = next_div.find("div", class_="number")
+            if num_div:
+                next_number = _parse_int(num_div.get_text(strip=True))
+
+        # ── 5. 所有燈號狀態（div.progress-number）───────────────
+        # 每個 div 的文字格式: "號碼" + "狀態文字"，例如 "3已報到"、"5未報到"
+        # 需要拆分數字和狀態
+        all_numbers: list[int] = []
+        waiting_list: list[int] = []     # 未報到 + 已報到（還沒看診的）
+        registered_numbers: list[int] = []  # 已報到（到院等待）
+        clinic_queue_details: list[dict] = []
+
+        for pn_div in soup.find_all("div", class_="progress-number"):
+            text = pn_div.get_text(strip=True)
+            if not text:
+                continue
+
+            # 拆分號碼和狀態：開頭為數字部分，其餘為狀態
+            num_match = re.match(r"^(\d+)(.*)$", text)
+            if not num_match:
+                continue
+
+            num = int(num_match.group(1))
+            status_str = num_match.group(2).strip()
+
+            all_numbers.append(num)
+            clinic_queue_details.append({"number": num, "status": status_str})
+
+            # 未看診者（未報到 = 未到院，已報到 = 到院等待）
+            if status_str in ("未報到", "已報到", "看診中", "初診") and status_str != "看診中":
+                waiting_list.append(num)
+            if status_str == "已報到":
+                registered_numbers.append(num)
+
+        # ── 6. 狀態偵測 ──────────────────────────────────────────
+        text_all = soup.get_text(separator=" ", strip=True)
         status: Optional[str] = None
-
-        # Look for current number patterns
-        # Patterns: "目前診號：37", "目前號碼 37", "目前叫號 37", "診間燈號：24"
-        for pattern in (
-            r"目前診號[：:]\s*(\d+)",
-            r"目前號碼[：:]\s*(\d+)",
-            r"目前叫號[：:]\s*(\d+)",
-            r"診間燈號[：:]\s*(\d+)",
-            r"目前[的]?[診燈]號.*?(\d+)",
-        ):
-            m = re.search(pattern, text_all)
-            if m:
-                current_number = int(m.group(1))
-                break
-
-        # Also check for strong/span tags with numbers near 目前
-        for strong in soup.find_all(["strong", "span"]):
-            parent_text = (strong.parent.get_text(strip=True) if strong.parent else "")
-            if any(kw in parent_text for kw in ("目前", "叫號", "燈號")):
-                n = _parse_int(strong.get_text(strip=True))
-                if n is not None and current_number is None:
-                    current_number = n
-
-        # Detect status keywords
         if "看診完畢" in text_all or "已結束" in text_all:
             status = "看診完畢"
-            if current_number is None:
-                current_number = 0
         elif "未開診" in text_all or "尚未開始" in text_all:
             status = "未開診"
-            if current_number is None:
-                current_number = 0
         elif "休診" in text_all or "停診" in text_all:
             status = "休診"
-            if current_number is None:
-                current_number = 0
 
-        if current_number is None and not status:
-            log.debug(f"[NTUH] No progress data for room={room} period={period}")
+        # ── 7. 若完全無資料，回傳 None ───────────────────────────
+        if current_number is None and biggest_number is None and not all_numbers and not status:
+            log.debug(f"[NTUH] No progress data for service_id={service_id}")
             return None
 
-        # Parse queue table (number | status rows)
-        waiting_list: list[int] = []
-        clinic_queue_details: list[dict] = []
-        numbers: list[int] = []
+        # total_quota：用所有號碼中的最大號，或已叫最大號
+        total_quota = max(all_numbers) if all_numbers else biggest_number
+        registered_count = len(all_numbers)  # 所有已掛號人數
 
-        for row in soup.find_all("tr"):
-            tds = row.find_all("td")
-            if len(tds) >= 2:
-                num_str = tds[0].get_text(strip=True)
-                status_str = tds[1].get_text(strip=True)
-                if num_str.isdigit():
-                    n = int(num_str)
-                    numbers.append(n)
-                    clinic_queue_details.append({"number": n, "status": status_str})
-                    if "未看診" in status_str:
-                        waiting_list.append(n)
-
-        period_name_map = {"1": "上午", "2": "下午", "3": "晚上"}
-        session_type = period_name_map.get(period, period)
+        log.info(
+            f"[NTUH] ClinicDetail service_id={service_id} room={clinic_room} "
+            f"current={current_number} biggest={biggest_number} next={next_number} "
+            f"total={registered_count} waiting={len(waiting_list)}"
+        )
 
         return ClinicProgress(
-            clinic_room=room,
-            session_type=session_type,
+            clinic_room=clinic_room,
+            session_type="",      # 由呼叫端填入
             current_number=current_number or 0,
-            total_quota=max(numbers) if numbers else None,
-            registered_count=len(numbers) if numbers else None,
+            total_quota=total_quota,
+            registered_count=registered_count,
             status=status,
             waiting_list=waiting_list,
             clinic_queue_details=clinic_queue_details,
         )
+
+    # ─────────────────────────────────────────────────────────
+    # 5. Fetch clinic progress (舊介面，向後相容)
+    # ─────────────────────────────────────────────────────────
+    async def fetch_clinic_progress(
+        self, room: str, period: str, service_id: str = ""
+    ) -> Optional[ClinicProgress]:
+        """
+        抓取診間即時看診進度。
+
+        優先使用 ServiceIDSE（新 API），若無則嘗試從今日列表頁比對診間號碼。
+
+        Args:
+            room:       診間號碼，例如 "02"、"1"
+            period:     時段 "1"=上午, "2"=下午, "3"=晚上
+            service_id: 若已知 ServiceIDSE 可直接傳入（效率較高）
+
+        Returns:
+            Optional[ClinicProgress]
+        """
+        log.info(f"[NTUH] fetch_clinic_progress room={room} period={period} service_id={service_id!r}")
+
+        # ── 若已有 ServiceIDSE，直接查詢 Detail 頁 ──────────────
+        if service_id:
+            result = await self.fetch_clinic_progress_by_service_id(service_id)
+            if result:
+                period_name_map = {"1": "上午", "2": "下午", "3": "晚上"}
+                result.session_type = period_name_map.get(period, period)
+                return result
+
+        # ── 若無 ServiceIDSE：從今日列表頁找對應診間 ─────────────
+        log.info(f"[NTUH] No service_id, fetching clinic list to find room={room}")
+        try:
+            clinic_list = await self.fetch_today_clinic_list()
+        except Exception as e:
+            log.error(f"[NTUH] Failed to fetch clinic list: {e}")
+            return None
+
+        # 比對診間號碼（去除前置零，例如 "02" vs "2"）
+        room_norm = str(int(room)) if room.isdigit() else room
+        matched_sid = None
+        for clinic in clinic_list:
+            c_room = clinic.get("room", "")
+            c_room_norm = str(int(c_room)) if c_room.isdigit() else c_room
+            if c_room_norm == room_norm:
+                matched_sid = clinic.get("service_id")
+                break
+
+        if not matched_sid:
+            log.warning(f"[NTUH] Cannot find ServiceIDSE for room={room} in today's clinic list")
+            return None
+
+        result = await self.fetch_clinic_progress_by_service_id(matched_sid)
+        if result:
+            period_name_map = {"1": "上午", "2": "下午", "3": "晚上"}
+            result.session_type = period_name_map.get(period, period)
+        return result
+
+    def _parse_clinic_progress(
+        self, html: str, room: str, period: str
+    ) -> Optional[ClinicProgress]:
+        """
+        舊版解析方法（保留相容性，現已委派給 _parse_clinic_progress_detail）。
+        """
+        result = self._parse_clinic_progress_detail(html, room)
+        if result:
+            period_name_map = {"1": "上午", "2": "下午", "3": "晚上"}
+            result.session_type = period_name_map.get(period, period)
+            result.clinic_room = room
+        return result
 
 
 # ─────────────────────────────────────────────────────────
@@ -935,3 +1193,4 @@ class NTUHHsinchuScraper(BaseScraper):
 def _make_doctor_no(doctor_name: str) -> str:
     """Generate a stable doctor_no from the doctor's name when no ID is available."""
     return re.sub(r"[^\w]", "", doctor_name)[:12]
+
