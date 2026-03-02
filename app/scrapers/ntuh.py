@@ -165,9 +165,14 @@ class NTUHHsinchuScraper(BaseScraper):
     BASE_URL = "https://reg.ntuh.gov.tw/WebReg/WebReg"
 
     def __init__(self):
+        super().__init__()
         self._client: Optional[httpx.AsyncClient] = None
         # Map dept_code → showBlock letter, populated during fetch_departments
         self._dept_block_map: dict[str, str] = {}
+        # Cache for today's clinic list to avoid redundant parsing
+        self._today_clinic_list_cache: list[dict] = []
+        self._cache_timestamp: Optional[date] = None
+        self._cache_expiry: Optional[now_tw] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -799,18 +804,16 @@ class NTUHHsinchuScraper(BaseScraper):
     async def fetch_today_clinic_list(self, dept_code: str = "") -> list[dict]:
         """
         抓取今日上診的所有診間列表，包含 ServiceIDSE。
-
-        使用 ClinicCurrentLightNo 頁面，透過 POST 查詢指定科部（空字串=全部）。
-        回傳格式: [{"service_id": "7651238", "room": "02", "doctor": "高健能",
-                    "dept": "內科部", "current_number": 3}, ...]
-
-        Args:
-            dept_code: 科部代碼（可空白，空白=全部科部）
-
-        Returns:
-            包含 ServiceIDSE 與診間資訊的 dict list
+        實作緩存機制（5 分鐘有效期），避免重複抓取。
         """
-        log.info(f"[NTUH] fetch_today_clinic_list dept_code={dept_code!r}")
+        now = now_tw()
+        if self._today_clinic_list_cache and self._cache_expiry and now < self._cache_expiry:
+            log.info(f"[NTUH] Using cached clinic list (expires at {self._cache_expiry})")
+            if dept_code:
+                return [c for c in self._today_clinic_list_cache if c.get("dept_code") == dept_code]
+            return self._today_clinic_list_cache
+
+        log.info(f"[NTUH] Cache expired or missing, fetching new clinic list (dept_code={dept_code!r})")
 
         url = f"{self.BASE_URL}/ClinicCurrentLightNo"
 
@@ -827,15 +830,19 @@ class NTUHHsinchuScraper(BaseScraper):
         form_data: dict[str, str] = {}
         for inp in soup_form.find_all("input"):
             name = inp.get("name", "")
-            value = inp.get("value", "")
+            value = inp.get('value', '')
             if name:
                 form_data[name] = value
 
         # Set query parameters — submit with dept if given, else query all
         form_data["DropListHosp"] = "T4"
-        form_data["DropListDept"] = dept_code
+        form_data["DropListRegion"] = ""
+        form_data["DropDownDept"] = dept_code
+        form_data["DropDownAMPM"] = ""
+
         # Try to find the submit button name
-        for btn in soup_form.find_all("input", type="submit"):
+        btn = soup_form.find("input", id="btnQuery") or soup_form.find("input", type="submit")
+        if btn:
             bname = btn.get("name", "")
             if bname:
                 form_data[bname] = btn.get("value", "查詢")
@@ -847,7 +854,16 @@ class NTUHHsinchuScraper(BaseScraper):
             log.error(f"[NTUH] Failed to POST ClinicCurrentLightNo: {e}")
             return []
 
-        return self._parse_clinic_list(html)
+        clinics = self._parse_clinic_list(html)
+        
+        # Update cache if we fetched the full list (dept_code == "")
+        if not dept_code:
+            self._today_clinic_list_cache = clinics
+            from datetime import timedelta
+            self._cache_expiry = now + timedelta(minutes=5)
+            log.info(f"[NTUH] Cached {len(clinics)} clinics, expires at {self._cache_expiry}")
+        
+        return clinics
 
     def _parse_clinic_list(self, html: str) -> list[dict]:
         """
@@ -885,36 +901,42 @@ class NTUHHsinchuScraper(BaseScraper):
                         return m.group(1)
             return None
 
-        # Strategy A: look for clickable clinic cards
-        for card in soup.find_all(["div", "a", "li", "td"]):
+        # Strategy A: look for clickable clinic cards or links with ServiceIDSE
+        for card in soup.find_all(["div", "a", "li", "td", "span"]):
             service_id = _extract_service_id(card)
             if not service_id or service_id in seen_ids:
                 continue
 
             text = card.get_text(separator=" ", strip=True)
-            # Heuristic: clinic cards usually mention 診 and a doctor name
+            # Heuristic: clinic cards mention room "02 診"
             room_m = re.search(r"(\d{1,3})\s*診", text)
             if not room_m:
                 continue
 
-            room = room_m.group(1)
+            # Skip common non-clinic links if any
+            if any(k in text for k in ("我的最愛", "掛號連結", "回首頁")):
+                continue
+
+            room = room_m.group(1).zfill(2)
             doctor = ""
             dept = ""
-            current_number = None
 
             # Try to extract doctor name from nested elements
-            for cls in ("doctor-name", "doc-name", "lightno-name", "lightno-doctor"):
-                el = card.find(class_=re.compile(cls, re.I))
-                if el:
-                    doctor = el.get_text(strip=True)
-                    break
+            doc_el = card.find(class_=re.compile(r"(doctor|doc|lightno-doctor|lightno-name)", re.I))
+            if doc_el:
+                doctor = doc_el.get_text(strip=True)
+            else:
+                # Fallback: find text that looks like a name (not the room)
+                parts = [p.strip() for p in text.split() if p.strip()]
+                for p in parts:
+                    if len(p) >= 2 and p != f"{room}診" and "診" not in p:
+                        doctor = p
+                        break
 
             # Try department
-            for cls in ("dept-name", "dept", "department", "lightno-dept"):
-                el = card.find(class_=re.compile(cls, re.I))
-                if el:
-                    dept = el.get_text(strip=True)
-                    break
+            dept_el = card.find(class_=re.compile(r"(dept|department|lightno-dept)", re.I))
+            if dept_el:
+                dept = dept_el.get_text(strip=True)
 
             # Try current light number (the red number shown on the card)
             for cls in ("lightno-number", "current-no", "now-no", "light-no"):
