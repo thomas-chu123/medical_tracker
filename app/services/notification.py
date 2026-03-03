@@ -298,6 +298,8 @@ async def _send_alerts(
             current_number=current_number,
             remaining=remaining,
             threshold=threshold,
+            hospital_name=hospital_name,
+            clinic_room=clinic_room,
             appointment_number=appointment_number,
             estimated_time=estimated_time,
         )

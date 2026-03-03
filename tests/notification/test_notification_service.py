@@ -1,6 +1,6 @@
 import asyncio
-from datetime import date
-from unittest.mock import AsyncMock, MagicMock, ANY
+from datetime import date, datetime, time
+from unittest.mock import AsyncMock, MagicMock, ANY, patch
 
 import pytest
 from app.services.notification import _process_subscription
@@ -101,6 +101,12 @@ async def test_sends_notification_when_threshold_crossed(
         side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_update_res, mock_log_res, mock_update_res, mock_update_res]
     )
     mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="user@email.com"))
+    
+    # Mock now_tw() at the source (app.core.timezone)
+    from datetime import timezone, timedelta
+    tz = timezone(timedelta(hours=8))
+    afternoon_time = datetime(date.today().year, date.today().month, date.today().day, 14, 30, tzinfo=tz)
+    mocker.patch('app.core.timezone.now_tw', return_value=afternoon_time)
 
     # Act
     await _process_subscription(MagicMock(), subscription)
