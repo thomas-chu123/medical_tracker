@@ -719,7 +719,7 @@ function renderClinicCard(sub, snap) {
 
     // Create onclick handler - show waiting list when clicked
     const clinicRoom = sub.clinic_room || snap?.clinic_room;
-    const onclickHandler = clinicRoom ? `onclick="showClinicWaitingList('${escHtml(sub.doctor_name || 'N/A')}', '${escHtml(clinicRoom)}', '${sub.doctor_id}')"` : '';
+    const onclickHandler = clinicRoom ? `onclick="showClinicWaitingList('${escHtml(sub.doctor_name || 'N/A')}', '${escHtml(clinicRoom)}', '${escHtml(sub.doctor_id)}', '${escHtml(sub.session_type || '')}')"` : '';
     const cursorStyle = clinicRoom ? 'cursor:pointer;' : '';
 
     return `
@@ -762,7 +762,7 @@ async function refreshAll() {
     }
 }
 
-async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
+async function showClinicWaitingList(doctorName, clinicRoom, doctorId, sessionType) {
     const modal = document.getElementById('clinic-waiting-modal');
     document.getElementById('clinic-waiting-title').textContent = `🚪 診間 ${escHtml(clinicRoom)}診 - ${escHtml(doctorName)}`;
     document.getElementById('clinic-waiting-body').innerHTML = '<div class="spinner"></div>';
@@ -771,7 +771,8 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId) {
 
     try {
         // Fetch latest snapshot for this doctor's clinic room
-        const snap = await apiFetch(`/api/snapshots/doctor/${doctorId}/current?clinic_room=${encodeURIComponent(clinicRoom)}`);
+        // 傳遞用戶預約的 session_type，讓後端優先查詢該時段的快照
+        const snap = await apiFetch(`/api/snapshots/doctor/${doctorId}/current?clinic_room=${encodeURIComponent(clinicRoom)}&session_type=${encodeURIComponent(sessionType || '')}`);
         if (!snap) {
             document.getElementById('clinic-waiting-body').innerHTML =
                 '<div class="empty-state"><p>無法獲取候診列表資料</p></div>';

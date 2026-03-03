@@ -419,7 +419,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         if is_today and needs_progress:
             # Define session start times
             session_start_times = {
-                "上午": time(8, 0),      # 08:00
+                "上午": time(8, 30),     # 08:30 - 實際診間開始時間，與 ETA 計算及用戶體驗對齐
                 "下午": time(13, 30),   # 13:30
                 "晚上": time(18, 0),    # 18:00
             }

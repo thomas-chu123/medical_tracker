@@ -50,34 +50,39 @@ async def get_snapshot(snapshot_id: str):
 
 
 @router.get("/doctor/{doctor_id}/current")
-async def get_latest_clinic_snapshot(doctor_id: str, clinic_room: str = None):
+async def get_latest_clinic_snapshot(doctor_id: str, clinic_room: str = None, session_type: str = None):
     """
     Get the latest appointment snapshot for a doctor.
     Optionally filter by clinic_room.
-    Prioritize today's session matching current time, fallback to latest.
+    If session_type is provided (from user's subscription), prioritize that session.
+    Otherwise, fallback to current time heuristic for backward compatibility.
     """
     try:
         supabase = get_supabase()
         today = today_tw_str()
         now = now_tw()
         
-        # Determine preferred session_type based on current time
-        # Logic: Return the session that is currently active or most recently completed
-        hour = now.hour
-        
-        # Define session time windows and preference order
-        if hour < 12:
-            # Morning hours: prefer 上午
-            preferred_sessions = ["上午", "下午", "晚上"]
-        elif hour < 13.5:
-            # Late morning/early afternoon (12:00-13:30): prefer 上午 (just ended or still relevant)
-            preferred_sessions = ["上午", "下午", "晚上"]
-        elif hour < 18:
-            # Afternoon hours (13:30-18:00): prefer 下午, fallback to 上午 (NOT 晚上)
-            preferred_sessions = ["下午", "上午", "晚上"]
+        # Determine preferred session_type: user's subscription session takes priority
+        if session_type and session_type.strip():
+            # 用戶已指定預約時段，優先使用該時段
+            preferred_sessions = [session_type.strip()]
         else:
-            # Evening hours: prefer 晚上
-            preferred_sessions = ["晚上", "下午", "上午"]
+            # 回退：基於當前時刻猜測（適用於無預約時段的查詢）
+            hour = now.hour
+            
+            # Define session time windows and preference order
+            if hour < 12:
+                # Morning hours: prefer 上午
+                preferred_sessions = ["上午", "下午", "晚上"]
+            elif hour < 13.5:
+                # Late morning/early afternoon (12:00-13:30): prefer 上午 (just ended or still relevant)
+                preferred_sessions = ["上午", "下午", "晚上"]
+            elif hour < 18:
+                # Afternoon hours (13:30-18:00): prefer 下午, fallback to 上午 (NOT 晚上)
+                preferred_sessions = ["下午", "上午", "晚上"]
+            else:
+                # Evening hours: prefer 晚上
+                preferred_sessions = ["晚上", "下午", "上午"]
         
         # First try: Get today's session
         query = supabase.table("appointment_snapshots").select(
@@ -89,16 +94,21 @@ async def get_latest_clinic_snapshot(doctor_id: str, clinic_room: str = None):
         
         result = query.execute()
         
-        # If we have multiple today's records, pick the one matching current time
+        # If we have multiple today's records, pick the one matching preferred session type
         if result.data and len(result.data) > 1:
             # Sort by preferred session type order, then by latest scraped_at
-            sorted_data = sorted(
-                result.data,
-                key=lambda x: (
-                    preferred_sessions.index(x.get("session_type", "上午")),
-                    -int(x.get("scraped_at", "").replace("T", "").replace(":", "").replace("-", "").replace("+", "").replace(".", "").replace("Z", "") or "0")
-                )
-            )
+            def get_priority(snap):
+                snap_type = snap.get("session_type", "上午")
+                try:
+                    session_idx = preferred_sessions.index(snap_type)
+                except ValueError:
+                    session_idx = 999  # Not in preferred list
+                
+                # Extract timestamp for sorting (timestamp descending = negative for sorting)
+                timestamp = int(snap.get("scraped_at", "").replace("T", "").replace(":", "").replace("-", "").replace("+", "").replace(".", "").replace("Z", "") or "0")
+                return (session_idx, -timestamp)  # Session priority first, then latest time
+            
+            sorted_data = sorted(result.data, key=get_priority)
             result.data = sorted_data[:1]
         
         # If no today's data, try to get the latest snapshot regardless of date
