@@ -827,13 +827,13 @@ class NTUHHsinchuScraper(BaseScraper):
     # ─────────────────────────────────────────────────────────
     # 3. Fetch today's clinic list (for progress tracking)
     # ─────────────────────────────────────────────────────────
-    async def fetch_today_clinic_list(self, dept_code: str = "") -> list[dict]:
+    async def fetch_today_clinic_list(self, dept_code: str = "", period: Optional[str] = None) -> list[dict]:
         """
         獲取今日診間列表。
         NTUH 做法：透過 AJAX 請求 DeptLightTable 獲得該科別的即時看診列表。
         """
-        # 使用科別代碼作為緩存鍵
-        cache_key = f"clinic_list_{dept_code}"
+        # 使用科別與時段作為緩存鍵
+        cache_key = f"clinic_list_{dept_code}_{period or 'auto'}"
         now = now_tw()
         
         # 檢查緩存（需要加鎖防止競態）
@@ -841,10 +841,10 @@ class NTUHHsinchuScraper(BaseScraper):
             if cache_key in self._cache:
                 data, expiry = self._cache[cache_key]
                 if now < expiry:
-                    log.info(f"[NTUH] Using cached clinic list for dept={dept_code!r} (expires at {expiry})")
+                    log.info(f"[NTUH] Using cached clinic list for dept={dept_code!r} period={period} (expires at {expiry})")
                     return data
 
-        log.info(f"[NTUH] Fetching clinic list via AJAX for dept={dept_code!r}")
+        log.info(f"[NTUH] Fetching clinic list via AJAX for dept={dept_code!r} period={period}")
         
         # 1. 先獲取頁面以取得最新的 RequestVerificationToken
         url = f"{self.BASE_URL}/ClinicCurrentLightNo"
@@ -876,13 +876,16 @@ class NTUHHsinchuScraper(BaseScraper):
         # 2. 發送 AJAX POST 請求
         ajax_url = f"{self.BASE_URL}/DeptLightTable"
         
-        # 自動判定時段 (1:上午, 2:下午, 3:夜間)
-        if now.hour < 12:
-            ampm = "1"
-        elif now.hour < 17:
-            ampm = "2"
+        # 優先使用傳入的 period (1:上午, 2:下午, 3:夜間)，否則依據目前時間判定
+        if period in ("1", "2", "3"):
+            ampm = period
         else:
-            ampm = "3"
+            if now.hour < 12:
+                ampm = "1"
+            elif now.hour < 17:
+                ampm = "2"
+            else:
+                ampm = "3"
 
         payload = {
             "__RequestVerificationToken": token,
@@ -914,7 +917,7 @@ class NTUHHsinchuScraper(BaseScraper):
             # 為了向後相容
             self._today_clinic_list_cache = clinics
             self._cache_expiry = expiry
-            log.info(f"[NTUH] Cached {len(clinics)} clinics for dept={dept_code}")
+            log.info(f"[NTUH] Cached {len(clinics)} clinics for dept={dept_code} period={period}")
         
         return clinics
 
@@ -1225,7 +1228,7 @@ class NTUHHsinchuScraper(BaseScraper):
         dept_code = kwargs.get("dept_code", "")
         log.info(f"[NTUH] No service_id, fetching clinic list to find room={room} (dept_code={dept_code!r})")
         try:
-            clinic_list = await self.fetch_today_clinic_list(dept_code)
+            clinic_list = await self.fetch_today_clinic_list(dept_code, period=period)
         except Exception as e:
             log.error(f"[NTUH] Failed to fetch clinic list: {e}")
             return None

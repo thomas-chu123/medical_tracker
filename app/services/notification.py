@@ -82,6 +82,25 @@ async def _process_subscription(supabase, sub: dict):
         log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: current_number is None, skipping")
         return
 
+    # ── Time gate: do NOT notify before session start time ────────────────────
+    import datetime as _dt
+    from app.core.timezone import now_tw
+    _now = now_tw()
+    _session_start_times = {
+        "上午": _dt.time(8, 0),
+        "下午": _dt.time(13, 30),
+        "晚上": _dt.time(18, 0),
+    }
+    if session_type in _session_start_times:
+        _start = _dt.datetime.combine(_now.date(), _session_start_times[session_type], tzinfo=_now.tzinfo)
+        if _now < _start:
+            log.info(
+                f"[Notification] sub={sub_id_short} doc={doctor_id_short} ({session_type}): "
+                f"skipping — session starts at {_start.strftime('%H:%M')}, now={_now.strftime('%H:%M')}"
+            )
+            return
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Use appointment_number if set by user, fallback to 999 (should not happen in practice)
     target_number = sub.get("appointment_number")
     if target_number is None:

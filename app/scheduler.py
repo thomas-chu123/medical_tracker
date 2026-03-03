@@ -467,16 +467,25 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "session_date": str(slot.session_date),
             "session_type": slot.session_type,
             "clinic_room": slot.clinic_room or "",
-            "current_registered": registered_count,
             "is_full": slot.is_full,
-            "status": status,
             "scraped_at": now_utc_str(),
         }
-        # Only write current_number / total_quota / waiting_list / clinic_queue_details if we actually have values.
-        # This prevents the排班 (schedule) UPSERT from overwriting previously scraped
+        # Only write fields if we actually have values from either schedule (slot) or progress.
+        # This prevents the schedule UPSERT from overwriting previously scraped
         # real-time progress data with null values when the clinic hasn't opened yet.
+        
+        # Determine status. Favor realtime progress status, fallback to slot status if it exists and is meaningful.
+        final_status = status if status else (slot.status if slot.status else None)
+        
+        if final_status:
+            row["status"] = final_status
+            
+        if registered_count is not None:
+            row["current_registered"] = registered_count
+        
         if current_number is not None:
             row["current_number"] = current_number
+            
         if total_quota is not None:
             row["total_quota"] = total_quota
         if waiting_list:
