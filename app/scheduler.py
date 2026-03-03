@@ -74,32 +74,35 @@ async def _sync_hospital_morning_progress(scraper):
         supabase = get_supabase()
         today_str = str(date.today())
         
-        # 1. Get tracked doctor_ids for today
+        # 1. Get tracked doctor_ids from tracking_subscriptions
+        # NOTE: tracking_subscriptions is the active table (not the legacy 'tracking' table)
         tracking_res = await asyncio.to_thread(
-            lambda: supabase.table("tracking")
+            lambda: supabase.table("tracking_subscriptions")
             .select("doctor_id")
-            .eq("session_date", today_str)
-            .eq("is_active", True)
             .execute()
         )
-        tracked_doctor_ids = list(set([t["doctor_id"] for t in (tracking_res.data or [])]))
+        # Collect all unique tracked doctor_ids
+        all_tracked_doctor_ids = list(set([t["doctor_id"] for t in (tracking_res.data or []) if t.get("doctor_id")]))
         
-        if not tracked_doctor_ids:
-            logger.info(f"[Scheduler] No tracked appointments found for today. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
+        if not all_tracked_doctor_ids:
+            logger.info(f"[Scheduler] No tracked appointments found in tracking_subscriptions. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
             return
+        
+        tracked_doctor_ids = all_tracked_doctor_ids
 
-        # 2. Fetch latest snapshots for these doctors today
+        # 2. Fetch latest snapshots for these doctors today, FILTERING BY HOSPITAL ID
         res = await asyncio.to_thread(
             lambda: supabase.table("appointment_snapshots")
-            .select("*, doctors(doctor_no, name), departments(code)")
+            .select("*, doctors!inner(doctor_no, name, hospital_id), departments(code)")
             .in_("doctor_id", tracked_doctor_ids)
             .eq("session_date", today_str)
+            .eq("doctors.hospital_id", hosp_id)  # MUST filter by this scraper's hospital
             .execute()
         )
         
         snapshots = res.data or []
         if not snapshots:
-            logger.info(f"[Scheduler] No existing snapshots found for tracked doctors today. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
+            logger.info(f"[Scheduler] No existing snapshots found for tracked doctors today at {scraper.HOSPITAL_CODE}. Skipping morning sync.")
             return
 
         logger.info(f"[Scheduler] Syncing {len(snapshots)} tracked morning snapshots for {scraper.HOSPITAL_CODE}")
@@ -421,14 +424,15 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                 "晚上": time(18, 0),    # 18:00
             }
             
-            # Check if current session type is within its scheduled window
+            # Check if current session type is valid
             if slot.session_type in session_start_times:
                 start_time = session_start_times[slot.session_type]
                 session_start_dt = datetime.combine(slot.session_date, start_time, tzinfo=now.tzinfo)
                 session_end_dt = session_start_dt + timedelta(hours=8)
                 
-                # Only fetch realtime if we're between session start and 8 hours later
-                if now >= session_start_dt and now < session_end_dt:
+                # Fetch as long as the session hasn't completely ended (e.g., 8 hours after start)
+                # This ensures we can get data at 8:00 AM for afternoon/evening clinics too!
+                if now < session_end_dt:
                     should_fetch_realtime = True
 
         # If it's time to fetch real-time progress
@@ -463,16 +467,25 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "session_date": str(slot.session_date),
             "session_type": slot.session_type,
             "clinic_room": slot.clinic_room or "",
-            "current_registered": registered_count,
             "is_full": slot.is_full,
-            "status": status,
             "scraped_at": now_utc_str(),
         }
-        # Only write current_number / total_quota / waiting_list / clinic_queue_details if we actually have values.
-        # This prevents the排班 (schedule) UPSERT from overwriting previously scraped
+        # Only write fields if we actually have values from either schedule (slot) or progress.
+        # This prevents the schedule UPSERT from overwriting previously scraped
         # real-time progress data with null values when the clinic hasn't opened yet.
+        
+        # Determine status. Favor realtime progress status, fallback to slot status if it exists and is meaningful.
+        final_status = status if status else (slot.status if slot.status else None)
+        
+        if final_status:
+            row["status"] = final_status
+            
+        if registered_count is not None:
+            row["current_registered"] = registered_count
+        
         if current_number is not None:
             row["current_number"] = current_number
+            
         if total_quota is not None:
             row["total_quota"] = total_quota
         if waiting_list:

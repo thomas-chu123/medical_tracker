@@ -619,9 +619,20 @@ async function renderDashboardTracking() {
         return;
     }
 
+    // Sort by session_date ASC, then by session_type (上午 < 下午 < 晚上)
+    const periodOrder = { '上午': 1, '下午': 2, '晚上': 3 };
+    filtered.sort((a, b) => {
+        const dateA = a.session_date || '';
+        const dateB = b.session_date || '';
+        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+        const orderA = periodOrder[a.session_type] ?? 9;
+        const orderB = periodOrder[b.session_type] ?? 9;
+        return orderA - orderB;
+    });
+
     const cards = filtered.map(sub => renderClinicCard(sub, null));
     grid.innerHTML = cards.join('');
-    console.log('[renderDashboardTracking] Rendered', cards.length, 'cards');
+    console.log('[renderDashboardTracking] Rendered', cards.length, 'cards (sorted by date+period)');
 }
 
 function renderClinicCard(sub, snap) {

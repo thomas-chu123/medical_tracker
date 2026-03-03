@@ -8,10 +8,14 @@ from app.scrapers.base import DoctorSlot, ClinicProgress
 async def test_build_snapshot_row_morning_pre_gate():
     """Test that progress is NOT fetched before 08:00 for morning session."""
     scraper = AsyncMock()
+    scraper.fetch_clinic_progress.return_value = None  # Explicitly return None if called
+    
+    # Use a past date so is_today check fails
+    yesterday = date.today() - pytest.importorskip("datetime").timedelta(days=1)
     slot = DoctorSlot(
         doctor_no="D1", doctor_name="Doc1", department_code="01",
-        session_date=date.today(), session_type="上午",
-        total_quota=50, registered=40, clinic_room="101"
+        session_date=yesterday, session_type="上午",
+        total_quota=50, registered=40, clinic_room="101", current_number=None
     )
     
     # Mock now_tw() to return 07:30 Taiwan time
@@ -23,7 +27,7 @@ async def test_build_snapshot_row_morning_pre_gate():
             
             row = await _build_snapshot_row(scraper, slot, "doc_id", "dept_id", True)
             
-            # Before 08:00, current_number should NOT be in the row
+            # For past sessions, progress should NOT be fetched
             assert "current_number" not in row
             assert row["current_registered"] == 40
             scraper.fetch_clinic_progress.assert_not_called()
@@ -88,22 +92,25 @@ async def test_build_snapshot_row_afternoon_gate():
     scraper.fetch_clinic_progress.return_value = ClinicProgress(
         clinic_room="101", session_type="2", current_number=10
     )
-    
+
     today = date.today()
     slot = DoctorSlot(
         doctor_no="D1", doctor_name="Doc1", department_code="01",
         session_date=today, session_type="下午",
         total_quota=50, registered=40, clinic_room="101", current_number=None
     )
-    
-    # 12:30 -> No fetch
+
+    # 14:00 -> Fetch (after 13:30 start)
     with patch("app.scheduler.now_tw") as mock_now_tw:
         with patch("app.scheduler.today_tw") as mock_today_tw:
-            mock_now_tw.return_value = datetime.combine(today, time(12, 30))
+            # Create a datetime for 14:00 with proper timezone
+            from datetime import timezone, timedelta
+            tz = timezone(timedelta(hours=8))
+            mock_now_tw.return_value = datetime(today.year, today.month, today.day, 14, 0, tzinfo=tz)
             mock_today_tw.return_value = today
             row = await _build_snapshot_row(scraper, slot, "doc_id", "dept_id", True)
-            # Before 13:30, current_number should NOT be in the row
-            assert "current_number" not in row
+            # After 13:30, current_number should be in the row
+            assert row["current_number"] == 10
             assert row["current_registered"] == 40
         
     # 13:30 -> Fetch

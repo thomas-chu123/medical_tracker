@@ -14,11 +14,29 @@ from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_message_api import send_line_message, build_line_message
 from app.core.logger import logger as log
 from app.core.timezone import today_tw_str, now_tw
+from app.scrapers.hospital_registry import HOSPITAL_SCRAPERS
 
 
 def _run(fn):
     """Run a synchronous Supabase call in a thread pool executor."""
     return asyncio.to_thread(fn)
+
+
+def _get_scraper_for_hospital(hospital_code: str):
+    """
+    根據醫院代碼獲取爬蟲實例。
+    
+    Args:
+        hospital_code: 醫院代碼，例如 "CMUH_TAICHUNG"
+    
+    Returns:
+        爬蟲實例，如果找不到則回傳 None
+    """
+    scraper_class = HOSPITAL_SCRAPERS.get(hospital_code)
+    if scraper_class:
+        return scraper_class()
+    return None
+
 
 
 async def check_and_notify():
@@ -82,6 +100,25 @@ async def _process_subscription(supabase, sub: dict):
         log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: current_number is None, skipping")
         return
 
+    # ── Time gate: do NOT notify before session start time ────────────────────
+    import datetime as _dt
+    from app.core.timezone import now_tw
+    _now = now_tw()
+    _session_start_times = {
+        "上午": _dt.time(8, 0),
+        "下午": _dt.time(13, 30),
+        "晚上": _dt.time(18, 0),
+    }
+    if session_type in _session_start_times:
+        _start = _dt.datetime.combine(_now.date(), _session_start_times[session_type], tzinfo=_now.tzinfo)
+        if _now < _start:
+            log.info(
+                f"[Notification] sub={sub_id_short} doc={doctor_id_short} ({session_type}): "
+                f"skipping — session starts at {_start.strftime('%H:%M')}, now={_now.strftime('%H:%M')}"
+            )
+            return
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Use appointment_number if set by user, fallback to 999 (should not happen in practice)
     target_number = sub.get("appointment_number")
     if target_number is None:
@@ -90,27 +127,52 @@ async def _process_subscription(supabase, sub: dict):
         # Standard: target_number = total_quota or 0
         target_number = total_quota or 0
 
+    # Fetch hospital info (name and code) to determine scraper for remaining calculation
+    hospital_id = (sub.get("doctors") or {}).get("hospital_id")
+    hospital_name = "未知醫院"
+    hospital_code = None
+    if hospital_id:
+        hosp_res = await _run(
+            lambda: supabase.table("hospitals").select("name, code").eq("id", hospital_id).maybe_single().execute()
+        )
+        if hosp_res.data:
+            hospital_name = hosp_res.data.get("name", "未知醫院")
+            hospital_code = hosp_res.data.get("code")
+
     # Calculate remaining people BETWEEN current_number and target_number
-    # Using clinic_queue_details with status check (exclude "完成")
-    if clinic_queue_details:
-        # Count items where: number > current_number AND number < target_number AND status != "完成"
+    # Use hospital-specific scraper to calculate remaining count
+    remaining = 0
+    scraper = _get_scraper_for_hospital(hospital_code) if hospital_code else None
+    
+    if scraper:
+        # Use hospital-specific calculation logic
+        remaining = scraper.calculate_remaining_count(
+            current_number=current_number,
+            target_number=target_number,
+            clinic_queue_details=clinic_queue_details,
+        )
+        log.debug(f"[Notification] Using scraper {hospital_code} to calculate remaining: {remaining}")
+    elif clinic_queue_details:
+        # Fallback: try generic calculation with status check (for backward compatibility)
         remaining = len([
             item for item in clinic_queue_details
             if item.get("number", 0) > current_number 
             and item.get("number", 0) < target_number 
             and item.get("status") != "完成"
         ])
-        # If user's number is already past current, no one is ahead
         if current_number >= target_number:
             remaining = 0
+        log.debug(f"[Notification] Using fallback clinic_queue_details calculation: {remaining}")
     elif waiting_list:
         # Fallback to waiting_list if clinic_queue_details is missing
         remaining = len([x for x in waiting_list if x < target_number])
         if current_number > target_number:
             remaining = 0
+        log.debug(f"[Notification] Using fallback waiting_list calculation: {remaining}")
     else:
         # Last resort: simple calculation
         remaining = max(0, target_number - current_number)
+        log.debug(f"[Notification] Using simple calculation: {remaining}")
 
     # Build context for notifications
     doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
@@ -118,16 +180,21 @@ async def _process_subscription(supabase, sub: dict):
     session_date_str = tw_today  # Use Taiwan date for display
     session_type_str = sub.get("session_type", "")
     clinic_room = snap.get("clinic_room", "未提供")
+    appointment_number = sub.get("appointment_number")
 
-    # Fetch hospital name
-    hospital_id = (sub.get("doctors") or {}).get("hospital_id")
-    hospital_name = "未知醫院"
-    if hospital_id:
-        hosp_res = await _run(
-            lambda: supabase.table("hospitals").select("name").eq("id", hospital_id).maybe_single().execute()
-        )
-        if hosp_res.data:
-            hospital_name = hosp_res.data.get("name", "未知醫院")
+    # Estimate appointment time: assume ~5 min per patient
+    estimated_time: str | None = None
+    if appointment_number and remaining is not None:
+        from app.core.timezone import now_tw
+        import math
+        wait_minutes = math.ceil(remaining * 5)
+        now = now_tw()
+        est_dt = now + __import__('datetime').timedelta(minutes=wait_minutes)
+        # If estimated time crosses into next day, include date context
+        if est_dt.date() > now.date():
+            estimated_time = est_dt.strftime("%m/%d %H:%M")
+        else:
+            estimated_time = est_dt.strftime("%H:%M")
 
     # Fetch user's LINE User ID and notification settings from users_local
     try:
@@ -146,7 +213,7 @@ async def _process_subscription(supabase, sub: dict):
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
 
-    log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: remaining={remaining}, target={target_number}, current={current_number}, wl={waiting_list}, email={user_email}")
+    log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: remaining={remaining}, target={target_number}, current={current_number}, wl={waiting_list}, email={user_email}, estimated_time={estimated_time}")
 
     tasks = []
 
@@ -192,7 +259,8 @@ async def _process_subscription(supabase, sub: dict):
                 remaining=remaining,
                 threshold=threshold,
                 notified_flag=notified_flag,
-                appointment_number=sub.get("appointment_number"),
+                appointment_number=appointment_number,
+                estimated_time=estimated_time,
             )
         )
         break
@@ -225,6 +293,7 @@ async def _send_alerts(
     threshold: int = 0,
     notified_flag: str = "",
     appointment_number: int | None = None,
+    estimated_time: str | None = None,
 ):
     send_tasks = []
 
@@ -240,6 +309,7 @@ async def _send_alerts(
             remaining=remaining,
             threshold=threshold,
             appointment_number=appointment_number,
+            estimated_time=estimated_time,
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "email", email, f"Email: {subject}",
@@ -261,6 +331,10 @@ async def _send_alerts(
             current_number=current_number,
             remaining=remaining,
             threshold=threshold,
+            hospital_name=hospital_name,
+            clinic_room=clinic_room,
+            appointment_number=appointment_number,
+            estimated_time=estimated_time,
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "line", line_user_id, f"LINE: {message}",
