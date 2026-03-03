@@ -161,6 +161,7 @@ doctor_info_debug.html
 output.json
 *.tmp
 temp/
+doc/
 allure-results/
 allure-results/report/
 report/
