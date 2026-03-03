@@ -118,6 +118,16 @@ async def _process_subscription(supabase, sub: dict):
     session_date_str = tw_today  # Use Taiwan date for display
     session_type_str = sub.get("session_type", "")
     clinic_room = snap.get("clinic_room", "未提供")
+    appointment_number = sub.get("appointment_number")
+
+    # Estimate appointment time: assume ~5 min per patient
+    estimated_time: str | None = None
+    if appointment_number and remaining is not None:
+        from app.core.timezone import now_tw
+        import math
+        wait_minutes = math.ceil(remaining * 5)
+        est_dt = now_tw() + __import__('datetime').timedelta(minutes=wait_minutes)
+        estimated_time = est_dt.strftime("%H:%M")
 
     # Fetch hospital name
     hospital_id = (sub.get("doctors") or {}).get("hospital_id")
@@ -146,7 +156,7 @@ async def _process_subscription(supabase, sub: dict):
     # Fetch user email from auth (non-blocking)
     user_email = await _get_user_email(supabase, sub["user_id"])
 
-    log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: remaining={remaining}, target={target_number}, current={current_number}, wl={waiting_list}, email={user_email}")
+    log.info(f"[Notification] sub={sub_id_short} doc={doctor_id_short}: remaining={remaining}, target={target_number}, current={current_number}, wl={waiting_list}, email={user_email}, estimated_time={estimated_time}")
 
     tasks = []
 
@@ -192,7 +202,8 @@ async def _process_subscription(supabase, sub: dict):
                 remaining=remaining,
                 threshold=threshold,
                 notified_flag=notified_flag,
-                appointment_number=sub.get("appointment_number"),
+                appointment_number=appointment_number,
+                estimated_time=estimated_time,
             )
         )
         break
@@ -225,6 +236,7 @@ async def _send_alerts(
     threshold: int = 0,
     notified_flag: str = "",
     appointment_number: int | None = None,
+    estimated_time: str | None = None,
 ):
     send_tasks = []
 
@@ -240,6 +252,7 @@ async def _send_alerts(
             remaining=remaining,
             threshold=threshold,
             appointment_number=appointment_number,
+            estimated_time=estimated_time,
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "email", email, f"Email: {subject}",
@@ -261,6 +274,8 @@ async def _send_alerts(
             current_number=current_number,
             remaining=remaining,
             threshold=threshold,
+            appointment_number=appointment_number,
+            estimated_time=estimated_time,
         )
         send_tasks.append(_send_and_log(
             supabase, sub_id, threshold, "line", line_user_id, f"LINE: {message}",

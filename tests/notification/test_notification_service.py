@@ -1,6 +1,6 @@
 import asyncio
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, ANY
 
 import pytest
 from app.services.notification import _process_subscription
@@ -120,6 +120,7 @@ async def test_sends_notification_when_threshold_crossed(
         remaining=9,
         threshold=10,
         appointment_number=15,
+        estimated_time=ANY,
     )
     assert mock_run.call_count >= 4
 
@@ -228,4 +229,5 @@ async def test_multiple_thresholds_trigger_once(
         remaining=4,
         threshold=20,
         appointment_number=10,
+        estimated_time=ANY,
     )

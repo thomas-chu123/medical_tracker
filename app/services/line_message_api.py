@@ -93,8 +93,12 @@ def build_line_message(
     current_number: int,
     remaining: int,
     threshold: int,
+    appointment_number: int | None = None,
+    estimated_time: str | None = None,
 ) -> str:
     """Build a formatted LINE message."""
+    appt_line = f"🎫 您的號碼：{appointment_number}\n" if appointment_number else ""
+    est_time_line = f"⏱️ 預計看診時間：約 {estimated_time}\n" if estimated_time else ""
     return (
         f"\n⏰ 門診進度提醒\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -103,6 +107,8 @@ def build_line_message(
         f"📅 日期：{session_date} {session_type}\n"
         f"📍 目前號碼：{current_number}\n"
         f"⚡ 距您還剩：{remaining} 人\n"
+        f"{appt_line}"
+        f"{est_time_line}"
         f"━━━━━━━━━━━━━━━\n"
         f"您設定的提醒門檻為前 {threshold} 號，請儘快前往候診！"
     )
