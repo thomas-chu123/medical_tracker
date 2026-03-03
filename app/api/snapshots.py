@@ -3,6 +3,7 @@ API endpoints for appointment snapshots.
 """
 
 from fastapi import APIRouter, HTTPException
+from datetime import datetime
 from app.database import get_supabase
 from app.core.timezone import today_tw_str, now_tw
 
@@ -105,7 +106,18 @@ async def get_latest_clinic_snapshot(doctor_id: str, clinic_room: str = None, se
                     session_idx = 999  # Not in preferred list
                 
                 # Extract timestamp for sorting (timestamp descending = negative for sorting)
-                timestamp = int(snap.get("scraped_at", "").replace("T", "").replace(":", "").replace("-", "").replace("+", "").replace(".", "").replace("Z", "") or "0")
+                timestamp_str = snap.get("scraped_at", "")
+                # Parse ISO format: 2026-03-03T15:22:45.123456677+08:00Z
+                if timestamp_str:
+                    # Remove timezone info to parse cleanly
+                    timestamp_str = timestamp_str.split('+')[0].split('Z')[0]
+                    try:
+                        timestamp = int(datetime.fromisoformat(timestamp_str).timestamp() * 1000)
+                    except:
+                        timestamp = 0
+                else:
+                    timestamp = 0
+                
                 return (session_idx, -timestamp)  # Session priority first, then latest time
             
             sorted_data = sorted(result.data, key=get_priority)
