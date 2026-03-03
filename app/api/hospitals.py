@@ -31,6 +31,14 @@ def calculate_eta(
         "下午": "13:30",
         "晚上": "18:00"
     }
+    
+    # 診間持續時間（小時）
+    clinic_durations = {
+        "上午": 8.25,    # 08:30 - 16:45（8 小時 15 分）
+        "下午": 8,       # 13:30 - 21:30（8 小時）
+        "晚上": 8        # 18:00 - 02:00 隔日（8 小時）
+    }
+    
     start_time_str = start_times.get(session_type)
     if not start_time_str:
         return None
@@ -52,9 +60,14 @@ def calculate_eta(
             tzinfo=TAIWAN_TZ
         )
         
-        if target_date < today:
-            # Past clinic session
+        # 計算診間結束時間
+        duration_hours = clinic_durations.get(session_type, 8)
+        schedule_end = schedule_start + timedelta(hours=duration_hours)
+        
+        # 檢查診間是否已結束（當前時間 >= 診間結束時間）
+        if now >= schedule_end:
             return "已結束"
+
 
         # 3. Calculate how many people are ahead
         total_people_ahead = 0
@@ -89,6 +102,12 @@ def calculate_eta(
         
         minutes_per_patient = 3 if session_type == "晚上" else 5
         estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
+        
+        # 防止 ETA 超過診間結束時間
+        if estimated_eta > schedule_end:
+            # 如果計算出的 ETA 已超過診間結束時間，表示已結束或過號
+            return "已結束"
+        
         
         return estimated_eta.strftime("%H:%M")
     except Exception:
