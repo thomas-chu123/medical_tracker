@@ -90,18 +90,19 @@ async def _sync_hospital_morning_progress(scraper):
         
         tracked_doctor_ids = all_tracked_doctor_ids
 
-        # 2. Fetch latest snapshots for these doctors today
+        # 2. Fetch latest snapshots for these doctors today, FILTERING BY HOSPITAL ID
         res = await asyncio.to_thread(
             lambda: supabase.table("appointment_snapshots")
-            .select("*, doctors(doctor_no, name), departments(code)")
+            .select("*, doctors!inner(doctor_no, name, hospital_id), departments(code)")
             .in_("doctor_id", tracked_doctor_ids)
             .eq("session_date", today_str)
+            .eq("doctors.hospital_id", hosp_id)  # MUST filter by this scraper's hospital
             .execute()
         )
         
         snapshots = res.data or []
         if not snapshots:
-            logger.info(f"[Scheduler] No existing snapshots found for tracked doctors today. Skipping morning sync for {scraper.HOSPITAL_CODE}.")
+            logger.info(f"[Scheduler] No existing snapshots found for tracked doctors today at {scraper.HOSPITAL_CODE}. Skipping morning sync.")
             return
 
         logger.info(f"[Scheduler] Syncing {len(snapshots)} tracked morning snapshots for {scraper.HOSPITAL_CODE}")
@@ -416,27 +417,22 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
 
         should_fetch_realtime = False
         if is_today and needs_progress:
-            # Define session start times and pre-session window
+            # Define session start times
             session_start_times = {
                 "上午": time(8, 0),      # 08:00
                 "下午": time(13, 30),   # 13:30
                 "晚上": time(18, 0),    # 18:00
             }
-            # Allow fetching realtime up to 3 hours BEFORE session start.
-            # This ensures the 08:00 morning sync can seed an initial snapshot
-            # for today's 下午診 and 晚上診, so the dashboard shows real data
-            # instead of "—號" until the session officially begins.
-            PRE_SESSION_WINDOW_HOURS = 3
             
-            # Check if current session type is within its scheduled window
+            # Check if current session type is valid
             if slot.session_type in session_start_times:
                 start_time = session_start_times[slot.session_type]
                 session_start_dt = datetime.combine(slot.session_date, start_time, tzinfo=now.tzinfo)
                 session_end_dt = session_start_dt + timedelta(hours=8)
-                # Allow fetching from PRE_SESSION_WINDOW_HOURS before start
-                fetch_window_start = session_start_dt - timedelta(hours=PRE_SESSION_WINDOW_HOURS)
                 
-                if now >= fetch_window_start and now < session_end_dt:
+                # Fetch as long as the session hasn't completely ended (e.g., 8 hours after start)
+                # This ensures we can get data at 8:00 AM for afternoon/evening clinics too!
+                if now < session_end_dt:
                     should_fetch_realtime = True
 
         # If it's time to fetch real-time progress
