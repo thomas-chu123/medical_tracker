@@ -1266,6 +1266,38 @@ class NTUHHsinchuScraper(BaseScraper):
             result.clinic_room = room
         return result
 
+    def calculate_remaining_count(
+        self,
+        current_number: int,
+        target_number: int,
+        clinic_queue_details: list[dict],
+    ) -> int:
+        """
+        計算 NTUH 的待看診人數。
+        
+        NTUH 的燈號狀態不包含"完成"，所以統計所有號碼。
+        統計 current_number 到 target_number 之間的號碼（不做狀態過濾）。
+        
+        Args:
+            current_number: 目前正在看診的號碼
+            target_number: 使用者的掛號號碼
+            clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "已報到"}, ...]
+        
+        Returns:
+            還剩多少人未看診的數量
+        """
+        if not clinic_queue_details or current_number >= target_number:
+            return 0
+        
+        # 統計 current_number < number < target_number 的所有號碼（不做狀態過濾）
+        remaining = len([
+            item for item in clinic_queue_details
+            if item.get("number", 0) > current_number
+            and item.get("number", 0) < target_number
+        ])
+        
+        return remaining
+
 
 # ─────────────────────────────────────────────────────────
 # Utility helpers

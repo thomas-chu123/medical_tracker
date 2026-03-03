@@ -462,6 +462,39 @@ class CMUHScraper(BaseScraper):
             return "晚上"
         return text.strip() or "上午"
 
+    def calculate_remaining_count(
+        self,
+        current_number: int,
+        target_number: int,
+        clinic_queue_details: list[dict],
+    ) -> int:
+        """
+        計算 CMUH 的待看診人數。
+        
+        CMUH 的燈號狀態包含"完成"，所以需要排除。
+        統計 current_number 到 target_number 之間，且狀態不為"完成"的號碼。
+        
+        Args:
+            current_number: 目前正在看診的號碼
+            target_number: 使用者的掛號號碼
+            clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "完成"}, ...]
+        
+        Returns:
+            還剩多少人未看診的數量
+        """
+        if not clinic_queue_details or current_number >= target_number:
+            return 0
+        
+        # 統計 current_number < number < target_number，且狀態不為"完成"的號碼
+        remaining = len([
+            item for item in clinic_queue_details
+            if item.get("number", 0) > current_number
+            and item.get("number", 0) < target_number
+            and item.get("status") != "完成"
+        ])
+        
+        return remaining
+
 
 class CMUHHsinchuScraper(CMUHScraper):
     HOSPITAL_CODE = "CMUH_HSINCHU"

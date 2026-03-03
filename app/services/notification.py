@@ -14,11 +14,29 @@ from app.services.email_service import send_email, build_clinic_alert_email
 from app.services.line_message_api import send_line_message, build_line_message
 from app.core.logger import logger as log
 from app.core.timezone import today_tw_str, now_tw
+from app.scrapers.hospital_registry import HOSPITAL_SCRAPERS
 
 
 def _run(fn):
     """Run a synchronous Supabase call in a thread pool executor."""
     return asyncio.to_thread(fn)
+
+
+def _get_scraper_for_hospital(hospital_code: str):
+    """
+    根據醫院代碼獲取爬蟲實例。
+    
+    Args:
+        hospital_code: 醫院代碼，例如 "CMUH_TAICHUNG"
+    
+    Returns:
+        爬蟲實例，如果找不到則回傳 None
+    """
+    scraper_class = HOSPITAL_SCRAPERS.get(hospital_code)
+    if scraper_class:
+        return scraper_class()
+    return None
+
 
 
 async def check_and_notify():
@@ -109,27 +127,52 @@ async def _process_subscription(supabase, sub: dict):
         # Standard: target_number = total_quota or 0
         target_number = total_quota or 0
 
+    # Fetch hospital info (name and code) to determine scraper for remaining calculation
+    hospital_id = (sub.get("doctors") or {}).get("hospital_id")
+    hospital_name = "未知醫院"
+    hospital_code = None
+    if hospital_id:
+        hosp_res = await _run(
+            lambda: supabase.table("hospitals").select("name, code").eq("id", hospital_id).maybe_single().execute()
+        )
+        if hosp_res.data:
+            hospital_name = hosp_res.data.get("name", "未知醫院")
+            hospital_code = hosp_res.data.get("code")
+
     # Calculate remaining people BETWEEN current_number and target_number
-    # Using clinic_queue_details with status check (exclude "完成")
-    if clinic_queue_details:
-        # Count items where: number > current_number AND number < target_number AND status != "完成"
+    # Use hospital-specific scraper to calculate remaining count
+    remaining = 0
+    scraper = _get_scraper_for_hospital(hospital_code) if hospital_code else None
+    
+    if scraper:
+        # Use hospital-specific calculation logic
+        remaining = scraper.calculate_remaining_count(
+            current_number=current_number,
+            target_number=target_number,
+            clinic_queue_details=clinic_queue_details,
+        )
+        log.debug(f"[Notification] Using scraper {hospital_code} to calculate remaining: {remaining}")
+    elif clinic_queue_details:
+        # Fallback: try generic calculation with status check (for backward compatibility)
         remaining = len([
             item for item in clinic_queue_details
             if item.get("number", 0) > current_number 
             and item.get("number", 0) < target_number 
             and item.get("status") != "完成"
         ])
-        # If user's number is already past current, no one is ahead
         if current_number >= target_number:
             remaining = 0
+        log.debug(f"[Notification] Using fallback clinic_queue_details calculation: {remaining}")
     elif waiting_list:
         # Fallback to waiting_list if clinic_queue_details is missing
         remaining = len([x for x in waiting_list if x < target_number])
         if current_number > target_number:
             remaining = 0
+        log.debug(f"[Notification] Using fallback waiting_list calculation: {remaining}")
     else:
         # Last resort: simple calculation
         remaining = max(0, target_number - current_number)
+        log.debug(f"[Notification] Using simple calculation: {remaining}")
 
     # Build context for notifications
     doctor_name = (sub.get("doctors") or {}).get("name", "未知醫師")
@@ -152,16 +195,6 @@ async def _process_subscription(supabase, sub: dict):
             estimated_time = est_dt.strftime("%m/%d %H:%M")
         else:
             estimated_time = est_dt.strftime("%H:%M")
-
-    # Fetch hospital name
-    hospital_id = (sub.get("doctors") or {}).get("hospital_id")
-    hospital_name = "未知醫院"
-    if hospital_id:
-        hosp_res = await _run(
-            lambda: supabase.table("hospitals").select("name").eq("id", hospital_id).maybe_single().execute()
-        )
-        if hosp_res.data:
-            hospital_name = hosp_res.data.get("name", "未知醫院")
 
     # Fetch user's LINE User ID and notification settings from users_local
     try:

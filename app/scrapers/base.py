@@ -55,3 +55,27 @@ class BaseScraper(ABC):
     @abstractmethod
     async def fetch_clinic_progress(self, room: str, period: str, **kwargs) -> Optional[ClinicProgress]:
         ...
+
+    @abstractmethod
+    def calculate_remaining_count(
+        self,
+        current_number: int,
+        target_number: int,
+        clinic_queue_details: list[dict],
+    ) -> int:
+        """
+        計算從當前號碼到目標號碼之間還有多少人未看診。
+        
+        各醫院的邏輯可能不同，例如：
+        - CMUH：排除狀態為"完成"的號碼
+        - NTUH：統計所有號碼（不過濾特定狀態）
+        
+        Args:
+            current_number: 目前正在看診的號碼
+            target_number: 使用者的掛號號碼
+            clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "完成"}, ...]
+        
+        Returns:
+            還剩多少人未看診的數量
+        """
+        ...
