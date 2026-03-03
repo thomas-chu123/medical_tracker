@@ -126,8 +126,13 @@ async def _process_subscription(supabase, sub: dict):
         from app.core.timezone import now_tw
         import math
         wait_minutes = math.ceil(remaining * 5)
-        est_dt = now_tw() + __import__('datetime').timedelta(minutes=wait_minutes)
-        estimated_time = est_dt.strftime("%H:%M")
+        now = now_tw()
+        est_dt = now + __import__('datetime').timedelta(minutes=wait_minutes)
+        # If estimated time crosses into next day, include date context
+        if est_dt.date() > now.date():
+            estimated_time = est_dt.strftime("%m/%d %H:%M")
+        else:
+            estimated_time = est_dt.strftime("%H:%M")
 
     # Fetch hospital name
     hospital_id = (sub.get("doctors") or {}).get("hospital_id")
