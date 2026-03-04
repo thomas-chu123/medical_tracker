@@ -14,7 +14,8 @@ def calculate_eta(
     current_number: Optional[int],
     registered_count: int, 
     waiting_list: list[int],
-    target_number: Optional[int] = None
+    target_number: Optional[int] = None,
+    session_speed_mins: Optional[float] = None
 ) -> Optional[str]:
     """
     Calculate Estimated Appointment Time (ETA).
@@ -100,7 +101,11 @@ def calculate_eta(
             # If the clinic has already started today, use now as the minimum baseline
             base_time = now
         
-        minutes_per_patient = 3 if session_type == "晚上" else 5
+        if session_speed_mins and session_speed_mins > 0:
+            minutes_per_patient = session_speed_mins
+        else:
+            minutes_per_patient = 3 if session_type == "晚上" else 5
+            
         estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
         
         # 防止 ETA 超過診間結束時間
@@ -275,12 +280,28 @@ async def get_doctor_snapshots(
         key = (snapshot.get("session_date"), snapshot.get("session_type"))
         if key not in seen:
             seen.add(key)
+            # Calculate speed per patient if estimated_wait_minutes is available
+            session_speed_mins = None
+            waiting_count = 0
+            if snapshot.get("waiting_list"):
+                waiting_count = len(snapshot["waiting_list"])
+            elif snapshot.get("clinic_queue_details"):
+                for detail in snapshot["clinic_queue_details"]:
+                    w = detail.get("waiting_count")
+                    if w is not None:
+                        waiting_count = w
+                        break
+            
+            if waiting_count > 0 and snapshot.get("estimated_wait_minutes") is not None:
+                session_speed_mins = float(snapshot["estimated_wait_minutes"]) / waiting_count
+
             snapshot["eta"] = calculate_eta(
                 snapshot.get("session_date"),
                 snapshot.get("session_type"),
                 snapshot.get("current_number"),
                 snapshot.get("current_registered"),
-                snapshot.get("waiting_list")
+                snapshot.get("waiting_list"),
+                session_speed_mins=session_speed_mins
             )
             deduplicated_data.append(snapshot)
             
@@ -303,12 +324,28 @@ async def get_doctor_latest_snapshot(doctor_id: str):
         return None
         
     snapshot = result.data[0]
+    # Calculate speed per patient if estimated_wait_minutes is available
+    session_speed_mins = None
+    waiting_count = 0
+    if snapshot.get("waiting_list"):
+        waiting_count = len(snapshot["waiting_list"])
+    elif snapshot.get("clinic_queue_details"):
+        for detail in snapshot["clinic_queue_details"]:
+            w = detail.get("waiting_count")
+            if w is not None:
+                waiting_count = w
+                break
+    
+    if waiting_count > 0 and snapshot.get("estimated_wait_minutes") is not None:
+        session_speed_mins = float(snapshot["estimated_wait_minutes"]) / waiting_count
+
     snapshot["eta"] = calculate_eta(
         snapshot.get("session_date"),
         snapshot.get("session_type"),
         snapshot.get("current_number"),
         snapshot.get("current_registered"),
-        snapshot.get("waiting_list")
+        snapshot.get("waiting_list"),
+        session_speed_mins=session_speed_mins
     )
     return snapshot
 

@@ -26,6 +26,7 @@ class DoctorSlot:
     current_number: Optional[int] = None
     is_full: bool = False
     status: Optional[str] = None
+    internal_dept_code: Optional[str] = None  # HMMH: internal depid for register_single_doctor.php
 
 
 @dataclass

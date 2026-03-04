@@ -63,7 +63,9 @@ class TrackingRichOut(TrackingOut):
     remaining: Optional[int] = None
     status: Optional[str] = None
     waiting_list: Optional[list[int]] = None
+    clinic_queue_details: Optional[list[dict]] = None
     eta: Optional[str] = None
+    estimated_wait_minutes: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 

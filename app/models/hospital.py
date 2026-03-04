@@ -61,6 +61,7 @@ class SnapshotOut(BaseModel):
     status: Optional[str] = None
     waiting_list: Optional[list[int]] = None
     eta: Optional[str] = None
+    estimated_wait_minutes: Optional[float] = None
     scraped_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

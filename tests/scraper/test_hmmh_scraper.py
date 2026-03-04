@@ -12,41 +12,48 @@ from bs4 import BeautifulSoup
 from app.scrapers.hmmh import HMMHScraper
 
 # Mock HTML for department list
+# Matches the actual progress.php structure: <form action="progressstatus.php">
+# with <select name="dept"> containing all departments (server-rendered, no AJAX)
 MOCK_HMMH_DEPT_HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="zh-tw">
 <body>
-<a href="register_divide.php?depid=1">內科</a>
-<a href="register_divide.php?depid=2">外科</a>
-<a href="register_divide.php?depid=3">兒科</a>
-<a href="register_divide.php?depid=4">婦產科</a>
-<a href="register_divide.php?depid=5">骨科</a>
-<a href="register_divide.php?depid=6">神經科</a>
-<a href="register_divide.php?depid=7">精神科</a>
-<a href="register_divide.php?depid=8">耳鼻喉科</a>
-<a href="register_divide.php?depid=9">眼科</a>
-<a href="register_divide.php?depid=10">牙科</a>
-<a href="register_divide.php?depid=11">皮膚科</a>
-<a href="register_divide.php?depid=12">復健科</a>
-<a href="register_divide.php?depid=13">泌尿科</a>
-<a href="register_divide.php?depid=14">一般外科</a>
-<a href="register_divide.php?depid=15">胃腸科</a>
-<a href="register_divide.php?depid=16">心臟科</a>
-<a href="register_divide.php?depid=17">胸腔科</a>
-<a href="register_divide.php?depid=18">腎臟科</a>
-<a href="register_divide.php?depid=19">新陳代謝科</a>
-<a href="register_divide.php?depid=20">免疫風濕科</a>
-<a href="register_divide.php?depid=21">家醫科</a>
-<a href="register_divide.php?depid=22">感染科</a>
-<a href="register_divide.php?depid=23">腫瘤科</a>
-<a href="register_divide.php?depid=24">放射腫瘤科</a>
-<a href="register_divide.php?depid=25">血液腫瘤科</a>
-<a href="register_divide.php?depid=26">神經外科</a>
-<a href="register_divide.php?depid=27">整形外科</a>
-<a href="register_divide.php?depid=28">中醫科</a>
-<a href="register_divide.php?depid=29">麻醉科</a>
-<a href="register_divide.php?depid=30">物理治療科</a>
-<a href="register_divide.php?depid=31">營養室</a>
+<form method="GET" id="progress" name="progress" action="progressstatus.php">
+    <select id="select-dept" name="dept" class="select">
+        <option value="">請選擇</option>
+        <option value='12'>內科部-內分泌暨新陳代謝科</option>
+        <option value='13'>內科部-胃腸肝膽科</option>
+        <option value='14'>內科部-心臟內科</option>
+        <option value='15'>內科部-胸腔內科</option>
+        <option value='16'>內科部-腎臟內科</option>
+        <option value='18'>內科部-血液腫瘤科</option>
+        <option value='19'>內科部-過敏免疫風濕科</option>
+        <option value='26'>內科部-感染科</option>
+        <option value='1G'>內科部-老年醫學科</option>
+        <option value='20'>其他科系-神經內科</option>
+        <option value='21'>其他科系-精神科</option>
+        <option value='24'>其他科系-皮膚科</option>
+        <option value='70'>其他科系-眼科</option>
+        <option value='71'>其他科系-耳鼻喉頭頸外科</option>
+        <option value='72'>其他科系-牙科</option>
+        <option value='73'>其他科系-復健科</option>
+        <option value='50'>外科部-一般外科</option>
+        <option value='51'>外科部-小兒外科</option>
+        <option value='52'>外科部-骨科</option>
+        <option value='53'>外科部-神經外科</option>
+        <option value='54'>外科部-泌尿科</option>
+        <option value='55'>外科部-整形外科</option>
+        <option value='57'>外科部-乳房外科</option>
+        <option value='90'>婦兒部-婦產科</option>
+        <option value='95'>婦兒部-兒科</option>
+    </select>
+    <select id="select-ap" name="ap" class="select">
+        <option value="">請選擇看診時段</option>
+        <option value="1">上午診</option>
+        <option value="2">下午診</option>
+        <option value="3">夜間診</option>
+    </select>
+</form>
 </body>
 </html>
 """

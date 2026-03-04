@@ -7,7 +7,7 @@ blocking the FastAPI event loop while scraping.
 
 import asyncio
 import random
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from app.core.timezone import now_tw, today_tw, today_tw_str, now_utc_str
 
@@ -24,6 +24,11 @@ from app.services.data_writer import (
     batch_insert_snapshots,
 )
 from app.services.notification import check_and_notify
+from app.services.speed_estimator import (
+    record_speed_sample,
+    get_estimated_wait_minutes,
+    get_previous_snapshot,
+)
 from app.database import get_supabase
 from app.core.logger import logger
 
@@ -460,6 +465,68 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             except Exception as e:
                 logger.error(f"[Scheduler] Error fetching realtime for {slot.clinic_room}診: {e}")
 
+        # ── Speed estimation (for hospitals without queue lists, e.g. HMMH) ──
+        # When we have waiting_count from a HMMH-style progress response,
+        # record a speed sample and compute estimated wait time.
+        estimated_wait_minutes = None
+        waiting_count = None  # raw waiting count from progress
+
+        # Extract waiting_count from clinic_queue_details (HMMH format stores it there)
+        if clinic_queue_details:
+            for detail in clinic_queue_details:
+                w = detail.get("waiting_count")
+                if w is not None:
+                    waiting_count = w
+                    break
+
+        if (
+            should_fetch_realtime
+            and current_number is not None
+            and waiting_count is not None
+        ):
+            try:
+                supabase = get_supabase()
+                session_date_str = str(slot.session_date)
+
+                # 1. Fetch the PREVIOUS snapshot to compute speed
+                prev_snap = await get_previous_snapshot(
+                    supabase, str(doctor_id), session_date_str, slot.session_type
+                )
+
+                # 2. Record speed sample if we have a previous data point
+                if prev_snap and prev_snap.get("current_number") is not None:
+                    prev_at_raw = prev_snap["scraped_at"]
+                    if isinstance(prev_at_raw, str):
+                        prev_at = datetime.fromisoformat(prev_at_raw.replace("Z", "+00:00"))
+                    else:
+                        prev_at = prev_at_raw
+
+                    await record_speed_sample(
+                        supabase=supabase,
+                        doctor_id=str(doctor_id),
+                        session_date=session_date_str,
+                        session_type=slot.session_type,
+                        prev_number=prev_snap["current_number"],
+                        prev_at=prev_at,
+                        curr_number=current_number,
+                        curr_at=now_tw().replace(tzinfo=timezone.utc) if now_tw().tzinfo is None else now_tw(),
+                        hospital_code=scraper.HOSPITAL_CODE,
+                    )
+
+                # 3. Compute estimated wait minutes
+                if waiting_count > 0:
+                    estimated_wait_minutes = await get_estimated_wait_minutes(
+                        supabase=supabase,
+                        doctor_id=str(doctor_id),
+                        session_type=slot.session_type,
+                        waiting_count=waiting_count,
+                        dept_category="default",  # TODO: pass actual dept category
+                        use_fallback=True,
+                    )
+
+            except Exception as e:
+                logger.error(f"[Scheduler] Error in speed estimation for doctor_id={doctor_id}: {e}")
+
 
         row = {
             "doctor_id": doctor_id,
@@ -492,6 +559,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             row["waiting_list"] = waiting_list
         if clinic_queue_details:
             row["clinic_queue_details"] = clinic_queue_details
+        if estimated_wait_minutes is not None:
+            row["estimated_wait_minutes"] = estimated_wait_minutes
         return row
 
     except Exception as e:
