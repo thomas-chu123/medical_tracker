@@ -9,7 +9,7 @@ Scrapes:
 
 import asyncio
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -95,8 +95,8 @@ class HMMHScraper(BaseScraper):
         """
         Scrape department list from find_division.php
         
-        HTML structure:
-        <li class='cl001'><a href='register_divide.php?depid=14'>一般外科</a></li>
+        頁面包含多個科室連結，每個連結的格式為：
+        <a href='register_divide.php?depid=14'>一般外科</a>
         """
         url = f"{self.BASE_URL}/find_division.php"
         html = await self._get(url)
@@ -105,43 +105,46 @@ class HMMHScraper(BaseScraper):
         departments: list[DepartmentData] = []
         current_sort_order = 1
 
-        # Find all department links
-        links = soup.find_all("a", href=True)
-        for a in links:
+        # Find all links with 'depid' parameter
+        for a in soup.find_all("a", href=True):
             href = a["href"]
-            # Match pattern: register_divide.php?depid=XX or any URL with depid=XX
+            
+            # Match pattern: depid=XX (any URL with depid parameter)
             m = self.DEPT_CODE_PATTERN.search(href)
-            if m:
-                code = m.group(1)
-                name = a.get_text(strip=True)
-                
-                # Filter valid department names
-                if not name or len(name) < 2:
-                    continue
-                
-                # Skip children's hospital departments (separate system)
-                if "/child/" in href:
-                    log.debug(f"[HMMH] Skipping children's hospital dept: {name}")
-                    continue
-                
-                # Skip special single-doctor clinics (register_single_doctor.php)
-                if "register_single_doctor.php" in href:
-                    log.debug(f"[HMMH] Skipping single-doctor clinic: {name}")
-                    continue
-                
-                departments.append(
-                    DepartmentData(
-                        name=name,
-                        code=code,
-                        hospital_code=self.HOSPITAL_CODE,
-                        category=self._categorize_department(name),
-                        sort_order=current_sort_order
-                    )
+            if not m:
+                continue
+            
+            code = m.group(1)
+            name = a.get_text(strip=True)
+            
+            # Filter: valid department names (at least 2 characters)
+            if not name or len(name) < 2:
+                log.debug(f"[HMMH] Skipping invalid department name: '{name}'")
+                continue
+            
+            # Skip children's hospital (separate system)
+            if "/child/" in href.lower():
+                log.debug(f"[HMMH] Skipping children's hospital: {name}")
+                continue
+            
+            # Skip single-doctor clinics
+            if "register_single_doctor.php" in href.lower():
+                log.debug(f"[HMMH] Skipping single-doctor clinic: {name}")
+                continue
+            
+            departments.append(
+                DepartmentData(
+                    name=name,
+                    code=code,
+                    hospital_code=self.HOSPITAL_CODE,
+                    category=self._categorize_department(name),
+                    sort_order=current_sort_order
                 )
-                log.debug(f"[HMMH] Added dept: code={code}, name={name}")
-                current_sort_order += 1
-
-        # Deduplicate by code
+            )
+            log.debug(f"[HMMH] Added dept: code={code}, name={name}")
+            current_sort_order += 1
+        
+        # Deduplicate by code (keep first occurrence)
         seen = set()
         unique: list[DepartmentData] = []
         for d in departments:
@@ -212,12 +215,6 @@ class HMMHScraper(BaseScraper):
         Scrape doctor schedule for a specific department
         
         URL: register_divide.php?depid={dept_code}
-        
-        TODO: 需要進一步分析頁面結構來解析醫生排班資訊
-        可能需要：
-        1. 解析 JavaScript 變數
-        2. 或發送 AJAX 請求到後端 API
-        3. 或解析 HTML 表格結構
         """
         log.info(f"[HMMH] fetch_schedule for dept_code={dept_code}")
         url = f"{self.BASE_URL}/register_divide.php"
@@ -226,11 +223,136 @@ class HMMHScraper(BaseScraper):
         soup = BeautifulSoup(html, "lxml")
         slots: list[DoctorSlot] = []
         
-        # TODO: 需要進一步分析頁面來實現醫生排班爬取
-        # 目前先返回空列表
-        log.warning(f"[HMMH] fetch_schedule not yet fully implemented for dept_code={dept_code}")
+        # 找到表格 - 嘗試多種選擇器方式
+        tables = soup.find_all("table")
+        log.debug(f"[HMMH] Found {len(tables)} tables on page")
         
+        for table_idx, table in enumerate(tables):
+            log.debug(f"[HMMH] Processing table {table_idx}")
+            rows = table.find_all("tr")
+            
+            if len(rows) < 3:
+                log.debug(f"[HMMH] Table {table_idx} has only {len(rows)} rows, skipping")
+                continue
+            
+            log.debug(f"[HMMH] Table {table_idx} has {len(rows)} rows")
+            
+            # 計算當週日期
+            today = date.today()
+            days_since_monday = today.weekday()
+            week_start = today - timedelta(days=days_since_monday)
+            log.debug(f"[HMMH] Week start: {week_start}")
+            
+            # 遍歷所有行
+            for row_idx, row in enumerate(rows):
+                cells = row.find_all(["td", "th"])
+                
+                if not cells or len(cells) < 2:
+                    continue
+                
+                # 第一單元格應該是診間號或時段標籤
+                first_cell_text = cells[0].get_text(strip=True)
+                
+                # 診間號應該是數字
+                if first_cell_text.isdigit():
+                    clinic_room = first_cell_text
+                    log.debug(f"[HMMH] Found clinic room: {clinic_room}")
+                    
+                    # 遍歷該行的時段單元格
+                    for col_idx, cell in enumerate(cells[1:]):
+                        cell_text = cell.get_text(strip=True)
+                        
+                        if not cell_text or len(cell_text) < 2:
+                            continue
+                        
+                        # 嘗試解析醫生信息
+                        doctor_info = self._parse_doctor_info(cell_text)
+                        if not doctor_info:
+                            continue
+                        
+                        doctor_name = doctor_info.get("name")
+                        doctor_no = doctor_info.get("code")
+                        
+                        # 計算日期和時段
+                        day_idx = col_idx // 3
+                        period_idx = col_idx % 3
+                        
+                        if day_idx >= 6:
+                            continue
+                        
+                        slot_date = week_start + timedelta(days=day_idx)
+                        session_type = self.PERIOD_MAP.get(str(period_idx + 1), "上午")
+                        
+                        slot = DoctorSlot(
+                            doctor_no=doctor_no,
+                            doctor_name=doctor_name,
+                            department_code=dept_code,
+                            session_date=slot_date,
+                            session_type=session_type,
+                            total_quota=None,
+                            registered=None,
+                            clinic_room=clinic_room,
+                            is_full=False,
+                        )
+                        slots.append(slot)
+                        log.debug(f"[HMMH] Added slot: {doctor_name}({doctor_no}) @ {slot_date} {session_type} clinic {clinic_room}")
+        
+        log.info(f"[HMMH] Found {len(slots)} total doctor slots for dept_code={dept_code}")
         return slots
+
+    @staticmethod
+    def _parse_doctor_info(text: str) -> Optional[dict]:
+        """
+        解析診間單元格中的醫生信息
+        
+        格式: "醫生名 醫生代碼 特殊說明"
+        例如: 
+          - "江瑞凡 4948 靜脈曲張特診含美容雷射"
+          - "吳宥達 4873 含甲狀腺腫瘤診(9:30開始)"
+          - "陳子堯 2114 含外傷科門診"
+        
+        Returns:
+            {"name": "江瑞凡", "code": "4948"} 或 None
+        """
+        text = text.strip()
+        if not text or len(text) < 3:
+            return None
+        
+        # 分割文本
+        parts = text.split()
+        if len(parts) < 2:
+            return None
+        
+        doctor_name = parts[0]
+        
+        # 檢查醫生名是否為有效的中文名字（通常 2-4 字）
+        if not (2 <= len(doctor_name) <= 4):
+            return None
+        
+        # 検查是否包含中文字符（簡易檢查）
+        if not any('\u4e00' <= c <= '\u9fff' for c in doctor_name):
+            return None
+        
+        # 尋找醫生代碼 (4 位數字或混合)
+        doctor_code = None
+        for part in parts[1:]:
+            # 嘗試提取純數字代碼
+            if part.isdigit() and len(part) >= 3:
+                doctor_code = part
+                break
+            # 或提取開頭的數字
+            match = re.match(r'^(\d{3,})', part)
+            if match:
+                doctor_code = match.group(1)
+                break
+        
+        if not doctor_code:
+            return None
+        
+        return {
+            "name": doctor_name,
+            "code": doctor_code
+        }
 
     # ─────────────────────────────────────────────────────────
     # 3. Fetch clinic queue progress
@@ -345,6 +467,37 @@ class HMMHScraper(BaseScraper):
     # ─────────────────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────────────────
+    def calculate_remaining_count(
+        self,
+        current_number: int,
+        target_number: int,
+        clinic_queue_details: list[dict],
+    ) -> int:
+        """
+        計算 HMMH 的待看診人數。
+        
+        HMMH 的燈號狀態類似 CMUH，統計當前號碼到目標號碼之間的個數。
+        
+        Args:
+            current_number: 目前正在看診的號碼
+            target_number: 使用者的掛號號碼
+            clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "未看診"}, ...]
+        
+        Returns:
+            還剩多少人未看診的數量
+        """
+        if not clinic_queue_details or current_number >= target_number:
+            return 0
+        
+        # 統計 current_number < number < target_number 的號碼
+        remaining = len([
+            item for item in clinic_queue_details
+            if item.get("number", 0) > current_number
+            and item.get("number", 0) < target_number
+        ])
+        
+        return remaining
+
     @staticmethod
     def _parse_date(text: str) -> Optional[date]:
         """Parse AD year format date: YYYY/MM/DD or YYYY-MM-DD"""

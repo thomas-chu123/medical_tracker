@@ -2,120 +2,191 @@
 Test script for HMMH scraper
 
 Usage:
-    python -m tests.test_hmmh_scraper
+    python -m pytest tests/scraper/test_hmmh_scraper.py -xvs
 """
 
 import asyncio
+import pytest
+from unittest.mock import AsyncMock, patch
+from bs4 import BeautifulSoup
 from app.scrapers.hmmh import HMMHScraper
 
+# Mock HTML for department list
+MOCK_HMMH_DEPT_HTML = """
+<!DOCTYPE html>
+<html>
+<body>
+<a href="register_divide.php?depid=1">內科</a>
+<a href="register_divide.php?depid=2">外科</a>
+<a href="register_divide.php?depid=3">兒科</a>
+<a href="register_divide.php?depid=4">婦產科</a>
+<a href="register_divide.php?depid=5">骨科</a>
+<a href="register_divide.php?depid=6">神經科</a>
+<a href="register_divide.php?depid=7">精神科</a>
+<a href="register_divide.php?depid=8">耳鼻喉科</a>
+<a href="register_divide.php?depid=9">眼科</a>
+<a href="register_divide.php?depid=10">牙科</a>
+<a href="register_divide.php?depid=11">皮膚科</a>
+<a href="register_divide.php?depid=12">復健科</a>
+<a href="register_divide.php?depid=13">泌尿科</a>
+<a href="register_divide.php?depid=14">一般外科</a>
+<a href="register_divide.php?depid=15">胃腸科</a>
+<a href="register_divide.php?depid=16">心臟科</a>
+<a href="register_divide.php?depid=17">胸腔科</a>
+<a href="register_divide.php?depid=18">腎臟科</a>
+<a href="register_divide.php?depid=19">新陳代謝科</a>
+<a href="register_divide.php?depid=20">免疫風濕科</a>
+<a href="register_divide.php?depid=21">家醫科</a>
+<a href="register_divide.php?depid=22">感染科</a>
+<a href="register_divide.php?depid=23">腫瘤科</a>
+<a href="register_divide.php?depid=24">放射腫瘤科</a>
+<a href="register_divide.php?depid=25">血液腫瘤科</a>
+<a href="register_divide.php?depid=26">神經外科</a>
+<a href="register_divide.php?depid=27">整形外科</a>
+<a href="register_divide.php?depid=28">中醫科</a>
+<a href="register_divide.php?depid=29">麻醉科</a>
+<a href="register_divide.php?depid=30">物理治療科</a>
+<a href="register_divide.php?depid=31">營養室</a>
+</body>
+</html>
+"""
 
+
+@pytest.mark.asyncio
 async def test_fetch_departments():
-    """Test fetching department list"""
-    print("=" * 60)
-    print("Testing HMMH fetch_departments()")
-    print("=" * 60)
+    """Test fetching department list with mocked HTML"""
     
     scraper = HMMHScraper()
-    try:
-        depts = await scraper.fetch_departments()
-        print(f"\n✅ Found {len(depts)} departments\n")
-        
-        # Print first 10 departments
-        for i, dept in enumerate(depts[:10], 1):
-            print(f"{i:2d}. [{dept.code:3s}] {dept.name:20s} - {dept.category}")
-        
-        if len(depts) > 10:
-            print(f"... and {len(depts) - 10} more departments")
-        
-        return depts
-    finally:
-        await scraper.close()
-
-
-async def test_fetch_clinic_progress():
-    """Test fetching clinic progress"""
-    print("\n" + "=" * 60)
-    print("Testing HMMH fetch_clinic_progress()")
-    print("=" * 60)
     
-    scraper = HMMHScraper()
+    # Mock the _get method to return test HTML
+    async def mock_get(url, **kwargs):
+        return MOCK_HMMH_DEPT_HTML
+    
     try:
-        # Test with dept=14 (一般外科), period=1 (上午)
-        dept_code = "14"
-        period = "1"
-        print(f"\nFetching progress for dept={dept_code}, period={period} (上午)")
-        
-        progress = await scraper.fetch_clinic_progress(dept_code, period)
-        
-        if progress:
-            print(f"\n✅ Clinic Progress Retrieved:")
-            print(f"  Clinic Room: {progress.clinic_room}")
-            print(f"  Session Type: {progress.session_type}")
-            print(f"  Current Number: {progress.current_number}")
-            print(f"  Total Quota: {progress.total_quota}")
-            print(f"  Registered Count: {progress.registered_count}")
-            print(f"  Status: {progress.status}")
-            print(f"  Waiting List: {len(progress.waiting_list)} patients")
+        with patch.object(scraper, '_get', side_effect=mock_get):
+            # Call actual method
+            depts = await scraper.fetch_departments()
             
-            if progress.clinic_queue_details:
-                print(f"\n  Queue Details (first 5):")
-                for detail in progress.clinic_queue_details[:5]:
-                    print(f"    #{detail['number']:3d} - {detail['status']}")
-                if len(progress.clinic_queue_details) > 5:
-                    print(f"    ... and {len(progress.clinic_queue_details) - 5} more")
-        else:
-            print("\n⚠️  No progress data available (might be outside clinic hours)")
-        
-        return progress
+            print(f"\n✅ Found {len(depts)} departments via scraper\n")
+            
+            # Verify we got departments
+            assert len(depts) > 0, "Should find at least one department"
+            assert depts[0].code is not None
+            assert depts[0].name is not None
+            
+            # Print first 10 departments
+            for i, dept in enumerate(depts[:10], 1):
+                print(f"{i:2d}. [{dept.code:3s}] {dept.name:20s} - {dept.category}")
+            
+            if len(depts) > 10:
+                print(f"... and {len(depts) - 10} more departments")
+            
+            return depts
     finally:
         await scraper.close()
 
 
-async def test_fetch_schedule():
-    """Test fetching doctor schedule"""
-    print("\n" + "=" * 60)
-    print("Testing HMMH fetch_schedule()")
-    print("=" * 60)
+# Mock HTML for schedule
+MOCK_HMMH_SCHEDULE_HTML = """
+<!DOCTYPE html>
+<html>
+<body>
+<table>
+  <tr>
+    <th>診間</th>
+    <th colspan="3">星期一</th>
+    <th colspan="3">星期二</th>
+  </tr>
+  <tr>
+    <th></th>
+    <th>上午</th>
+    <th>下午</th>
+    <th>晚上</th>
+    <th>上午</th>
+    <th>下午</th>
+    <th>晚上</th>
+  </tr>
+  <tr>
+    <td>14</td>
+    <td>江瑞凡 4948 靜脈曲張特診</td>
+    <td></td>
+    <td>陳志軒 5022</td>
+    <td>李健仁 4875 含肛腸</td>
+    <td></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>15</td>
+    <td>吳宥達 4873 含甲狀腺</td>
+    <td>陳永成 4864</td>
+    <td></td>
+    <td>謝復興 5023</td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_fetch_clinic_progress():
+    """Test fetching clinic progress with mocked HTML"""
     
     scraper = HMMHScraper()
+    
+    # Mock the _get method
+    async def mock_get(url, **kwargs):
+        # Return None to simulate no progress table (outside clinic hours)
+        return """<html><body>尚未開始看診</body></html>"""
+    
     try:
-        # Test with dept=14 (一般外科)
-        dept_code = "14"
-        print(f"\nFetching schedule for dept={dept_code}")
-        
-        slots = await scraper.fetch_schedule(dept_code)
-        
-        if slots:
-            print(f"\n✅ Found {len(slots)} doctor slots\n")
-            for i, slot in enumerate(slots[:5], 1):
-                print(f"{i}. Dr. {slot.doctor_name} - {slot.session_date} {slot.session_type}")
-            if len(slots) > 5:
-                print(f"... and {len(slots) - 5} more slots")
-        else:
-            print("\n⚠️  No schedule data (fetch_schedule not yet fully implemented)")
-        
-        return slots
+        with patch.object(scraper, '_get', side_effect=mock_get):
+            # Call actual method
+            progress = await scraper.fetch_clinic_progress("14", "1")
+            
+            # Should return None when no progress data available
+            print(f"\n⚠️  Clinic progress: {progress}")
+            assert progress is None or progress.current_number is not None, \
+                "Should return None or valid progress object"
     finally:
         await scraper.close()
 
 
-async def main():
-    """Run all tests"""
-    print("\n🏥 馬偕紀念醫院新竹分院 (HMMH) Scraper Test\n")
+@pytest.mark.asyncio
+async def test_fetch_schedule():
+    """Test fetching doctor schedule with mocked HTML"""
     
-    # Test 1: Fetch departments
-    depts = await test_fetch_departments()
+    scraper = HMMHScraper()
     
-    # Test 2: Fetch clinic progress
-    await test_fetch_clinic_progress()
+    # Mock the _get method to return test HTML
+    async def mock_get(url, **kwargs):
+        return MOCK_HMMH_SCHEDULE_HTML
     
-    # Test 3: Fetch schedule (not yet implemented)
-    await test_fetch_schedule()
-    
-    print("\n" + "=" * 60)
-    print("✅ All tests completed!")
-    print("=" * 60)
+    try:
+        with patch.object(scraper, '_get', side_effect=mock_get):
+            # Call actual method
+            slots = await scraper.fetch_schedule("14")
+            
+            print(f"\n✅ Found {len(slots)} doctor slots")
+            
+            # Verify we got slots
+            assert len(slots) > 0, "Should find at least one doctor slot"
+            
+            # Verify slot structure
+            for slot in slots[:5]:
+                assert slot.doctor_name is not None
+                assert slot.doctor_no is not None
+                assert slot.session_date is not None
+                assert slot.session_type in ["上午", "下午", "晚上"]
+                print(f"  {slot.doctor_name:8s} ({slot.doctor_no:4s}) "
+                      f"@ {slot.session_date} {slot.session_type:2s}")
+            
+            if len(slots) > 5:
+                print(f"  ... and {len(slots) - 5} more slots")
+            
+            return slots
+    finally:
+        await scraper.close()
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
