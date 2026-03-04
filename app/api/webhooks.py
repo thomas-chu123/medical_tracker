@@ -1,5 +1,6 @@
 """LINE Message API Webhook handler."""
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -195,23 +196,108 @@ async def _handle_user_message(user_id: str, message_text: str):
     message_lower = message_text.lower().strip()
     
     try:
-        # Handle "link" / "綁定" command for users who are already friends
-        if message_lower in ["link", "綁定", "bind", "連接"]:
+        # Handle "bind CODE" command for users who are already friends
+        # Format: "bind XXXXXX" where XXXXXX is a 6-character code
+        if message_lower.startswith("bind ") or message_lower == "bind":
+            from datetime import datetime
+            
             supabase = get_supabase()
             
-            # Store this LINE User ID as pending for linking
-            # This is for users who already added the bot but need to connect their account
-            supabase.table("line_pending_links").insert({
-                "line_user_id": user_id
-            }).execute()
+            # Extract code from message
+            parts = message_text.strip().split()
+            if len(parts) < 2:
+                await send_line_message(
+                    user_id,
+                    "⚠️ 格式錯誤\n\n"
+                    "請輸入：bind XXXXXX\n\n"
+                    "(XXXXXX 是應用程式提供的 6 位碼)"
+                )
+                return
             
-            await send_line_message(
-                user_id,
-                "✓ 已收到綁定請求！\n\n"
-                "請回到應用程式，進入『個人設定』頁面，\n"
-                "點擊『重新連接 LINE』按鈕完成綁定。"
-            )
-            return
+            temp_code = parts[1].strip()
+            
+            # Look up the code in line_pending_links
+            try:
+                pending_res = await asyncio.to_thread(
+                    lambda: supabase.table("line_pending_links")
+                        .select("id, user_id, temp_code, expires_at")
+                        .eq("temp_code", temp_code)
+                        .is_("line_user_id", "null")  # Must not be already completed
+                        .execute()
+                )
+                
+                if not pending_res.data:
+                    await send_line_message(
+                        user_id,
+                        "❌ 碼不存在或已過期\n\n"
+                        "請檢查：\n"
+                        "1. 碼是否正確\n"
+                        "2. 是否已超過 5 分鐘\n"
+                        "3. 是否已使用過\n\n"
+                        "如需重新綁定，請在應用中重新申請。"
+                    )
+                    return
+                
+                pending_link = pending_res.data[0]
+                expires_at = pending_link["expires_at"]
+                
+                # Check if code has expired
+                if isinstance(expires_at, str):
+                    expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                else:
+                    expires_dt = expires_at
+                
+                if datetime.utcnow() > expires_dt:
+                    await send_line_message(
+                        user_id,
+                        "⏰ 碼已過期\n\n"
+                        "請在應用中重新申請新碼。"
+                    )
+                    return
+                
+                # Code is valid! Update the pending link with this LINE User ID
+                app_user_id = pending_link["user_id"]
+                
+                await asyncio.to_thread(
+                    lambda: supabase.table("line_pending_links")
+                        .update({"line_user_id": user_id})
+                        .eq("id", pending_link["id"])
+                        .execute()
+                )
+                
+                # Now link this LINE User ID to the app user account
+                await asyncio.to_thread(
+                    lambda: supabase.table("users_local")
+                        .update({"line_user_id": user_id})
+                        .eq("id", app_user_id)
+                        .execute()
+                )
+                
+                # Delete the pending link record (cleanup)
+                await asyncio.to_thread(
+                    lambda: supabase.table("line_pending_links")
+                        .delete()
+                        .eq("id", pending_link["id"])
+                        .execute()
+                )
+                
+                print(f"[LINE] Successfully linked user {app_user_id} with LINE User ID {user_id}")
+                
+                await send_line_message(
+                    user_id,
+                    "✅ 綁定成功！\n\n"
+                    "您的帳號已成功連接 LINE Bot。\n"
+                    "將來會透過此管道接收門診通知。"
+                )
+                return
+                
+            except Exception as e:
+                print(f"[LINE] Error processing bind code: {e}")
+                await send_line_message(
+                    user_id,
+                    "❌ 綁定失敗：" + str(e)
+                )
+                return
         
         if message_lower == "help":
             help_text = (

@@ -70,14 +70,22 @@ async def request_line_reconnect(
 ):
     """
     For users who are already LINE friends, request to reconnect by generating
-    a temporary pending link request. User needs to send a message to the bot
-    (e.g., "綁定帳號") to trigger the reconnection process.
+    a temporary one-time code.
     
-    This handles the case where user has already added the bot and wants to
-    re-link their account or link a different account.
+    Returns a code that user must input in LINE to verify they own both the
+    app account and the LINE account.
+    
+    Flow:
+    1. User clicks "Reconnect LINE" in app settings
+    2. Backend generates 6-digit code and stores in line_pending_links with user_id
+    3. Frontend displays "Input 'bind CODE' in LINE Bot"
+    4. User sends message in LINE
+    5. Webhook validates code against user_id and completes the binding
     """
     import asyncio
     from datetime import datetime, timedelta
+    import random
+    import string
     
     supabase = get_supabase()
     
@@ -95,28 +103,25 @@ async def request_line_reconnect(
                 "message": "您的帳號已連接 LINE Bot"
             }
         
-        # Generate a temporary request code (not strictly needed but helpful)
-        import uuid
-        request_id = str(uuid.uuid4())[:8]
+        # Generate a temporary 6-character alphanumeric code
+        temp_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         
-        # Create a pending reconnect request
-        # This is stored so when user sends message "綁定帳號 <request_id>" from LINE, 
-        # we can match it and complete the connection
-        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        # Create a pending reconnect request with the code and user_id
+        expires_at = datetime.utcnow() + timedelta(minutes=5)  # 5 minute window
         
         await asyncio.to_thread(
             lambda: supabase.table("line_pending_links").insert({
-                "line_user_id": None,  # Will be filled when user messages
-                "user_email": current_user.get("email"),  # Store email for matching
-                "request_id": request_id,
+                "user_id": current_user["id"],  # 關鍵：儲存應用用戶 ID
+                "temp_code": temp_code,        # 6位臨時碼
+                "line_user_id": None,          # 待填入
                 "expires_at": expires_at.isoformat()
             }).execute()
         )
         
         return {
             "status": "reconnect_request_sent",
-            "request_id": request_id,
-            "message": f"✓ 重新連接請求已生成。\n\n請在 LINE Bot 中輸入以下指令：\n\n綁定 {request_id}\n\n如果您已加入 Bot，發送訊息即可完成連接。"
+            "temp_code": temp_code,
+            "message": f"✓ 請在 LINE Bot 中輸入以下指令：\n\nbind {temp_code}\n\n(指令有效期為 5 分鐘)"
         }
         
     except Exception as e:
