@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Notion Integration (Optional)
     notion_api: str = ""
 
+    # App URL
+    app_base_url: str = "http://localhost:8000"
+
     # Debug
     debug: int = Field(default=0, description="Enable debug logging (1 or 0)")
 

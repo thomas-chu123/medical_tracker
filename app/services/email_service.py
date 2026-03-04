@@ -140,7 +140,7 @@ def build_clinic_alert_email(
                 </div>
 
                 <div style="margin-top: 30px; text-align: center;">
-                    <a href="https://medical-tracker.thomas-chu.com" style="display: inline-block; padding: 14px 32px; background-color: {primary_color}; color: #ffffff; text-decoration: none; border-radius: 28px; font-weight: 600; font-size: 16px; box-shadow: 0 2px 5px rgba(26,115,232,0.3);">查看完整進度</a>
+                    <a href="{settings.app_base_url}" style="display: inline-block; padding: 14px 32px; background-color: {primary_color}; color: #ffffff; text-decoration: none; border-radius: 28px; font-weight: 600; font-size: 16px; box-shadow: 0 2px 5px rgba(26,115,232,0.3);">查看完整進度</a>
                 </div>
             </div>
 
