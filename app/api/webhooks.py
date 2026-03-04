@@ -182,10 +182,11 @@ async def _handle_user_unfollow(user_id: str):
 async def _handle_user_message(user_id: str, message_text: str):
     """
     Handle user sending a message to the bot.
-    
+
     Examples:
     - "help": Show help message
     - "status": Show tracking status
+    - "綁定" or "link": For users already added the bot, trigger reconnect flow
     """
     print(f"[LINE] Message from {user_id}: {message_text}")
     
@@ -194,6 +195,24 @@ async def _handle_user_message(user_id: str, message_text: str):
     message_lower = message_text.lower().strip()
     
     try:
+        # Handle "link" / "綁定" command for users who are already friends
+        if message_lower in ["link", "綁定", "bind", "連接"]:
+            supabase = get_supabase()
+            
+            # Store this LINE User ID as pending for linking
+            # This is for users who already added the bot but need to connect their account
+            supabase.table("line_pending_links").insert({
+                "line_user_id": user_id
+            }).execute()
+            
+            await send_line_message(
+                user_id,
+                "✓ 已收到綁定請求！\n\n"
+                "請回到應用程式，進入『個人設定』頁面，\n"
+                "點擊『重新連接 LINE』按鈕完成綁定。"
+            )
+            return
+        
         if message_lower == "help":
             help_text = (
                 "📖 使用說明\n\n"
@@ -202,6 +221,7 @@ async def _handle_user_message(user_id: str, message_text: str):
                 "指令說明：\n"
                 "• help - 顯示此說明\n"
                 "• status - 查詢追蹤狀態\n"
+                "• 綁定 - 如已加入 Bot 但帳號未連接，輸入此指令\n"
             )
             await send_line_message(user_id, help_text)
         
@@ -244,7 +264,8 @@ async def _handle_user_message(user_id: str, message_text: str):
             reply = (
                 "👋 感謝您的訊息！\n\n"
                 "輸入 'help' 查看使用說明\n"
-                "輸入 'status' 查詢追蹤狀態"
+                "輸入 'status' 查詢追蹤狀態\n"
+                "輸入 '綁定' 進行帳號連接"
             )
             await send_line_message(user_id, reply)
     
