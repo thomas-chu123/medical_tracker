@@ -191,7 +191,6 @@ async function handleRegister(e) {
             email: document.getElementById('reg-email').value,
             password: document.getElementById('reg-password').value,
             display_name: document.getElementById('reg-name').value,
-            line_user_id: document.getElementById('reg-line-user-id').value || undefined,
         });
         toast(res.message || '帳號建立成功！請登入', 'success', 8000);
         switchTab('login');
