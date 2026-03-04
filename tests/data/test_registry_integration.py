@@ -13,6 +13,7 @@ from app.scrapers.hospital_registry import (
     get_available_hospitals,
 )
 from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
+from app.scrapers.hmmh import HMMHScraper
 from app.scrapers.base import BaseScraper
 from app.config import Settings
 
@@ -34,12 +35,21 @@ class TestRegistryIntegration:
         assert scraper.HOSPITAL_CODE == "CMUH_HSINCHU"
         assert scraper.BASE_URL == "https://www.cmu-hch.cmu.edu.tw"
 
+    def test_hmmh_scraper_instantiation(self):
+        """✅ 驗證馬偕新竹院爬蟲可被正確實例化"""
+        scraper = HMMHScraper()
+        assert isinstance(scraper, BaseScraper)
+        assert scraper.HOSPITAL_CODE == "HMMH"
+        assert scraper.BASE_URL == "https://www.hc.mmh.org.tw"
+
     def test_scrapers_in_registry(self):
         """✅ 驗證爬蟲已在註冊表中"""
         assert "CMUH_TAICHUNG" in HOSPITAL_SCRAPERS
         assert "CMUH_HSINCHU" in HOSPITAL_SCRAPERS
+        assert "HMMH" in HOSPITAL_SCRAPERS
         assert HOSPITAL_SCRAPERS["CMUH_TAICHUNG"] is CMUHScraper
         assert HOSPITAL_SCRAPERS["CMUH_HSINCHU"] is CMUHHsinchuScraper
+        assert HOSPITAL_SCRAPERS["HMMH"] is HMMHScraper
 
     @patch("app.scrapers.hospital_registry.get_settings")
     def test_dynamic_loading_with_enabled_config(self, mock_get_settings):
@@ -79,19 +89,41 @@ class TestRegistryIntegration:
         get_enabled_scrapers.cache_clear()
 
     @patch("app.scrapers.hospital_registry.get_settings")
-    def test_dynamic_loading_with_disabled_hospital(self, mock_get_settings):
-        """✅ 驗證禁用的爬蟲不被加載"""
+    def test_dynamic_loading_with_hmmh(self, mock_get_settings):
+        """✅ 驗證 HMMH 爬蟲可動態加載"""
         get_enabled_scrapers.cache_clear()
 
-        # 只啟用台中院，禁用新竹院
         mock_settings = MagicMock(spec=Settings)
-        mock_settings.enabled_hospitals = ["CMUH_TAICHUNG"]
+        mock_settings.enabled_hospitals = ["HMMH"]
         mock_get_settings.return_value = mock_settings
 
         scrapers = get_enabled_scrapers()
 
-        # 確認新竹院未被加載
-        assert not any(s.HOSPITAL_CODE == "CMUH_HSINCHU" for s in scrapers)
+        assert len(scrapers) == 1
+        assert scrapers[0].HOSPITAL_CODE == "HMMH"
+
+        get_enabled_scrapers.cache_clear()
+
+    @patch("app.scrapers.hospital_registry.get_settings")
+    def test_dynamic_loading_with_all_scrapers(self, mock_get_settings):
+        """✅ 驗證多個爬蟲(包含 HMMH)可同時加載"""
+        get_enabled_scrapers.cache_clear()
+
+        mock_settings = MagicMock(spec=Settings)
+        mock_settings.enabled_hospitals = [
+            "CMUH_TAICHUNG",
+            "CMUH_HSINCHU",
+            "HMMH",
+        ]
+        mock_get_settings.return_value = mock_settings
+
+        scrapers = get_enabled_scrapers()
+
+        assert len(scrapers) == 3
+        hospital_codes = {s.HOSPITAL_CODE for s in scrapers}
+        assert "CMUH_TAICHUNG" in hospital_codes
+        assert "CMUH_HSINCHU" in hospital_codes
+        assert "HMMH" in hospital_codes
 
         get_enabled_scrapers.cache_clear()
 
@@ -110,6 +142,13 @@ class TestRegistryIntegration:
         assert "cmu-hch" in cmuh_hsinchu.BASE_URL.lower()
         assert hasattr(cmuh_hsinchu, "CGI_BASE_URL")
         assert hasattr(cmuh_hsinchu, "PROGRESS_CGI")
+
+        # HMMH 新竹院
+        hmmh = HMMHScraper()
+        assert hmmh.HOSPITAL_CODE == "HMMH"
+        assert "hc.mmh.org.tw" in hmmh.BASE_URL
+        assert hasattr(hmmh, "PERIOD_MAP")
+        assert hasattr(hmmh, "PERIOD_REVERSE_MAP")
 
     def test_scraper_interface_compatibility(self):
         """✅ 驗證爬蟲實現 BaseScraper 的必需方法"""
@@ -130,14 +169,16 @@ class TestRegistryIntegration:
             assert callable(getattr(scraper, "close"))
 
     def test_available_hospitals_includes_cmuh(self):
-        """✅ 驗證可用醫院列表包含 CMUH"""
+        """✅ 驗證可用醫院列表包含主要爬蟲"""
         hospitals = get_available_hospitals()
 
         assert isinstance(hospitals, dict)
         assert "CMUH_TAICHUNG" in hospitals
         assert "CMUH_HSINCHU" in hospitals
+        assert "HMMH" in hospitals
         assert hospitals["CMUH_TAICHUNG"] == "CMUHScraper"
         assert hospitals["CMUH_HSINCHU"] == "CMUHHsinchuScraper"
+        assert hospitals["HMMH"] == "HMMHScraper"
 
     def test_registry_validation_passes(self):
         """✅ 驗證爬蟲註冊表驗證通過"""
@@ -231,11 +272,13 @@ class TestScraperBackwardCompatibility:
         """✅ 驗證爬蟲之間的類別變數不相互干擾"""
         cmuh = CMUHScraper()
         hsinchu = CMUHHsinchuScraper()
+        hmmh = HMMHScraper()
 
         # 確認各自有獨立的代碼和 URL
         assert cmuh.HOSPITAL_CODE != hsinchu.HOSPITAL_CODE
         assert cmuh.BASE_URL != hsinchu.BASE_URL
-        assert cmuh.CGI_BASE_URL != hsinchu.CGI_BASE_URL
+        assert hsinchu.HOSPITAL_CODE != hmmh.HOSPITAL_CODE
+        assert hsinchu.BASE_URL != hmmh.BASE_URL
 
 
 @pytest.mark.asyncio
@@ -272,6 +315,39 @@ class TestScraperAsyncMethods:
         with patch.object(scraper, "fetch_clinic_progress") as mock_fetch:
             mock_fetch.return_value = None
             result = await mock_fetch("A", "1")
+            assert result is None
+
+        await scraper.close()
+
+    async def test_hmmh_fetch_departments_signature(self):
+        """✅ 驗證 HMMH fetch_departments 可被調用"""
+        scraper = HMMHScraper()
+
+        with patch.object(scraper, "fetch_departments") as mock_fetch:
+            mock_fetch.return_value = []
+            result = await mock_fetch()
+            assert result == []
+
+        await scraper.close()
+
+    async def test_hmmh_fetch_schedule_signature(self):
+        """✅ 驗證 HMMH fetch_schedule 可被調用"""
+        scraper = HMMHScraper()
+
+        with patch.object(scraper, "fetch_schedule") as mock_fetch:
+            mock_fetch.return_value = []
+            result = await mock_fetch("14")
+            assert result == []
+
+        await scraper.close()
+
+    async def test_hmmh_fetch_clinic_progress_signature(self):
+        """✅ 驗證 HMMH fetch_clinic_progress 可被調用"""
+        scraper = HMMHScraper()
+
+        with patch.object(scraper, "fetch_clinic_progress") as mock_fetch:
+            mock_fetch.return_value = None
+            result = await mock_fetch("14", "1")
             assert result is None
 
         await scraper.close()

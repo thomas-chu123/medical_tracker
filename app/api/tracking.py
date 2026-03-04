@@ -61,7 +61,7 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
             if not tracked_dates:
                 return None
             date_strs = [d.isoformat() if isinstance(d, date) else str(d) for d in tracked_dates]
-            return supabase.table("appointment_snapshots").select("doctor_id, session_date, session_type, clinic_room, current_number, total_quota, current_registered, remaining, status, waiting_list").in_("doctor_id", doctor_ids).in_("session_date", date_strs).order("scraped_at", desc=True).execute()
+            return supabase.table("appointment_snapshots").select("doctor_id, session_date, session_type, clinic_room, current_number, total_quota, current_registered, remaining, status, waiting_list, clinic_queue_details, estimated_wait_minutes").in_("doctor_id", doctor_ids).in_("session_date", date_strs).order("scraped_at", desc=True).execute()
         
         # Run all in parallel
         docs_result, latest_snaps_result, snapshot_result = await asyncio.gather(
@@ -129,7 +129,25 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         s["remaining"] = snap_info.get("remaining")
         s["status"] = snap_info.get("status")
         s["waiting_list"] = snap_info.get("waiting_list")
+        s["clinic_queue_details"] = snap_info.get("clinic_queue_details")
+        s["estimated_wait_minutes"] = snap_info.get("estimated_wait_minutes")
         
+        # Calculate session speed in minutes per patient (for hospitals like HMMH)
+        session_speed_mins = None
+        waiting_count = 0
+        if s.get("waiting_list"):
+            waiting_count = len(s["waiting_list"])
+        elif s.get("clinic_queue_details"):
+            # HMMH fallback for waiting count
+            for detail in s["clinic_queue_details"]:
+                w = detail.get("waiting_count")
+                if w is not None:
+                    waiting_count = w
+                    break
+        
+        if waiting_count > 0 and s.get("estimated_wait_minutes") is not None:
+            session_speed_mins = float(s["estimated_wait_minutes"]) / waiting_count
+
         # Calculate ETA
         from app.api.hospitals import calculate_eta
         s["eta"] = calculate_eta(
@@ -138,7 +156,8 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
             s.get("current_number"),
             s.get("current_registered"),
             s.get("waiting_list"),
-            target_number=s.get("appointment_number")
+            target_number=s.get("appointment_number"),
+            session_speed_mins=session_speed_mins
         )
 
         # Clinic room fallback

@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     request_timeout: int = 30
     # 啟用的醫院爬蟲列表（逗號分隔字符串）
     # 預設值支持中榮台中院和中榮新竹院
-    # 若要新增台大新竹分院，在 .env 中設為 "CMUH_TAICHUNG,CMUH_HSINCHU,NTUH_HSINCHU"
+    # 可用醫院代碼：
+    #   - CMUH_TAICHUNG: 中榮台中院
+    #   - CMUH_HSINCHU: 中榮新竹院
+    #   - NTUH_HSINCHU: 台大新竹分院
+    #   - HMMH: 馬偕紀念醫院新竹分院
+    # 範例：在 .env 中設為 "CMUH_TAICHUNG,CMUH_HSINCHU,NTUH_HSINCHU,HMMH"
     enabled_hospitals_str: str = Field(
         default="CMUH_TAICHUNG,CMUH_HSINCHU",
         alias="enabled_hospitals"  # 允許 ENABLED_HOSPITALS 環境變數對應此字段

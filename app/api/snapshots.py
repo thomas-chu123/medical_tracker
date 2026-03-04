@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from app.database import get_supabase
 from app.core.timezone import today_tw_str, now_tw
+from app.api.hospitals import calculate_eta
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 
@@ -40,6 +41,15 @@ async def get_snapshot(snapshot_id: str):
             "waiting_list": snapshot.get("waiting_list") or [],
             "clinic_queue_details": snapshot.get("clinic_queue_details") or [],
             "status": snapshot.get("status"),
+            "estimated_wait_minutes": snapshot.get("estimated_wait_minutes"),
+            "eta": calculate_eta(
+                snapshot.get("session_date"),
+                snapshot.get("session_type"),
+                snapshot.get("current_number"),
+                snapshot.get("current_registered"),
+                snapshot.get("waiting_list"),
+                session_speed_mins=(float(snapshot["estimated_wait_minutes"]) / len(snapshot["waiting_list"]) if snapshot.get("estimated_wait_minutes") and snapshot.get("waiting_list") and len(snapshot["waiting_list"]) > 0 else (float(snapshot["estimated_wait_minutes"]) / (snapshot.get("clinic_queue_details")[0].get("waiting_count") or 1) if snapshot.get("estimated_wait_minutes") and snapshot.get("clinic_queue_details") and len(snapshot["clinic_queue_details"]) > 0 else None))
+            ),
             "scraped_at": snapshot.get("scraped_at"),
         }
         
@@ -151,6 +161,15 @@ async def get_latest_clinic_snapshot(doctor_id: str, clinic_room: str = None, se
             "waiting_list": snapshot.get("waiting_list") or [],
             "clinic_queue_details": snapshot.get("clinic_queue_details") or [],
             "status": snapshot.get("status"),
+            "estimated_wait_minutes": snapshot.get("estimated_wait_minutes"),
+            "eta": calculate_eta(
+                snapshot.get("session_date"),
+                snapshot.get("session_type"),
+                snapshot.get("current_number"),
+                snapshot.get("current_registered"),
+                snapshot.get("waiting_list"),
+                session_speed_mins=(float(snapshot["estimated_wait_minutes"]) / len(snapshot["waiting_list"]) if snapshot.get("estimated_wait_minutes") and snapshot.get("waiting_list") and len(snapshot["waiting_list"]) > 0 else (float(snapshot["estimated_wait_minutes"]) / (snapshot.get("clinic_queue_details")[0].get("waiting_count") or 1) if snapshot.get("estimated_wait_minutes") and snapshot.get("clinic_queue_details") and len(snapshot["clinic_queue_details"]) > 0 else None))
+            ),
             "scraped_at": snapshot.get("scraped_at"),
         }
         
