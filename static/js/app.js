@@ -128,6 +128,62 @@ async function apiDelete(path) {
     return apiFetch(path, { method: 'DELETE' });
 }
 
+// ── Debug Logging ─────────────────────────────────────────────
+let _debugEnabled = false;  // Debug mode flag, loaded from backend config
+let _debugLogBuffer = [];
+const MAX_LOG_BUFFER = 100;
+
+function debugLog(action, data = {}) {
+    if (!_debugEnabled) return;  // Skip if debug is disabled
+    
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+        timestamp,
+        action,
+        stepper: JSON.parse(JSON.stringify(AppState.stepper)),
+        metadata: data
+    };
+    
+    // 打印到 console
+    console.log(`[STEPPER DEBUG] ${action}`, logEntry);
+    
+    // 存入緩衝
+    _debugLogBuffer.push(logEntry);
+    if (_debugLogBuffer.length > MAX_LOG_BUFFER) {
+        _debugLogBuffer.shift();
+    }
+    
+    // 異步發送到後端（不要等待）
+    _flushDebugLogs();
+}
+
+async function _flushDebugLogs() {
+    if (!_debugEnabled || _debugLogBuffer.length === 0) return;  // Skip if debug disabled
+    
+    try {
+        const logs = [..._debugLogBuffer];
+        _debugLogBuffer = [];
+        
+        try {
+            await apiFetch('/api/debug/stepper-logs', {
+                method: 'POST',
+                body: JSON.stringify({ logs }),
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch (err) {
+            // 靜默失敗，不中斷 UI
+            console.warn('[DEBUG] 無法發送日誌到後端:', err);
+        }
+    } catch (err) {
+        console.warn('[DEBUG] 日誌緩衝區處理錯誤:', err);
+    }
+}
+
+// 頁面卸載時確保日誌被發送
+window.addEventListener('beforeunload', () => {
+    _flushDebugLogs();
+});
+
 // ── Toast notifications ───────────────────────────────────────
 function toast(msg, type = 'info', duration = 3500) {
     const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
@@ -218,6 +274,18 @@ function handleLogout() {
 
 // ── App init ──────────────────────────────────────────────────
 async function initApp(userFromLogin = null) {
+    // Load debug configuration from backend
+    try {
+        const debugConfig = await apiFetch('/api/debug/config');
+        _debugEnabled = debugConfig.debug_enabled ?? false;
+        if (_debugEnabled) {
+            console.log('[DEBUG] Debug mode enabled');
+        }
+    } catch (e) {
+        console.warn('[DEBUG] Failed to load debug config:', e);
+        _debugEnabled = false;
+    }
+    
     // Show app shell IMMEDIATELY for better perceived performance
     document.getElementById('auth-page').classList.remove('show');
     document.getElementById('app').style.display = 'grid';
@@ -322,14 +390,24 @@ function navigate(btn, pageId, options = {}) {
     } else if (pageId === 'admin') {
         switchAdminTab('users');
     } else if (pageId === 'add-tracking') {
-        console.log('[navigate] add-tracking hit, skipReset:', options.skipReset, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
-        if (!options.skipReset) {
+        // 自動檢測是否已在 stepper 流程中
+        // 如果已在流程中 (step > 1)，自動設置 skipReset = true
+        // 這防止了無意中調用 navigate 時導致狀態重置
+        const autoSkipReset = AppState.stepper && AppState.stepper.step > 1;
+        const shouldSkip = options.skipReset !== undefined ? options.skipReset : autoSkipReset;
+        
+        debugLog('navigate to add-tracking', { skipReset: shouldSkip, currentStep: AppState.stepper?.step });
+        console.log('[navigate] add-tracking hit, skipReset:', shouldSkip, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
+        if (!shouldSkip) {
             // Reset stepper state only if not skipped (e.g., from quickTrack)
+            debugLog('navigate: resetting stepper state', { reason: 'skipReset is false', autoSkip: autoSkipReset });
             Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
             console.log('[navigate] stepper RESET');
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
             loadStepperHospitals();
+        } else {
+            debugLog('navigate: skipping stepper reset', { reason: 'skipReset is true', autoSkip: autoSkipReset });
         }
     }
 }
@@ -1311,6 +1389,7 @@ async function loadStepperHospitals() {
 }
 
 async function stepperSelectHospital(hospId, hospName) {
+    debugLog('stepperSelectHospital', { hospId, hospName });
     AppState.stepper.hospitalId = hospId;
     AppState.stepper.hospitalName = hospName;
     AppState.stepper.category = '';
@@ -1338,7 +1417,13 @@ async function stepperSelectHospital(hospId, hospName) {
 }
 
 async function stepperSelectCategory(cat) {
+    debugLog('stepperSelectCategory', { category: cat });
     AppState.stepper.category = cat;
+    // 清除舊的科室和醫師選擇，防止類別改變時狀態不一致
+    AppState.stepper.departmentId = '';
+    AppState.stepper.departmentName = '';
+    AppState.stepper.doctorId = '';
+    AppState.stepper.doctorName = '';
     document.querySelectorAll('#step2-category-chips .cat-chip').forEach(b =>
         b.classList.toggle('active', b.textContent === cat));
     const grid = document.getElementById('step2-dept-grid');
@@ -1355,11 +1440,21 @@ function _stepperDeptButtons(depts) {
 }
 
 async function stepperSelectDept(deptId, deptName) {
+    debugLog('stepperSelectDept', { deptId, deptName });
     AppState.stepper.deptId = deptId; AppState.stepper.deptName = deptName;
+    // 選擇新的科室時，清除舊的醫師選擇
+    AppState.stepper.doctorId = '';
+    AppState.stepper.doctorName = '';
     document.getElementById('modal-dept').value = deptId;
     _stepperBreadcrumb();
     stepperGoTo(3);
+    debugLog('stepperSelectDept after stepperGoTo(3)', { step: AppState.stepper.step });
+    console.log('[stepperSelectDept] About to fetch doctors, stepper step:', AppState.stepper.step);
+    
     const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
+    debugLog('stepperSelectDept after doctors API', { step: AppState.stepper.step, docCount: docs.length });
+    console.log('[stepperSelectDept] After doctors API fetch, stepper step:', AppState.stepper.step);
+    
     const grid = document.getElementById('step3-doctor-grid');
     grid.innerHTML = docs.length
         ? docs.map(d => `
@@ -1373,9 +1468,11 @@ async function stepperSelectDept(deptId, deptName) {
               </div>
             </div>`).join('')
         : '<div class="empty-state"><p>此科室無醫師</p></div>';
+    debugLog('stepperSelectDept grid updated', { step: AppState.stepper.step });
 }
 
 async function stepperSelectDoctor(docId, docName) {
+    debugLog('stepperSelectDoctor', { docId, docName });
     AppState.stepper.doctorId = docId; AppState.stepper.doctorName = docName;
     document.getElementById('modal-doctor').value = docId;
     _stepperBreadcrumb();
@@ -1426,6 +1523,7 @@ function stepperNextFromStep4() {
 }
 
 function stepperGoTo(step) {
+    debugLog('stepperGoTo', { targetStep: step, prevStep: AppState.stepper.step });
     AppState.stepper.step = step;
     for (let i = 1; i <= 5; i++) {
         document.getElementById(`step-${i}-content`).style.display = i === step ? '' : 'none';
@@ -1662,8 +1760,11 @@ async function submitQuickTrack() {
 // Keep wrapper functions for backward compatibility with old call-sites
 function openTrackingModal() {
     const btn = document.querySelector('[data-page=add-tracking]');
-    // If already in stepper flow (step > 1), don't reset state to allow continuing from current step
     const skipReset = AppState.stepper.step > 1;
+    debugLog('openTrackingModal', { skipReset, currentStep: AppState.stepper.step, callStack: new Error().stack });
+    console.log('[openTrackingModal] called with skipReset:', skipReset, 'stepper:', JSON.parse(JSON.stringify(AppState.stepper)));
+    console.trace('[openTrackingModal] Stack trace:');
+    // If already in stepper flow (step > 1), don't reset state to allow continuing from current step
     navigate(btn, 'add-tracking', { skipReset });
 }
 
@@ -1968,6 +2069,8 @@ async function submitTracking(e) {
     const sessionDate = document.getElementById('modal-date').value;
     const sessionType = document.getElementById('modal-session').value;
 
+    debugLog('submitTracking: start validation', { docId, sessionDate, sessionType });
+
     if (!docId) { toast('請選擇醫師', 'warning'); return; }
     if (!sessionDate) { toast('請選擇就診日期', 'warning'); return; }
     if (!sessionType) { toast('請選擇診次', 'warning'); return; }
@@ -1981,6 +2084,7 @@ async function submitTracking(e) {
     const apptNum = apptNumValue ? parseInt(apptNumValue, 10) : null;
 
     try {
+        debugLog('submitTracking: sending API request', { docId, deptId, sessionDate, sessionType });
         console.log('[submitTracking] 正在提交追蹤', {
             doctor_id: docId,
             session_date: sessionDate,
@@ -2001,12 +2105,15 @@ async function submitTracking(e) {
         });
 
         console.log('[submitTracking] 提交成功', result);
+        debugLog('submitTracking: API request succeeded', { result });
         toast('✅ 追蹤已新增！', 'success');
 
         // 延遲後重置表單並返回第一步，讓用戶看到成功訊息
         setTimeout(() => {
+            debugLog('submitTracking: resetting stepper after success', { currentStep: AppState.stepper.step });
             // 重置追蹤表單狀態
             Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
+            debugLog('submitTracking: state reset complete, calling stepperGoTo(1)', { newStep: 1 });
             // 重置表單輸入
             document.getElementById('modal-date').value = '';
             document.getElementById('modal-session').value = '';

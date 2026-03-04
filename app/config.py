@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Notion Integration (Optional)
     notion_api: str = ""
 
+    # Debug
+    debug: int = Field(default=0, description="Enable debug logging (1 or 0)")
+
     model_config = SettingsConfigDict(
         env_file=".env", 
         env_file_encoding='utf-8',
