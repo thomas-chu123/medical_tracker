@@ -1662,7 +1662,9 @@ async function submitQuickTrack() {
 // Keep wrapper functions for backward compatibility with old call-sites
 function openTrackingModal() {
     const btn = document.querySelector('[data-page=add-tracking]');
-    navigate(btn, 'add-tracking');
+    // If already in stepper flow (step > 1), don't reset state to allow continuing from current step
+    const skipReset = AppState.stepper.step > 1;
+    navigate(btn, 'add-tracking', { skipReset });
 }
 
 function closeTrackingModal() {
