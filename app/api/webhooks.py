@@ -177,9 +177,6 @@ async def _handle_user_unfollow(user_id: str):
     
     except Exception as e:
         print(f"[LINE] Error handling unfollow event: {e}")
-    
-    except Exception as e:
-        print(f"[LINE] Error handling unfollow event: {e}")
 
 
 async def _handle_user_message(user_id: str, message_text: str):
