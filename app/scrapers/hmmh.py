@@ -2,19 +2,29 @@
 HMMH (馬偕紀念醫院新竹分院) Scraper
 
 Scrapes:
-1. /find_division.php                                 → department list
-2. /register_divide.php?depid={code}                  → doctor schedules (需要進一步分析)
+1. /department.php                                    → department list (from select[name=depid])
+2. /register_divide.php?depid={code}                  → doctor schedules for department (使用 Selenium)
 3. /progressstatus.php?dept={dept}&ap={period}        → clinic progress
+
+說明：馬偕醫院使用動態前端（JavaScript AJAX），因此需要 Selenium 來執行 JavaScript 並等待內容加載。
 """
 
 import asyncio
 import re
 from datetime import date, datetime, timedelta
 from typing import Optional
+import time
 
 import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -57,6 +67,7 @@ class HMMHScraper(BaseScraper):
 
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
+        self._driver: Optional[webdriver.Chrome] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -67,9 +78,43 @@ class HMMHScraper(BaseScraper):
             )
         return self._client
 
+    def _get_driver(self) -> webdriver.Chrome:
+        """Get or create a Selenium WebDriver instance (non-async)"""
+        if self._driver is None:
+            chrome_options = ChromeOptions()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option("useAutomationExtension", False)
+            
+            try:
+                # Try to use locally installed Chrome first
+                service = Service(ChromeDriverManager().install())
+                self._driver = webdriver.Chrome(service=service, options=chrome_options)
+            except Exception as e:
+                log.warning(f"[HMMH] Failed to use ChromeDriverManager: {e}, trying system Chrome")
+                try:
+                    # Fallback to system Chrome
+                    self._driver = webdriver.Chrome(options=chrome_options)
+                except Exception as e2:
+                    log.error(f"[HMMH] Failed to initialize ChromeDriver: {e2}")
+                    raise
+            
+            self._driver.implicitly_wait(10)
+            log.info("[HMMH] Selenium WebDriver initialized")
+        return self._driver
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
+        if self._driver:
+            self._driver.quit()
+            self._driver = None
+            log.info("[HMMH] Selenium WebDriver closed")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get(self, url: str, **kwargs) -> str:
@@ -93,45 +138,49 @@ class HMMHScraper(BaseScraper):
     # ─────────────────────────────────────────────────────────
     async def fetch_departments(self) -> list[DepartmentData]:
         """
-        Scrape department list from find_division.php
+        Scrape department list from department.php
         
-        頁面包含多個科室連結，每個連結的格式為：
-        <a href='register_divide.php?depid=14'>一般外科</a>
+        頁面包含 <select name="depid"> 選擇框，包含所有科別。
+        我們從該 select 元素提取所有 option，並將其轉換為 DepartmentData。
+        depid 值為 1-15，代表不同的科別（內科部、外科部等）。
         """
-        url = f"{self.BASE_URL}/find_division.php"
+        url = f"{self.BASE_URL}/department.php"
         html = await self._get(url)
         soup = BeautifulSoup(html, "lxml")
 
         departments: list[DepartmentData] = []
-        current_sort_order = 1
 
-        # Find all links with 'depid' parameter
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            
-            # Match pattern: depid=XX (any URL with depid parameter)
-            m = self.DEPT_CODE_PATTERN.search(href)
-            if not m:
+        # Find the select element with name="depid"
+        select = soup.find("select", {"name": "depid"})
+        if not select:
+            log.warning("[HMMH] Could not find select[name=depid] element in department.php")
+            return departments
+
+        # Extract all options from the select element
+        options = select.find_all("option")
+        log.info(f"[HMMH] Found {len(options)} options in depid select")
+
+        current_sort_order = 1
+        for option in options:
+            code = option.get("value", "").strip()
+            name = option.get_text(strip=True)
+
+            # Skip empty values (like "全部科別" with empty value)
+            if not code or not name:
+                log.debug(f"[HMMH] Skipping empty option: code='{code}', name='{name}'")
                 continue
-            
-            code = m.group(1)
-            name = a.get_text(strip=True)
-            
-            # Filter: valid department names (at least 2 characters)
-            if not name or len(name) < 2:
-                log.debug(f"[HMMH] Skipping invalid department name: '{name}'")
+
+            # Skip non-numeric codes (safety check)
+            if not code.isdigit():
+                log.debug(f"[HMMH] Skipping non-numeric code: '{code}' for '{name}'")
                 continue
-            
-            # Skip children's hospital (separate system)
-            if "/child/" in href.lower():
-                log.debug(f"[HMMH] Skipping children's hospital: {name}")
+
+            # Skip administrative/non-clinical departments
+            skip_keywords = ["行政", "教學", "認證", "單位", "專案"]
+            if any(keyword in name for keyword in skip_keywords):
+                log.debug(f"[HMMH] Skipping non-clinical department: {name}")
                 continue
-            
-            # Skip single-doctor clinics
-            if "register_single_doctor.php" in href.lower():
-                log.debug(f"[HMMH] Skipping single-doctor clinic: {name}")
-                continue
-            
+
             departments.append(
                 DepartmentData(
                     name=name,
@@ -143,17 +192,9 @@ class HMMHScraper(BaseScraper):
             )
             log.debug(f"[HMMH] Added dept: code={code}, name={name}")
             current_sort_order += 1
-        
-        # Deduplicate by code (keep first occurrence)
-        seen = set()
-        unique: list[DepartmentData] = []
-        for d in departments:
-            if d.code not in seen:
-                seen.add(d.code)
-                unique.append(d)
-        
-        log.info(f"[HMMH] Found {len(unique)} unique departments")
-        return unique
+
+        log.info(f"[HMMH] Found {len(departments)} departments")
+        return departments
 
     @staticmethod
     def _categorize_department(name: str) -> str:
@@ -212,93 +253,184 @@ class HMMHScraper(BaseScraper):
     # ─────────────────────────────────────────────────────────
     async def fetch_schedule(self, dept_code: str) -> list[DoctorSlot]:
         """
-        Scrape doctor schedule for a specific department
+        Scrape doctor schedule for a specific department using Selenium.
         
-        URL: register_divide.php?depid={dept_code}
+        馬偕醫院的 register_divide.php 使用動態前端（AJAX），需要執行 JavaScript。
+        此方法嘗試使用 Selenium，如果失敗則返回空列表。
+        
+        注意：當前實現是初步版本。由於馬偕前端是動態的，完整的醫生列表需要：
+        1. Selenium 或 Playwright 等瀏覽器自動化工具
+        2. 或通過逆向工程找到後端 API
+        3. 或等待馬偕提供公開 API
         """
         log.info(f"[HMMH] fetch_schedule for dept_code={dept_code}")
-        url = f"{self.BASE_URL}/register_divide.php"
-        html = await self._get(url, params={"depid": dept_code})
         
-        soup = BeautifulSoup(html, "lxml")
-        slots: list[DoctorSlot] = []
+        try:
+            driver = self._get_driver()
+        except Exception as e:
+            log.warning(f"[HMMH] Cannot initialize Selenium WebDriver: {e}")
+            log.info("[HMMH] Falling back to HTTP-only mode (no JavaScript execution)")
+            return await self._fetch_schedule_http_fallback(dept_code)
         
-        # 找到表格 - 嘗試多種選擇器方式
-        tables = soup.find_all("table")
-        log.debug(f"[HMMH] Found {len(tables)} tables on page")
-        
-        for table_idx, table in enumerate(tables):
-            log.debug(f"[HMMH] Processing table {table_idx}")
-            rows = table.find_all("tr")
+        try:
+            # 構建 URL
+            url = f"{self.BASE_URL}/register_divide.php?depid={dept_code}"
             
-            if len(rows) < 3:
-                log.debug(f"[HMMH] Table {table_idx} has only {len(rows)} rows, skipping")
-                continue
+            # 在 Selenium 中打開頁面
+            driver.get(url)
+            log.info(f"[HMMH] Opened {url}")
             
-            log.debug(f"[HMMH] Table {table_idx} has {len(rows)} rows")
+            # 等待 jQuery 加載
+            try:
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.execute_script("return typeof jQuery !== 'undefined'")
+                )
+                log.debug("[HMMH] jQuery loaded")
+            except Exception as e:
+                log.warning(f"[HMMH] jQuery loading timeout: {e}")
             
-            # 計算當週日期
-            today = date.today()
-            days_since_monday = today.weekday()
-            week_start = today - timedelta(days=days_since_monday)
-            log.debug(f"[HMMH] Week start: {week_start}")
+            # 等待表格加載
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "tblSch"))
+                )
+                log.debug("[HMMH] Table #tblSch found")
+            except Exception as e:
+                log.warning(f"[HMMH] Timeout waiting for table: {e}")
             
-            # 遍歷所有行
-            for row_idx, row in enumerate(rows):
-                cells = row.find_all(["td", "th"])
+            # 主動執行 timetable() AJAX 調用
+            # 使用當前日期作為 rundate 參數（格式: YYYYMMDD）
+            try:
+                today = date.today()
+                rundate_str = today.strftime("%Y%m%d")
                 
-                if not cells or len(cells) < 2:
+                # 執行 JavaScript 來調用 timetable(rundate)
+                # 這會觸發 AJAX 請求並填充表格
+                js_code = f"""
+                if (typeof timetable === 'function') {{
+                    return new Promise((resolve) => {{
+                        timetable('{rundate_str}');
+                        // 等待 AJAX 完成
+                        setTimeout(resolve, 3000);
+                    }});
+                }} else {{
+                    console.error('timetable function not found');
+                    return false;
+                }}
+                """
+                
+                result = driver.execute_script(js_code)
+                log.info(f"[HMMH] Executed timetable('{rundate_str}')")
+                
+                # 再等幾秒讓 AJAX 響應
+                time.sleep(3)
+                
+            except Exception as e:
+                log.warning(f"[HMMH] Error executing timetable() function: {e}")
+            
+            # 獲取當前頁面的 HTML（應該已包含 AJAX 響應的內容）
+            page_html = driver.page_source
+            
+            # 解析 HTML
+            soup = BeautifulSoup(page_html, "lxml")
+            slots: list[DoctorSlot] = []
+            
+            # 查找表格
+            tables = soup.find_all("table")
+            log.debug(f"[HMMH] Found {len(tables)} tables on rendered page")
+            
+            if not tables:
+                log.warning(f"[HMMH] No tables found on page after Selenium rendering")
+                return slots
+            
+            # 處理表格
+            for table in tables:
+                rows = table.find_all("tr")
+                if len(rows) < 2:
                     continue
                 
-                # 第一單元格應該是診間號或時段標籤
-                first_cell_text = cells[0].get_text(strip=True)
+                # 計算當週日期
+                today = date.today()
+                days_since_monday = today.weekday()
+                week_start = today - timedelta(days=days_since_monday)
                 
-                # 診間號應該是數字
-                if first_cell_text.isdigit():
-                    clinic_room = first_cell_text
-                    log.debug(f"[HMMH] Found clinic room: {clinic_room}")
+                # 尋找時段標籤行
+                for row_idx, row in enumerate(rows[1:], start=1):
+                    cells = row.find_all(["td", "th"])
+                    if not cells:
+                        continue
                     
-                    # 遍歷該行的時段單元格
-                    for col_idx, cell in enumerate(cells[1:]):
-                        cell_text = cell.get_text(strip=True)
+                    first_cell = cells[0].get_text(strip=True)
+                    
+                    # 檢查是否為時段標籤
+                    if first_cell in ["上午", "下午", "晚上"]:
+                        session_type = first_cell
                         
-                        if not cell_text or len(cell_text) < 2:
-                            continue
-                        
-                        # 嘗試解析醫生信息
-                        doctor_info = self._parse_doctor_info(cell_text)
-                        if not doctor_info:
-                            continue
-                        
-                        doctor_name = doctor_info.get("name")
-                        doctor_no = doctor_info.get("code")
-                        
-                        # 計算日期和時段
-                        day_idx = col_idx // 3
-                        period_idx = col_idx % 3
-                        
-                        if day_idx >= 6:
-                            continue
-                        
-                        slot_date = week_start + timedelta(days=day_idx)
-                        session_type = self.PERIOD_MAP.get(str(period_idx + 1), "上午")
-                        
-                        slot = DoctorSlot(
-                            doctor_no=doctor_no,
-                            doctor_name=doctor_name,
-                            department_code=dept_code,
-                            session_date=slot_date,
-                            session_type=session_type,
-                            total_quota=None,
-                            registered=None,
-                            clinic_room=clinic_room,
-                            is_full=False,
-                        )
-                        slots.append(slot)
-                        log.debug(f"[HMMH] Added slot: {doctor_name}({doctor_no}) @ {slot_date} {session_type} clinic {clinic_room}")
+                        # 遍歷該行中的醫生單元格
+                        for col_idx, cell in enumerate(cells[1:]):
+                            doctor_text = cell.get_text(strip=True)
+                            
+                            if not doctor_text or len(doctor_text) < 2:
+                                continue
+                            
+                            # 解析醫生信息
+                            doctor_info = self._parse_doctor_info(doctor_text)
+                            if not doctor_info:
+                                continue
+                            
+                            # 計算日期
+                            if col_idx < 6:  # 週一到週六
+                                slot_date = week_start + timedelta(days=col_idx)
+                                
+                                slot = DoctorSlot(
+                                    doctor_no=doctor_info.get("code"),
+                                    doctor_name=doctor_info.get("name"),
+                                    department_code=dept_code,
+                                    session_date=slot_date,
+                                    session_type=session_type,
+                                    total_quota=None,
+                                    registered=None,
+                                    clinic_room=None,
+                                    is_full=False,
+                                )
+                                slots.append(slot)
+                                log.debug(f"[HMMH] Added slot: {doctor_info.get('name')} on {slot_date} {session_type}")
+            
+            log.info(f"[HMMH] Found {len(slots)} doctor slots for dept_code={dept_code}")
+            return slots
+            
+        except Exception as e:
+            log.error(f"[HMMH] Error in fetch_schedule with Selenium: {e}", exc_info=True)
+            return []
+
+    async def _fetch_schedule_http_fallback(self, dept_code: str) -> list[DoctorSlot]:
+        """
+        Fallback method: Try to fetch schedule using HTTP only (no JavaScript).
+        This will likely return fewer results since the page is dynamic.
+        """
+        log.info(f"[HMMH] Using HTTP fallback for dept_code={dept_code}")
         
-        log.info(f"[HMMH] Found {len(slots)} total doctor slots for dept_code={dept_code}")
-        return slots
+        try:
+            url = f"{self.BASE_URL}/register_divide.php"
+            html = await self._get(url, params={"depid": dept_code})
+            
+            soup = BeautifulSoup(html, "lxml")
+            slots: list[DoctorSlot] = []
+            
+            # In HTTP-only mode, we'll get mostly empty tables
+            # This is expected since the content is loaded dynamically
+            tables = soup.find_all("table")
+            if not tables:
+                log.warning(f"[HMMH] No tables found in HTTP response for dept_code={dept_code}")
+                log.info("[HMMH] Doctor schedule requires JavaScript rendering")
+                log.info("[HMMH] Future improvement: Integrate Playwright or fully headless Chrome")
+            
+            log.info(f"[HMMH] HTTP fallback found {len(slots)} doctor slots (expected: 0)")
+            return slots
+            
+        except Exception as e:
+            log.error(f"[HMMH] Error in HTTP fallback: {e}")
+            return []
 
     @staticmethod
     def _parse_doctor_info(text: str) -> Optional[dict]:
