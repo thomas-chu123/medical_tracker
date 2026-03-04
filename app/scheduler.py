@@ -509,7 +509,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         prev_number=prev_snap["current_number"],
                         prev_at=prev_at,
                         curr_number=current_number,
-                        curr_at=now_tw().replace(tzinfo=timezone.utc) if now_tw().tzinfo is None else now_tw(),
+                        curr_at=now_tw(),
                         hospital_code=scraper.HOSPITAL_CODE,
                     )
 

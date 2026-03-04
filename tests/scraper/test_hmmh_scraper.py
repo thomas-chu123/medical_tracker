@@ -98,7 +98,7 @@ MOCK_HMMH_SCHEDULE_HTML = """
 <!DOCTYPE html>
 <html>
 <body>
-<table>
+<table id="tblSch">
   <tr>
     <th>診間</th>
     <th colspan="3">星期一</th>
@@ -115,19 +115,19 @@ MOCK_HMMH_SCHEDULE_HTML = """
   </tr>
   <tr>
     <td>14</td>
-    <td>江瑞凡 4948 靜脈曲張特診</td>
+    <td><a onclick="registergo('68','4948')">江瑞凡 4948 靜脈曲張特診</a></td>
     <td></td>
-    <td>陳志軒 5022</td>
-    <td>李健仁 4875 含肛腸</td>
+    <td><a onclick="registergo('68','5022')">陳志軒 5022</a></td>
+    <td><a onclick="registergo('68','4875')">李健仁 4875 含肛腸</a></td>
     <td></td>
     <td></td>
   </tr>
   <tr>
     <td>15</td>
-    <td>吳宥達 4873 含甲狀腺</td>
-    <td>陳永成 4864</td>
+    <td><a onclick="registergo('68','4873')">吳宥達 4873 含甲狀腺</a></td>
+    <td><a onclick="registergo('68','4864')">陳永成 4864</a></td>
     <td></td>
-    <td>謝復興 5023</td>
+    <td><a onclick="registergo('68','5023')">謝復興 5023</a></td>
     <td></td>
     <td></td>
   </tr>

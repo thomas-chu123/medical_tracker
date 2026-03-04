@@ -248,10 +248,10 @@ class HMMHScraper(BaseScraper):
         rows = table.find_all("tr")
         log.debug(f"[HMMH] Found {len(rows)} rows in #tblSch")
 
-        # Row 0: weekday headers (星期一 .. 星期六), each colspan=3 (上/下/夠)
-        # Row 1: session type headers (上午/下午/夠診 repeated 6 times)
+        # Row 0: weekday headers (星期一 .. 星期六), each colspan=3 (上/下/晚)
+        # Row 1: session type headers (上午/下午/晚上 repeated 6 times)
         # Row 2+: clinic room + 18 cells (6 days x 3 sessions)
-        SESSION_TYPES = ["上午", "下午", "夠診"]  # indices 0,1,2 within each day block
+        SESSION_TYPES = ["上午", "下午", "晚上"]  # indices 0,1,2 within each day block
         DAY_COUNT = 6  # Mon-Sat
 
         for row in rows[2:]:  # Skip header rows
@@ -365,8 +365,8 @@ class HMMHScraper(BaseScraper):
         tbody = table.find("tbody")
         rows = tbody.find_all("tr") if tbody else table.find_all("tr")[1:]
 
-        SESSION_MAP = {"上午": 0, "下午": 1, "晚間": 2, "晚間": 2}
-        SESSIONS = ["上午", "下午", "晚間"]
+        SESSION_MAP = {"上午": 0, "下午": 1, "晚上": 2}
+        SESSIONS = ["上午", "下午", "晚上"]
 
         for row in rows:
             cells = row.find_all("td")
