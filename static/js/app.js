@@ -1660,9 +1660,16 @@ async function submitQuickTrack() {
     }
 }
 
-// Keep as noop stubs so old call-sites don't crash
-function openTrackingModal() { openAddTracking(); }
-function closeTrackingModal() { cancelAddTracking(); }
+// Keep wrapper functions for backward compatibility with old call-sites
+function openTrackingModal() {
+    const btn = document.querySelector('[data-page=add-tracking]');
+    navigate(btn, 'add-tracking');
+}
+
+function closeTrackingModal() {
+    const btn = document.querySelector('[data-page=tracking]');
+    navigate(btn, 'tracking');
+}
 
 async function loadModalSchedules() {
     let docId = document.getElementById('modal-doctor').value;
