@@ -113,10 +113,167 @@ result = await asyncio.to_thread(
 
 認證依賴：一般路由使用 `get_current_user`，管理員路由使用 `get_current_admin`，皆位於 `app/auth.py`。
 
+### Supabase 讀寫工具 (CLI & Copilot Chat)
+
+> ⚠️ **強制規範**：所有需要讀寫 Supabase 資料的 prompt 操作，**必須優先使用** `tools/tool_supabase.py`，禁止直接呼叫 MCP Supabase 工具或在 CLI 環境中撰寫臨時 Python 腳本存取資料庫。
+
+為了提升效率並避免 MCP 使用緩慢的問題，提供了獨立的 Python CLI 工具 `tools/tool_supabase.py`，供 Copilot Chat 與 Copilot CLI 快速讀寫 Supabase 資料。
+
+#### 基本使用方式
+
+```bash
+# 列出所有醫院
+python tools/tool_supabase.py list_hospitals
+
+# 列出特定科室的醫生
+python tools/tool_supabase.py list_doctors --department_id DEPT001
+
+# 查詢使用者訂閱
+python tools/tool_supabase.py get_subscriptions user123
+
+# 查詢特定表格的資料（支持多個篩選條件）
+python tools/tool_supabase.py select appointment_snapshots --filter doctor_id eq DOC001 --filter session_date gte 2026-03-01 --limit 100
+
+# 插入新資料
+python tools/tool_supabase.py insert users_local --data '{"email":"test@example.com","hashed_password":"...","is_admin":false}'
+
+# 更新資料（支持多個篩選條件）
+python tools/tool_supabase.py update tracking_subscriptions --filter user_id eq user123 --filter doctor_id eq DOC001 --data '{"notify_at_20":false}'
+
+# Upsert (插入或更新)
+python tools/tool_supabase.py upsert appointment_snapshots --data '{"doctor_id":"DOC001","session_date":"2026-03-05","session_type":"上午","current_number":5}' --on_conflict "doctor_id,session_date,session_type"
+
+# 刪除資料
+python tools/tool_supabase.py delete tracking_subscriptions --filter user_id eq user123 --filter doctor_id eq DOC001
+
+# 獲取醫生的最新快照記錄
+python tools/tool_supabase.py get_latest_snapshots DOC001 --limit 20
+```
+
+#### 支持的操作符
+
+- `eq` — 相等
+- `neq` — 不相等
+- `gt` / `gte` — 大於 / 大於等於
+- `lt` / `lte` — 小於 / 小於等於
+- `like` — 模糊匹配 (LIKE)
+- `in` — 包含（值用逗號分隔）
+
+#### 便捷方法（Convenience Methods）
+
+| 命令 | 說明 |
+|------|-----|
+| `list_hospitals` | 列出所有醫院 |
+| `list_departments [--hospital_id ID]` | 列出科室（可選篩選醫院） |
+| `list_doctors [--department_id ID]` | 列出醫生（可選篩選科室） |
+| `get_user USER_ID` | 獲取使用者資訊 |
+| `get_subscriptions USER_ID` | 獲取使用者的所有訂閱 |
+| `get_latest_snapshots DOC_ID [--limit N]` | 獲取醫生的最新快照記錄 |
+
+#### 返回格式
+
+所有命令返回 JSON，包含：
+```json
+{
+  "status": "success|error",
+  "count": 5,
+  "data": [...],
+  "message": "error message if applicable"
+}
+```
+
+#### 何時使用此工具
+
+- ✅ 快速查詢和修改資料庫記錄
+- ✅ 驗證 Supabase 中的資料
+- ✅ 執行一次性的資料操作
+- ✅ 在 Copilot Chat 中詢問資料庫狀態
+- ❌ 不適合複雜的異步 API 邏輯（應在 FastAPI 程式碼中實作）
+
+### Notion 讀寫工具 (CLI & Copilot Chat)
+
+> ⚠️ **強制規範**：所有需要讀寫 Notion 資料的 prompt 操作，**必須優先使用** `tools/tool_notion.py`，禁止直接呼叫 MCP Notion 工具或在 CLI 環境中撰寫臨時腳本存取 Notion。需先設定 `NOTION_API` 環境變數。
+
+為了提升效率並避免 MCP 使用緩慢的問題，提供了獨立的 Python CLI 工具 `tools/tool_notion.py`，供 Copilot Chat 與 Copilot CLI 快速讀寫 Notion 項目資料。
+
+#### 基本使用方式
+
+```bash
+# 列出所有項目（默認第一個數據庫）
+python tools/tool_notion.py list_projects
+
+# 列出特定數據庫的項目
+python tools/tool_notion.py list_projects --database_id <database_id>
+
+# 查詢項目（支持篩選和排序）
+python tools/tool_notion.py query_projects --filter Status is "進行中" --sort_property CreatedDate --sort_direction descending
+
+# 獲取單個項目的詳細信息
+python tools/tool_notion.py get_project 123e4567e89b12d3a456426614174000
+
+# 創建新項目
+python tools/tool_notion.py create_project --data '{"Name":"新項目","Status":"計劃中"}'
+
+# 創建新項目至指定數據庫
+python tools/tool_notion.py create_project --database_id <database_id> --data '{"Name":"新項目","Status":"計劃中"}'
+
+# 更新項目
+python tools/tool_notion.py update_project 123e4567e89b12d3a456426614174000 --data '{"Status":"進行中"}'
+
+# 列出所有可用的數據庫
+python tools/tool_notion.py get_databases
+
+# 獲取數據庫結構（屬性/列信息）
+python tools/tool_notion.py get_database_schema <database_id>
+```
+
+#### 支持的篩選操作符
+
+- `is` — 相等
+- `is_not` — 不相等
+- `contains` — 包含
+- `does_not_contain` — 不包含
+- `starts_with` — 開始於
+- `ends_with` — 結尾於
+
+#### 便捷方法（Convenience Methods）
+
+| 命令 | 說明 |
+|------|-----|
+| `list_projects [--database_id ID]` | 列出項目（可選指定數據庫） |
+| `get_project PAGE_ID` | 獲取單個項目詳情 |
+| `query_projects [--filter PROPERTY OP VALUE] [--database_id ID] [--sort_property PROP] [--sort_direction DESC\|ASC]` | 查詢項目（支持篩選和排序） |
+| `create_project --data JSON [--database_id ID]` | 創建新項目 |
+| `update_project PAGE_ID --data JSON` | 更新項目 |
+| `get_databases` | 列出所有數據庫 |
+| `get_database_schema DATABASE_ID` | 獲取數據庫結構信息 |
+
+#### 返回格式
+
+所有命令返回 JSON，包含：
+```json
+{
+  "status": "success|error",
+  "count": 5,
+  "data": [...],
+  "message": "error message if applicable"
+}
+```
+
+#### 何時使用此工具
+
+- ✅ 快速查詢和修改 Notion 項目資料
+- ✅ 驗證 Notion 中的項目狀態
+- ✅ 執行一次性的項目操作
+- ✅ 列出所有可用的 Notion 數據庫和結構
+- ✅ 在 Copilot Chat 中詢問 Notion 項目狀態
+- ❌ 不適合批量操作（超過 100 個項目）
+- ❌ 不適合複雜的關聯邏輯（應在 FastAPI 程式碼中實作）
+
 ### 環境變數
 
 必填：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_ANON_KEY`、`SECRET_KEY`  
-選填：`SMTP_*` 相關變數、`LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`、`SCRAPE_INTERVAL_MINUTES`（預設：3）
+選填：`SMTP_*` 相關變數、`LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`、`SCRAPE_INTERVAL_MINUTES`（預設：3）、`NOTION_API`（Notion 整合 Token，tool_notion.py 必填）
 
 ### 其他
 

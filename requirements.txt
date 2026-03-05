@@ -24,3 +24,4 @@ pytest-mock==3.14.0
 allure-pytest==2.13.5
 selenium==4.24.0
 webdriver-manager==4.0.1
+notion-client==2.2.1
