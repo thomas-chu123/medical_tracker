@@ -25,6 +25,7 @@ from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
 from app.scrapers.ntuh import NTUHHsinchuScraper
 from app.scrapers.hmmh import HMMHScraper
 from app.scrapers.tvgh_hsinchu import TvghHsinchuScraper
+from app.scrapers.tygh_hsinchu import TyghHsinchuScraper
 from app.config import get_settings
 import logging
 
@@ -38,6 +39,7 @@ HOSPITAL_SCRAPERS: Dict[str, Type[BaseScraper]] = {
     "NTUH_HSINCHU": NTUHHsinchuScraper,    # 台大新竹分院
     "HMMH": HMMHScraper,                   # 馬偕新竹分院
     "TVGH_HSINCHU": TvghHsinchuScraper,    # 臺北榮總新竹分院
+    "TYGH_HSINCHU": TyghHsinchuScraper,    # 東元綜合醫院
     # "HSINCHU_HOSPITAL": HsinchuHospitalScraper,  # 未來範例
 }
 
