@@ -43,19 +43,49 @@ def get_scheduler() -> AsyncIOScheduler:
         _scheduler = AsyncIOScheduler()
     return _scheduler
 
+# Track active master scrape tasks: {hospital_code: asyncio.Task}
+active_master_scrapes: dict[str, asyncio.Task] = {}
 
-async def run_master_data():
+
+async def run_master_data(hospital_code: str = None):
     """Scrapes and updates departments, doctors, and full schedule snapshots. Runs 00:00-06:00."""
-    logger.info(f"[Scheduler] Starting master data scrape at {today_tw()}")
-    scrapers = get_enabled_scrapers()
+    target_desc = hospital_code if hospital_code else "all hospitals"
+    logger.info(f"[Scheduler] Starting master data scrape for {target_desc} at {today_tw()}")
+    
+    all_scrapers = get_enabled_scrapers()
+    if hospital_code:
+        scrapers = [s for s in all_scrapers if s.HOSPITAL_CODE == hospital_code]
+    else:
+        scrapers = all_scrapers
     
     if not scrapers:
-        logger.error("[Scheduler] No scrapers enabled. Check ENABLED_HOSPITALS configuration.")
+        logger.error(f"[Scheduler] No scrapers enabled for {target_desc}. Check ENABLED_HOSPITALS configuration.")
         return
     
-    # Run scrapers for different hospitals concurrently
-    await asyncio.gather(*[_scrape_hospital_master_data(s) for s in scrapers])
-    logger.info("[Scheduler] Master data scrape complete for all hospitals.")
+    tasks = []
+    for s in scrapers:
+        code = s.HOSPITAL_CODE
+        if code in active_master_scrapes:
+            logger.warning(f"[Scheduler] Master data scrape already running for {code}. Skipping.")
+            continue
+            
+        task = asyncio.create_task(_scrape_hospital_master_data(s))
+        active_master_scrapes[code] = task
+        
+        # Ensure task is removed from tracker when done
+        def make_cleanup(hosp_code):
+            def cleanup(t):
+                active_master_scrapes.pop(hosp_code, None)
+            return cleanup
+            
+        task.add_done_callback(make_cleanup(code))
+        tasks.append(task)
+    
+    if tasks:
+        # Use return_exceptions=True so one hospital failing doesn't stop the gather
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+    logger.info(f"[Scheduler] Master data scrape complete for {target_desc}.")
 
 async def run_morning_tracked_snapshot_sync():
     """Triggered at 08:00 AM to update progress for all currently tracked clinics for today."""

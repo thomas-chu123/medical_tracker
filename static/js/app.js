@@ -2633,6 +2633,8 @@ function switchAdminTab(tabId) {
     } else if (tabId === 'system') {
         loadSchedulerStatus();
         loadServerLogs();
+        loadAdminMasterHospitals();
+        startMasterStatusPolling();
     }
 }
 
@@ -2943,4 +2945,123 @@ function filterRankingTable() {
         return matchHosp && matchDept;
     });
     renderRankingTable(filtered);
+}
+
+// ── Admin - Manual Master Data Scrape ────────────────────────
+
+let _masterStatusTimer = null;
+
+async function loadAdminMasterHospitals() {
+    const select = document.getElementById('admin-master-hosp-select');
+    if (!select) return;
+
+    try {
+        const hosps = await apiFetch('/api/hospitals') || [];
+        if (hosps.length === 0) {
+            select.innerHTML = '<option value="">無可用醫院</option>';
+            return;
+        }
+        select.innerHTML = '<option value="">— 選擇要同步的醫院 —</option>' +
+            hosps.map(h => `<option value="${h.code}">${escHtml(h.name)} (${h.code})</option>`).join('');
+    } catch (e) {
+        toast('載入醫院列表失敗', 'error');
+    }
+}
+
+async function triggerMasterScrape() {
+    const code = document.getElementById('admin-master-hosp-select').value;
+    if (!code) {
+        toast('請先選擇醫院', 'warning');
+        return;
+    }
+
+    if (!confirm(`確定要手動觸發 ${code} 的主資料同步嗎？`)) return;
+
+    try {
+        const btn = document.getElementById('btn-start-master-scrape');
+        btn.disabled = true;
+
+        await apiPost('/api/admin/master-data-now', { hospital_code: code });
+        toast(`已開始同步 ${code} 的主資料`, 'success');
+
+        // Start polling for status
+        startMasterStatusPolling();
+    } catch (e) {
+        toast(e.message, 'error');
+        document.getElementById('btn-start-master-scrape').disabled = false;
+    }
+}
+
+async function stopMasterScrape() {
+    const code = document.getElementById('admin-master-hosp-select').value;
+    if (!code) return;
+
+    if (!confirm(`確定要停止 ${code} 的同步任務嗎？`)) return;
+
+    try {
+        await apiDelete(`/api/admin/master-data-now/${code}`);
+        toast(`已取消 ${code} 的同步任務`, 'success');
+        updateMasterScrapeStatus();
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+}
+
+function startMasterStatusPolling() {
+    if (_masterStatusTimer) clearInterval(_masterStatusTimer);
+    updateMasterScrapeStatus();
+    _masterStatusTimer = setInterval(updateMasterScrapeStatus, 3000);
+}
+
+async function updateMasterScrapeStatus() {
+    const badge = document.getElementById('master-scrape-status-badge');
+    const text = document.getElementById('master-scrape-status-text');
+    const btnStart = document.getElementById('btn-start-master-scrape');
+    const btnStop = document.getElementById('btn-stop-master-scrape');
+    const select = document.getElementById('admin-master-hosp-select');
+
+    if (!badge || !text) {
+        if (_masterStatusTimer) clearInterval(_masterStatusTimer);
+        return;
+    }
+
+    try {
+        const res = await apiFetch('/api/admin/master-data-status');
+        const active = res.active_hospitals || [];
+        const selectedCode = select.value;
+
+        if (active.length > 0) {
+            badge.textContent = `同步中 (${active.join(', ')})`;
+            badge.style.background = 'var(--primary)';
+            badge.style.color = '#fff';
+
+            // If the currently selected hospital is active
+            if (selectedCode && active.includes(selectedCode)) {
+                btnStart.disabled = true;
+                btnStop.disabled = false;
+                text.textContent = `正在同步 ${selectedCode} 的資料，請稍候...`;
+            } else {
+                btnStart.disabled = false;
+                btnStop.disabled = true;
+                text.textContent = `已有其他任務正在執行 (${active.join(', ')})。您仍可以觸發新任務。`;
+            }
+        } else {
+            badge.textContent = '閒置';
+            badge.style.background = ''; // reset to default
+            badge.style.color = '';
+            btnStart.disabled = false;
+            btnStop.disabled = true;
+            text.textContent = '選擇醫院並點擊開始手動更新科室與醫師資料。同步過程可能需要數分鐘。';
+
+            // Stop polling if nothing is active
+            if (_masterStatusTimer) {
+                // Keep polling if we're still on the system tab? 
+                // Actually, status update should be fine to stop if no active tasks.
+                clearInterval(_masterStatusTimer);
+                _masterStatusTimer = null;
+            }
+        }
+    } catch (e) {
+        console.warn('[MasterStatus] Polling failed:', e);
+    }
 }

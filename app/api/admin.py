@@ -16,8 +16,10 @@ LOG_FILE = Path(__file__).parent.parent.parent / "server.log"
 
 def require_super_admin(current_user: dict = Depends(get_current_user)):
     """Middleware to verify admin rights. Currently assumes logged in = admin."""
-    # In a real app, check current_user["role"] == "admin"
-    pass
+    # check is_admin flag from get_current_user
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="需要管理員權限")
+    return current_user
 
 
 @router.get("/tracking", response_model=list[AdminTrackingOut])
@@ -116,10 +118,7 @@ class SchedulerStatus(BaseModel):
     jobs: list[JobStatus]
 
 
-def require_super_admin(current_user: dict = Depends(get_current_user)):
-    """Middleware to verify admin rights. Currently assumes logged in = admin."""
-    # In a real app, check current_user["role"] == "admin"
-    pass
+# Removed duplicate require_super_admin
 
 
 @router.get("/scheduler", response_model=SchedulerStatus, dependencies=[Depends(require_super_admin)])
@@ -193,3 +192,36 @@ async def trigger_scrape_now():
     from app.scheduler import run_tracked_appointments
     asyncio.create_task(run_tracked_appointments())
     return {"message": "Scrape task triggered"}
+
+
+class ScrapeRequest(BaseModel):
+    hospital_code: str
+
+
+@router.post("/master-data-now", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_master_data_now(req: ScrapeRequest, admin=Depends(require_super_admin)):
+    """Trigger background master data scraping for a specific hospital immediately."""
+    import asyncio
+    from app.scheduler import run_master_data
+    asyncio.create_task(run_master_data(req.hospital_code))
+    return {"message": f"已經開始同步 {req.hospital_code} 的主資料"}
+
+
+@router.delete("/master-data-now/{hospital_code}")
+async def stop_master_data_now(hospital_code: str, admin=Depends(require_super_admin)):
+    """Stop an ongoing master data scrape task for a specific hospital."""
+    from app.scheduler import active_master_scrapes
+    task = active_master_scrapes.get(hospital_code)
+    if task and not task.done():
+        task.cancel()
+        return {"message": f"已取消 {hospital_code} 的同步任務"}
+    return {"message": f"目前沒有正在執行的 {hospital_code} 同步任務"}
+
+
+@router.get("/master-data-status")
+async def get_master_data_status(admin=Depends(require_super_admin)):
+    """Get the status of currently running master data scrape tasks."""
+    from app.scheduler import active_master_scrapes
+    return {
+        "active_hospitals": list(active_master_scrapes.keys())
+    }

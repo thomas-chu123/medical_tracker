@@ -575,6 +575,31 @@
 準備讀取日誌...
               </pre>
             </div>
+
+            <!-- Manual Master Data Scrape -->
+            <div class="card" style="grid-column: span 2">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+                <h3 style="font-size:16px">⚡ 手動同步醫院主資料 (Manual Scrape)</h3>
+                <span id="master-scrape-status-badge"
+                  style="padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold; background:var(--bg-hover)">閒置</span>
+              </div>
+              <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+                <div class="form-group" style="margin:0; min-width:280px;">
+                  <select id="admin-master-hosp-select" style="height:38px;">
+                    <option value="">載入中...</option>
+                  </select>
+                </div>
+                <button class="btn btn-primary" id="btn-start-master-scrape" onclick="triggerMasterScrape()">
+                  🚀 開始同步
+                </button>
+                <button class="btn btn-secondary" id="btn-stop-master-scrape" onclick="stopMasterScrape()" disabled style="color:var(--danger)">
+                  ⏹ 停止同步
+                </button>
+              </div>
+              <div id="master-scrape-status-text" style="font-size:13px; color:var(--text-muted); margin-top:10px">
+                選擇醫院並點擊開始手動更新科室與醫師資料。同步過程可能需要數分鐘。
+              </div>
+            </div>
           </div>
         </div>
       </section>
