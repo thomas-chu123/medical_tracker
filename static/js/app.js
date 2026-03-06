@@ -2956,6 +2956,7 @@ async function loadAdminMasterHospitals() {
     if (!select) return;
 
     try {
+        select.innerHTML = '<option value="">載入中...</option>';
         const hosps = await apiFetch('/api/hospitals') || [];
         if (hosps.length === 0) {
             select.innerHTML = '<option value="">無可用醫院</option>';
@@ -2964,6 +2965,8 @@ async function loadAdminMasterHospitals() {
         select.innerHTML = '<option value="">— 選擇要同步的醫院 —</option>' +
             hosps.map(h => `<option value="${h.code}">${escHtml(h.name)} (${h.code})</option>`).join('');
     } catch (e) {
+        console.error('[AdminMaster] Load hospitals failed:', e);
+        select.innerHTML = '<option value="">載入失敗，請重試</option>';
         toast('載入醫院列表失敗', 'error');
     }
 }

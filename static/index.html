@@ -584,15 +584,20 @@
                   style="padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold; background:var(--bg-hover)">閒置</span>
               </div>
               <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
-                <div class="form-group" style="margin:0; min-width:280px;">
-                  <select id="admin-master-hosp-select" style="height:38px;">
+                <div class="form-group" style="margin:0; min-width:280px; display:flex; gap:8px; align-items:center">
+                  <select id="admin-master-hosp-select" style="height:38px; flex:1">
                     <option value="">載入中...</option>
                   </select>
+                  <button class="btn btn-secondary btn-sm" onclick="loadAdminMasterHospitals()" title="重新整理醫院列表"
+                    style="height:38px; padding:0 10px">
+                    🔄
+                  </button>
                 </div>
                 <button class="btn btn-primary" id="btn-start-master-scrape" onclick="triggerMasterScrape()">
                   🚀 開始同步
                 </button>
-                <button class="btn btn-secondary" id="btn-stop-master-scrape" onclick="stopMasterScrape()" disabled style="color:var(--danger)">
+                <button class="btn btn-secondary" id="btn-stop-master-scrape" onclick="stopMasterScrape()" disabled
+                  style="color:var(--danger)">
                   ⏹ 停止同步
                 </button>
               </div>
