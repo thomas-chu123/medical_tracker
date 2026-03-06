@@ -99,7 +99,7 @@ async def trigger_scrape_now():
 @app.post("/api/admin/master-data-now", tags=["Admin"])
 async def trigger_master_data_now():
     """Manually trigger a master data scrape (departments + doctors)."""
-    from app.scheduler import run_cmuh_master_data
-    asyncio.create_task(run_cmuh_master_data())
+    from app.scheduler import run_master_data
+    asyncio.create_task(run_master_data())
     return {"message": "Master data scrape task queued"}
 

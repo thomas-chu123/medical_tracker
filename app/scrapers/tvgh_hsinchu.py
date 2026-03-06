@@ -74,8 +74,8 @@ class TvghHsinchuScraper(BaseScraper):
         client = await self._get_client()
         resp = await client.get(url, **kwargs)
         resp.raise_for_status()
-        # Decode considering big5 since old hospital sites might use it if utf8 fails, but requests usually auto decodes html 
-        resp.encoding = resp.apparent_encoding if resp.apparent_encoding else 'utf-8'
+        if resp.encoding is None:
+            resp.encoding = "utf-8"
         log.info(f"[{self.HOSPITAL_CODE}] GET {url} success ({len(resp.text)} chars)")
         return resp.text
 
