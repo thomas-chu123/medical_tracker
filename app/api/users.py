@@ -69,64 +69,73 @@ async def request_line_reconnect(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    For users who are already LINE friends, request to reconnect by generating
-    a temporary one-time code.
-    
-    Returns a code that user must input in LINE to verify they own both the
-    app account and the LINE account.
-    
+    Generate a 6-char code for the user to send in LINE Bot to bind/rebind.
+
+    Works whether or not the user already has a LINE account linked.
     Flow:
-    1. User clicks "Reconnect LINE" in app settings
-    2. Backend generates 6-digit code and stores in line_pending_links with user_id
-    3. Frontend displays "Input 'bind CODE' in LINE Bot"
-    4. User sends message in LINE
-    5. Webhook validates code against user_id and completes the binding
+    1. User clicks "重新連結" in app settings
+    2. Backend generates 6-digit code, stores in line_pending_links with user_id
+    3. Frontend displays "bind XXXXXX" + 10-min countdown
+    4. User sends that message in LINE Bot
+    5. Webhook validates code, writes LINE user_id to users_local
     """
     import asyncio
     from datetime import datetime, timedelta
     import random
     import string
-    
+
     supabase = get_supabase()
-    
+
     try:
-        # Check if user already has LINE linked
-        user_res = await asyncio.to_thread(
-            lambda: supabase.table("users_local").select("line_user_id").eq("id", current_user["id"]).execute()
+        # Delete any existing pending links for this user (cleanup before issuing new code)
+        await asyncio.to_thread(
+            lambda: supabase.table("line_pending_links")
+                .delete()
+                .eq("user_id", current_user["id"])
+                .execute()
         )
-        
-        if user_res.data and user_res.data[0].get("line_user_id"):
-            # Already linked - no need to reconnect
-            return {
-                "status": "already_linked",
-                "line_user_id": user_res.data[0]["line_user_id"],
-                "message": "您的帳號已連接 LINE Bot"
-            }
-        
-        # Generate a temporary 6-character alphanumeric code
+
+        # Generate a temporary 6-character uppercase alphanumeric code
         temp_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        
-        # Create a pending reconnect request with the code and user_id
-        expires_at = datetime.utcnow() + timedelta(minutes=5)  # 5 minute window
-        
+
+        # Expire in 10 minutes
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
+
         await asyncio.to_thread(
             lambda: supabase.table("line_pending_links").insert({
-                "user_id": current_user["id"],  # 關鍵：儲存應用用戶 ID
-                "temp_code": temp_code,        # 6位臨時碼
-                "line_user_id": None,          # 待填入
-                "expires_at": expires_at.isoformat()
+                "user_id": current_user["id"],
+                "temp_code": temp_code,
+                "line_user_id": None,
+                "expires_at": expires_at.isoformat() + "Z",
             }).execute()
         )
-        
+
         return {
             "status": "reconnect_request_sent",
             "temp_code": temp_code,
-            "message": f"✓ 請在 LINE Bot 中輸入以下指令：\n\nbind {temp_code}\n\n(指令有效期為 5 分鐘)"
+            "expires_at": expires_at.isoformat() + "Z",   # 'Z' suffix = UTC, prevents JS local-time misparse
+            "message": f"✓ 請在 LINE Bot 中輸入：bind {temp_code}（10 分鐘內有效）",
         }
-        
+
     except Exception as e:
         logger.error(f"[LINE Reconnect] Error: {e}")
         raise HTTPException(status_code=400, detail=f"重新連接請求失敗：{str(e)}")
+
+
+@router.get("/line-status")
+async def get_line_status(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Lightweight polling endpoint: returns wher the user has a LINE account linked.
+    Frontend polls this every 3s after issuing a reconnect code.
+    """
+    supabase = get_supabase()
+    res = supabase.table("users_local").select("line_user_id").eq("id", current_user["id"]).execute()
+    line_user_id = res.data[0].get("line_user_id") if res.data else None
+    return {"line_user_id": line_user_id}
+
+
 
 
 @router.get("/me", response_model=UserProfileOut)

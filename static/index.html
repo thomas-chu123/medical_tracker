@@ -603,19 +603,70 @@
           <div class="card">
             <h3 style="margin-bottom:8px; font-size:16px">📲 LINE 通知設定</h3>
             <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px">
-              掃描 QR Code 連結 LINE Bot 接收門診通知
+              連結 LINE Bot 接收門診即時通知
             </p>
-            <div
-              style="background: linear-gradient(135deg, #00B900, #0AFF0A); border-radius: 12px; padding: 20px; text-align: center;">
+
+            <!-- State A: Already linked -->
+            <div id="line-linked-view" style="display:none">
               <div
-                style="background: #fff; padding: 12px; border-radius: 8px; display: inline-block; margin-bottom: 12px;">
-                <img src="/static/images/line-qr-code.png" alt="LINE QR Code" style="width: 180px; height: 180px;">
+                style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:rgba(0,185,0,0.08); border:1px solid rgba(0,185,0,0.25); border-radius:8px; margin-bottom:14px">
+                <span style="font-size:20px">✅</span>
+                <div>
+                  <div style="font-weight:600; font-size:14px; color:#00B900">已連結 LINE Bot</div>
+                  <div style="font-size:12px; color:var(--text-muted); margin-top:2px">LINE ID：<span
+                      id="line-uid-display">—</span></div>
+                </div>
               </div>
-              <p style="font-size: 12px; color: #fff; margin: 8px 0; font-weight: 500;">
-                掃描 QR Code 連結帳號
+              <button class="btn btn-secondary" style="width:100%; justify-content:center"
+                onclick="requestLineReconnect(this)">
+                🔄 重新連結（更換 LINE 帳號）
+              </button>
+            </div>
+
+            <!-- State B: Code pending (waiting for user to send "bind CODE" in LINE) -->
+            <div id="line-code-view" style="display:none">
+              <div
+                style="background:linear-gradient(135deg,#0D1B2A,#1A2E3B); border-radius:12px; padding:20px; text-align:center; margin-bottom:14px">
+                <div style="font-size:12px; color:#aaa; margin-bottom:6px">在 LINE Bot 中輸入以下指令</div>
+                <div
+                  style="font-family:monospace; font-size:22px; font-weight:700; letter-spacing:4px; color:#00ff88; margin-bottom:6px">
+                  bind <span id="line-reconnect-code">——</span>
+                </div>
+                <div style="font-size:12px; color:#aaa">⏱ 剩餘有效時間：<span id="line-code-countdown"
+                    style="color:#f59e0b; font-weight:600">10:00</span></div>
+              </div>
+              <div style="display:flex; gap:8px">
+                <button class="btn btn-primary" style="flex:1; justify-content:center" onclick="copyLineCode()">
+                  📋 複製指令
+                </button>
+                <button class="btn btn-secondary" style="flex:1; justify-content:center"
+                  onclick="cancelLineReconnect()">
+                  ✕ 取消
+                </button>
+              </div>
+              <p style="font-size:12px; color:var(--text-muted); margin-top:10px; line-height:1.6">
+                完成後 App 將自動更新（無需手動刷新）
               </p>
             </div>
+
+            <!-- State C: Not linked -->
+            <div id="line-unlinked-view" style="display:none">
+              <div
+                style="background:linear-gradient(135deg,#00B900,#0AFF0A); border-radius:12px; padding:20px; text-align:center; margin-bottom:14px">
+                <div style="background:#fff; padding:12px; border-radius:8px; display:inline-block; margin-bottom:12px">
+                  <img src="/static/images/line-qr-code.png" alt="LINE QR Code" style="width:160px; height:160px;">
+                </div>
+                <p style="font-size:12px; color:#fff; margin:0; font-weight:500">掃描 QR Code 加入 LINE Bot</p>
+              </div>
+              <button class="btn btn-primary"
+                style="width:100%; justify-content:center; background:#00B900; border-color:#00B900"
+                onclick="requestLineReconnect(this)">
+                🔗 已加入 Bot？點此取得連結碼
+              </button>
+            </div>
+
           </div>
+
         </div>
       </section>
 
@@ -834,7 +885,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <script src="/static/js/app.js?v=20260302a"></script>
+  <script src="/static/js/app.js?v=20260306b"></script>
 </body>
 
 </html>

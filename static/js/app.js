@@ -135,7 +135,7 @@ const MAX_LOG_BUFFER = 100;
 
 function debugLog(action, data = {}) {
     if (!_debugEnabled) return;  // Skip if debug is disabled
-    
+
     const timestamp = new Date().toISOString();
     const logEntry = {
         timestamp,
@@ -143,27 +143,27 @@ function debugLog(action, data = {}) {
         stepper: JSON.parse(JSON.stringify(AppState.stepper)),
         metadata: data
     };
-    
+
     // 打印到 console
     console.log(`[STEPPER DEBUG] ${action}`, logEntry);
-    
+
     // 存入緩衝
     _debugLogBuffer.push(logEntry);
     if (_debugLogBuffer.length > MAX_LOG_BUFFER) {
         _debugLogBuffer.shift();
     }
-    
+
     // 異步發送到後端（不要等待）
     _flushDebugLogs();
 }
 
 async function _flushDebugLogs() {
     if (!_debugEnabled || _debugLogBuffer.length === 0) return;  // Skip if debug disabled
-    
+
     try {
         const logs = [..._debugLogBuffer];
         _debugLogBuffer = [];
-        
+
         try {
             await apiFetch('/api/debug/stepper-logs', {
                 method: 'POST',
@@ -285,7 +285,7 @@ async function initApp(userFromLogin = null) {
         console.warn('[DEBUG] Failed to load debug config:', e);
         _debugEnabled = false;
     }
-    
+
     // Show app shell IMMEDIATELY for better perceived performance
     document.getElementById('auth-page').classList.remove('show');
     document.getElementById('app').style.display = 'grid';
@@ -357,8 +357,13 @@ function closeMobileMenu() {
 
 // ── Navigation ────────────────────────────────────────────────
 function navigate(btn, pageId, options = {}) {
+    // Stop LINE reconnect timers when leaving the profile page
+    if (pageId !== 'profile') {
+        _clearLineTimers && _clearLineTimers();
+    }
     // Close mobile drawer when navigating
     closeMobileMenu();
+
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -395,7 +400,7 @@ function navigate(btn, pageId, options = {}) {
         // 這防止了無意中調用 navigate 時導致狀態重置
         const autoSkipReset = AppState.stepper && AppState.stepper.step > 1;
         const shouldSkip = options.skipReset !== undefined ? options.skipReset : autoSkipReset;
-        
+
         debugLog('navigate to add-tracking', { skipReset: shouldSkip, currentStep: AppState.stepper?.step });
         console.log('[navigate] add-tracking hit, skipReset:', shouldSkip, 'stepper BEFORE:', JSON.parse(JSON.stringify(AppState.stepper)));
         if (!shouldSkip) {
@@ -1450,11 +1455,11 @@ async function stepperSelectDept(deptId, deptName) {
     stepperGoTo(3);
     debugLog('stepperSelectDept after stepperGoTo(3)', { step: AppState.stepper.step });
     console.log('[stepperSelectDept] About to fetch doctors, stepper step:', AppState.stepper.step);
-    
+
     const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
     debugLog('stepperSelectDept after doctors API', { step: AppState.stepper.step, docCount: docs.length });
     console.log('[stepperSelectDept] After doctors API fetch, stepper step:', AppState.stepper.step);
-    
+
     const grid = document.getElementById('step3-doctor-grid');
     grid.innerHTML = docs.length
         ? docs.map(d => `
@@ -2229,7 +2234,6 @@ async function saveProfile(e) {
 }
 
 
-
 async function loadProfile() {
     console.log('[loadProfile] loading...');
     const profile = await apiFetch('/api/users/me');
@@ -2243,40 +2247,167 @@ async function loadProfile() {
         if (nameEl) nameEl.value = profile.display_name || '';
         if (emailEl) emailEl.value = profile.email || '（未提供）';
 
-        // Start polling to detect when user scans QR code
-        startLineConnectionPolling();
+        renderLineStatus(profile);
     }
 }
 
-let _linePollingTimer = null;
+/** Render the correct LINE status view (linked / code-pending / unlinked) */
+function renderLineStatus(profile) {
+    const linkedView = document.getElementById('line-linked-view');
+    const codeView = document.getElementById('line-code-view');
+    const unlinkedView = document.getElementById('line-unlinked-view');
+    if (!linkedView || !codeView || !unlinkedView) return;
 
-function startLineConnectionPolling() {
-    // Stop any existing polling
+    // If a code is pending (_lineReconnectCode is set), keep showing that view
+    if (_lineReconnectCode) {
+        linkedView.style.display = 'none';
+        unlinkedView.style.display = 'none';
+        codeView.style.display = '';
+        return;
+    }
+
+    if (profile && profile.line_user_id) {
+        linkedView.style.display = '';
+        codeView.style.display = 'none';
+        unlinkedView.style.display = 'none';
+        // Show masked LINE UID (e.g. U****...last4)
+        const uid = profile.line_user_id;
+        const masked = uid.length > 8
+            ? uid.substring(0, 2) + '****' + uid.slice(-4)
+            : uid;
+        const el = document.getElementById('line-uid-display');
+        if (el) el.textContent = masked;
+    } else {
+        linkedView.style.display = 'none';
+        codeView.style.display = 'none';
+        unlinkedView.style.display = '';
+    }
+}
+
+// ── LINE Reconnect flow state ─────────────────────────────────
+let _linePollingTimer = null;
+let _lineCountdownTimer = null;
+let _lineReconnectCode = null;
+let _lineCodeExpiresAt = null;
+
+/** Request a reconnect code and switch to code-view state */
+async function requestLineReconnect(btnEl) {
+    const btn = btnEl || null;
+    if (btn) { btn.disabled = true; btn.dataset.origText = btn.textContent; btn.textContent = '請求中…'; }
+
+    try {
+        const res = await apiPost('/api/users/request-line-reconnect', {});
+        const code = res && res.temp_code ? String(res.temp_code).trim() : null;
+        if (!code) throw new Error('伺服器未回傳驗證碼，請稍後再試');
+
+        _lineReconnectCode = code;
+        _lineCodeExpiresAt = res.expires_at ? new Date(res.expires_at) : new Date(Date.now() + 10 * 60 * 1000);
+
+        // Switch to code view
+        const linkedView = document.getElementById('line-linked-view');
+        const unlinkedView = document.getElementById('line-unlinked-view');
+        const codeView = document.getElementById('line-code-view');
+        if (linkedView) linkedView.style.display = 'none';
+        if (unlinkedView) unlinkedView.style.display = 'none';
+        if (codeView) codeView.style.display = '';
+
+        // Display code
+        const codeEl = document.getElementById('line-reconnect-code');
+        if (codeEl) codeEl.textContent = _lineReconnectCode;
+
+        // Start countdown
+        _startLineCountdown();
+
+        // Start polling for completion
+        _startLineReconnectPolling();
+
+        toast(`已生成驗證碼，請在 LINE Bot 輸入 bind ${_lineReconnectCode}`, 'info', 5000);
+    } catch (err) {
+        console.error('[LINE reconnect]', err);
+        toast(err.message || '發生錯誤', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || '重新連結'; }
+    }
+}
+
+/** Copy the full bind command to clipboard */
+function copyLineCode() {
+    if (!_lineReconnectCode) return;
+    const cmd = `bind ${_lineReconnectCode}`;
+    navigator.clipboard?.writeText(cmd).then(() => {
+        toast(`已複製：${cmd}`, 'success', 2000);
+    }).catch(() => {
+        // Fallback for browsers without clipboard API
+        toast(`請手動輸入：${cmd}`, 'info', 4000);
+    });
+}
+
+/** Cancel the current reconnect request and revert view */
+function cancelLineReconnect() {
+    _clearLineTimers();
+    _lineReconnectCode = null;
+    _lineCodeExpiresAt = null;
+    if (currentUser) renderLineStatus(currentUser);
+}
+
+function _clearLineTimers() {
+    if (_linePollingTimer) { clearInterval(_linePollingTimer); _linePollingTimer = null; }
+    if (_lineCountdownTimer) { clearInterval(_lineCountdownTimer); _lineCountdownTimer = null; }
+}
+
+/** Countdown timer that ticks every second */
+function _startLineCountdown() {
+    if (_lineCountdownTimer) clearInterval(_lineCountdownTimer);
+
+    function tick() {
+        const el = document.getElementById('line-code-countdown');
+        if (!el || !_lineCodeExpiresAt) return;
+        const secsLeft = Math.max(0, Math.round((_lineCodeExpiresAt - Date.now()) / 1000));
+        const mm = String(Math.floor(secsLeft / 60)).padStart(2, '0');
+        const ss = String(secsLeft % 60).padStart(2, '0');
+        el.textContent = `${mm}:${ss}`;
+        if (secsLeft <= 0) {
+            clearInterval(_lineCountdownTimer);
+            _lineCountdownTimer = null;
+            // Code expired — revert to original view
+            toast('驗證碼已過期，請重新申請', 'warning');
+            _lineReconnectCode = null;
+            if (currentUser) renderLineStatus(currentUser);
+        }
+    }
+    tick();
+    _lineCountdownTimer = setInterval(tick, 1000);
+}
+
+/** Poll /api/users/line-status every 3s to detect successful binding */
+function _startLineReconnectPolling() {
     if (_linePollingTimer) clearInterval(_linePollingTimer);
 
-    // If already linked, don't poll
-    if (currentUser && currentUser.line_user_id) return;
-
-    // Poll every 3 seconds to check for pending LINE connection
     _linePollingTimer = setInterval(async () => {
         try {
-            const result = await apiPost('/api/users/link-line', {});
-            if (result && result.status === 'linked') {
-                console.log('[LINE] Successfully linked:', result.line_user_id);
-                // Refresh profile
+            const res = await apiFetch('/api/users/line-status');
+            if (res && res.line_user_id) {
+                // Binding complete!
+                _clearLineTimers();
+                _lineReconnectCode = null;
+                _lineCodeExpiresAt = null;
+
+                // Refresh full profile
                 const profile = await apiFetch('/api/users/me');
-                currentUser = profile;
-                AppState.currentUser = profile;
-                toast('✓ LINE 連接成功！', 'success');
-                // Stop polling
-                clearInterval(_linePollingTimer);
-                _linePollingTimer = null;
+                if (profile) {
+                    currentUser = profile;
+                    AppState.currentUser = profile;
+                    renderLineStatus(profile);
+                }
+                toast('✅ LINE 重新連結成功！', 'success', 4000);
             }
         } catch (e) {
-            // Polling error, continue silently
+            // Silent fail on polling errors
         }
     }, 3000);
 }
+
+
 
 // ── Modal helpers ─────────────────────────────────────────────
 function closeModalIfOverlay(e) {

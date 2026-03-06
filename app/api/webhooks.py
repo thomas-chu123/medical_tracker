@@ -9,8 +9,11 @@ from fastapi import APIRouter, Request, HTTPException
 from app.config import get_settings
 from app.database import get_supabase
 
+import logging
+
 settings = get_settings()
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
+logger = logging.getLogger("medical_app")
 
 
 @router.post("/line")
@@ -23,10 +26,11 @@ async def line_webhook(request: Request):
     - unfollow: User removes the bot
     - message: User sends a message to the bot
     """
-    
-    # Get request body
+
+    # Get request body first
     body = await request.body()
-    
+    logger.info(f"[Webhook] POST /api/webhooks/line received, body={len(body)} bytes")
+
     # Log everything
     signature = request.headers.get("x-line-signature")
     print(f"\n{'='*60}")
@@ -40,39 +44,43 @@ async def line_webhook(request: Request):
     
     # Verify signature
     if not signature:
+        logger.error("[Webhook] Missing X-LINE-Signature header")
         print("[LINE WEBHOOK] ERROR: Missing X-LINE-Signature header")
         raise HTTPException(status_code=403, detail="Missing X-LINE-Signature header")
     
     is_valid = _verify_signature(body, signature)
+    logger.info(f"[Webhook] Signature valid: {is_valid}")
     print(f"[LINE WEBHOOK] Signature verification result: {is_valid}")
     
     if not is_valid:
+        logger.error("[Webhook] Invalid signature - rejecting request")
         print("[LINE WEBHOOK] ERROR: Invalid signature - rejecting request")
         raise HTTPException(status_code=403, detail="Invalid signature")
     
     # Parse events
     data = json.loads(body)
-    print(f"[LINE WEBHOOK] Processing {len(data.get('events', []))} events")
+    events = data.get('events', [])
+    logger.info(f"[Webhook] Processing {len(events)} events")
+    print(f"[LINE WEBHOOK] Processing {len(events)} events")
     
-    for event in data.get("events", []):
+    for event in events:
         try:
-            if event["type"] == "follow":
-                user_id = event["source"]["userId"]
-                await _handle_user_follow(user_id)
-            
-            elif event["type"] == "unfollow":
-                user_id = event["source"]["userId"]
-                await _handle_user_unfollow(user_id)
-            
-            elif event["type"] == "message":
-                user_id = event["source"]["userId"]
-                message_text = event["message"].get("text", "")
-                await _handle_user_message(user_id, message_text)
-        
+            event_type = event.get("type")
+            source_user = event.get("source", {}).get("userId", "unknown")
+            logger.info(f"[Webhook] Event type={event_type} from userId={source_user}")
+            if event_type == "follow":
+                await _handle_user_follow(source_user)
+            elif event_type == "unfollow":
+                await _handle_user_unfollow(source_user)
+            elif event_type == "message":
+                msg_text = event["message"].get("text", "")
+                logger.info(f"[Webhook] message text='{msg_text}'")
+                await _handle_user_message(source_user, msg_text)
         except Exception as e:
+            logger.error(f"[Webhook] Error processing event {event}: {e}", exc_info=True)
             print(f"[LINE Webhook] Error processing event: {e}")
-            # Continue processing other events
-    
+
+    logger.info("[Webhook] Done processing all events")
     print("[LINE WEBHOOK] Response: OK")
     return {"status": "ok"}
 
@@ -113,35 +121,25 @@ def _verify_signature(body: bytes, signature: str) -> bool:
 async def _handle_user_follow(user_id: str):
     """
     Handle user following the bot.
-    
-    When a user adds the bot as a friend:
-    - Store LINE User ID in pending_links table
-    - User will link it from their profile settings after scanning QR code
+    Just send a welcome message with bind instructions.
+    Actual linking is done when user clicks 'Reconnect' in app settings.
     """
+    logger.info(f"[Webhook] User {user_id} followed the bot")
     print(f"[LINE] User {user_id} followed the bot")
-    
+
     try:
-        supabase = get_supabase()
-        
-        # Store in pending links for user to claim
-        pending_insert = supabase.table("line_pending_links").insert({
-            "line_user_id": user_id
-        }).execute()
-        
-        print(f"[LINE] Stored pending link for user {user_id}")
-        
-        # Send welcome message
         from app.services.line_message_api import send_line_message
         await send_line_message(
             user_id,
             "歡迎使用台灣醫療門診追蹤系統！\n\n"
-            "您已成功連接 LINE Bot，將可接收門診通知。\n\n"
-            "如尚未在應用中登入，請先登入您的帳號。\n"
-            "進入「個人設定」即可完成 LINE 連接。"
+            "您已加入 LINE Bot。\n\n"
+            "請在應用「個人設定 → LINE 通知設定」點擊「重新連結」按鈕，"
+            "取得 6 位碼後在此輸入 bind XXXXXX 完成連結。"
         )
-    
     except Exception as e:
+        logger.error(f"[Webhook] Error handling follow event: {e}", exc_info=True)
         print(f"[LINE] Error handling follow event: {e}")
+
 
 
 async def _handle_user_unfollow(user_id: str):
@@ -194,18 +192,20 @@ async def _handle_user_message(user_id: str, message_text: str):
     from app.services.line_message_api import send_line_message
     
     message_lower = message_text.lower().strip()
-    
+
     try:
         # Handle "bind CODE" command for users who are already friends
-        # Format: "bind XXXXXX" where XXXXXX is a 6-character code
         if message_lower.startswith("bind ") or message_lower == "bind":
-            from datetime import datetime
-            
+            from datetime import datetime, timezone
+
+            logger.info(f"[Webhook][bind] Received bind command from LINE user {user_id}: '{message_text}'")
+
             supabase = get_supabase()
-            
+
             # Extract code from message
             parts = message_text.strip().split()
             if len(parts) < 2:
+                logger.warning(f"[Webhook][bind] No code provided by {user_id}")
                 await send_line_message(
                     user_id,
                     "⚠️ 格式錯誤\n\n"
@@ -213,66 +213,80 @@ async def _handle_user_message(user_id: str, message_text: str):
                     "(XXXXXX 是應用程式提供的 6 位碼)"
                 )
                 return
-            
-            temp_code = parts[1].strip()
-            
+
+            temp_code = parts[1].strip().upper()   # normalize to uppercase
+            logger.info(f"[Webhook][bind] Looking up temp_code='{temp_code}' for LINE user {user_id}")
+
             # Look up the code in line_pending_links
             try:
                 pending_res = await asyncio.to_thread(
                     lambda: supabase.table("line_pending_links")
-                        .select("id, user_id, temp_code, expires_at")
+                        .select("id, user_id, temp_code, expires_at, line_user_id")
                         .eq("temp_code", temp_code)
-                        .is_("line_user_id", "null")  # Must not be already completed
                         .execute()
                 )
-                
+
+                logger.info(f"[Webhook][bind] DB query result count={len(pending_res.data) if pending_res.data else 0}, data={pending_res.data}")
+
                 if not pending_res.data:
+                    logger.warning(f"[Webhook][bind] Code '{temp_code}' not found in line_pending_links")
                     await send_line_message(
                         user_id,
                         "❌ 碼不存在或已過期\n\n"
-                        "請檢查：\n"
-                        "1. 碼是否正確\n"
-                        "2. 是否已超過 5 分鐘\n"
+                        "請確認：\n"
+                        "1. 碼是否正確（大小寫有別）\n"
+                        "2. 是否已超過 10 分鐘\n"
                         "3. 是否已使用過\n\n"
                         "如需重新綁定，請在應用中重新申請。"
                     )
                     return
-                
+
                 pending_link = pending_res.data[0]
-                expires_at = pending_link["expires_at"]
-                
-                # Check if code has expired
-                if isinstance(expires_at, str):
-                    expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                expires_at_raw = pending_link["expires_at"]
+                app_user_id = pending_link.get("user_id")
+                logger.info(f"[Webhook][bind] Found pending link: id={pending_link['id']}, user_id={app_user_id}, expires_at={expires_at_raw}, already_linked={pending_link.get('line_user_id')}")
+
+                # Check if already used (line_user_id is set = already consumed)
+                if pending_link.get("line_user_id"):
+                    logger.warning(f"[Webhook][bind] Code already used by LINE user {pending_link['line_user_id']}")
+                    await send_line_message(user_id, "⚠️ 此碼已使用過，請在應用中重新申請新碼。")
+                    return
+
+                # Check if code has expired — use timezone-aware comparison
+                if isinstance(expires_at_raw, str):
+                    # Normalize: handle both '+00:00' and 'Z' suffix
+                    expires_dt = datetime.fromisoformat(expires_at_raw.replace('Z', '+00:00'))
                 else:
-                    expires_dt = expires_at
-                
-                if datetime.utcnow() > expires_dt:
+                    expires_dt = expires_at_raw
+
+                now_utc = datetime.now(timezone.utc)
+                logger.info(f"[Webhook][bind] Expiry check: now={now_utc.isoformat()}, expires={expires_dt.isoformat()}, expired={now_utc > expires_dt}")
+
+                if now_utc > expires_dt:
+                    logger.warning(f"[Webhook][bind] Code '{temp_code}' has expired")
                     await send_line_message(
                         user_id,
                         "⏰ 碼已過期\n\n"
                         "請在應用中重新申請新碼。"
                     )
                     return
-                
-                # Code is valid! Update the pending link with this LINE User ID
-                app_user_id = pending_link["user_id"]
-                
-                await asyncio.to_thread(
-                    lambda: supabase.table("line_pending_links")
-                        .update({"line_user_id": user_id})
-                        .eq("id", pending_link["id"])
-                        .execute()
-                )
-                
-                # Now link this LINE User ID to the app user account
-                await asyncio.to_thread(
+
+                if not app_user_id:
+                    logger.error(f"[Webhook][bind] pending link has no user_id! data={pending_link}")
+                    await send_line_message(user_id, "❌ 綁定失敗：找不到對應的應用帳號，請重新申請。")
+                    return
+
+                # Code is valid — update users_local with this LINE User ID
+                logger.info(f"[Webhook][bind] Code valid. Linking LINE user {user_id} → app user {app_user_id}")
+
+                update_res = await asyncio.to_thread(
                     lambda: supabase.table("users_local")
                         .update({"line_user_id": user_id})
                         .eq("id", app_user_id)
                         .execute()
                 )
-                
+                logger.info(f"[Webhook][bind] users_local update result: {update_res.data}")
+
                 # Delete the pending link record (cleanup)
                 await asyncio.to_thread(
                     lambda: supabase.table("line_pending_links")
@@ -280,25 +294,25 @@ async def _handle_user_message(user_id: str, message_text: str):
                         .eq("id", pending_link["id"])
                         .execute()
                 )
-                
-                print(f"[LINE] Successfully linked user {app_user_id} with LINE User ID {user_id}")
-                
+                logger.info(f"[Webhook][bind] Pending link deleted. Binding complete.")
+
                 await send_line_message(
                     user_id,
-                    "✅ 綁定成功！\n\n"
-                    "您的帳號已成功連接 LINE Bot。\n"
+                    "✅ 重新連結成功！\n\n"
+                    "您的帳號已成功重新連接 LINE Bot。\n"
                     "將來會透過此管道接收門診通知。"
                 )
                 return
-                
+
             except Exception as e:
-                print(f"[LINE] Error processing bind code: {e}")
+                logger.error(f"[Webhook][bind] Error processing bind code '{temp_code}': {e}", exc_info=True)
                 await send_line_message(
                     user_id,
-                    "❌ 綁定失敗：" + str(e)
+                    f"❌ 綁定失敗（伺服器錯誤）：{e}\n\n請稍後再試。"
                 )
                 return
-        
+
+
         if message_lower == "help":
             help_text = (
                 "📖 使用說明\n\n"
