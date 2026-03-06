@@ -24,6 +24,7 @@ from app.scrapers.base import BaseScraper
 from app.scrapers.cmuh import CMUHScraper, CMUHHsinchuScraper
 from app.scrapers.ntuh import NTUHHsinchuScraper
 from app.scrapers.hmmh import HMMHScraper
+from app.scrapers.tvgh_hsinchu import TvghHsinchuScraper
 from app.config import get_settings
 import logging
 
@@ -33,9 +34,10 @@ logger = logging.getLogger(__name__)
 # 新增醫院時，只需在此添加一行映射
 HOSPITAL_SCRAPERS: Dict[str, Type[BaseScraper]] = {
     "CMUH_TAICHUNG": CMUHScraper,           # 中榮台中院
-    "CMUH_HSINCHU": CMUHHsinchuScraper,    # 中榮新竹院
+    "CMUH_HSINCHU": CMUHHsinchuScraper,    # 中國醫新竹分院
     "NTUH_HSINCHU": NTUHHsinchuScraper,    # 台大新竹分院
     "HMMH": HMMHScraper,                   # 馬偕新竹分院
+    "TVGH_HSINCHU": TvghHsinchuScraper,    # 臺北榮總新竹分院
     # "HSINCHU_HOSPITAL": HsinchuHospitalScraper,  # 未來範例
 }
 
