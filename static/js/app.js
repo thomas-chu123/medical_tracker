@@ -745,7 +745,8 @@ function renderClinicCard(sub, snap) {
 
     // 3. Status & Progress
     const remaining = sub.remaining ?? '—';
-    const status = sub.status || '看診中';
+    // If we have no current number and no status from the scraper, it's likely "Not Started/Not Open"
+    const status = sub.status || (current === '—' ? '未開診' : '看診中');
     const isNum = typeof remaining === 'number';
     const isFinished = status === '看診完畢' || status === '已關診';
 
