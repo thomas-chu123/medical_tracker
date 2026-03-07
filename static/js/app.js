@@ -738,12 +738,14 @@ function renderClinicCard(sub, snap) {
     const eta = sub.eta || snap?.eta;
 
     // 2. Updated Number Display
-    let numberDisplayHtml = `目前: ${current}號 / 總號: ${total_quota}號 / 掛號: ${current_registered}人`;
+    // Ensure we always show a current number if available
+    const displayCurrent = (current && current !== '—') ? current : (sub.current_number ?? '—');
+    let numberDisplayHtml = `目前: ${displayCurrent}號 / 總號: ${total_quota}號 / 掛號: ${current_registered}人`;
     let total = total_quota === '—' ? (current_registered === '—' ? 0 : current_registered) : total_quota;
 
     // 3. Status & Progress
     const remaining = sub.remaining ?? '—';
-    const status = sub.status;
+    const status = sub.status || '看診中';
     const isNum = typeof remaining === 'number';
     const isFinished = status === '看診完畢' || status === '已關診';
 
@@ -907,11 +909,16 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId, sessionTy
             return;
         }
 
-        // If no queue details, show simple message
-        if (!queueDetails || queueDetails.length === 0) {
-            html += '<div class="empty-state"><p>目前無候診資料</p></div>';
-            document.getElementById('clinic-waiting-body').innerHTML = html + '</div>';
-            return;
+        // Normalize queueDetails: Use current number + "看診中" if list is empty or invalid (for summary-only hospitals)
+        let normalizedQueue = (queueDetails || []).filter(item => item && (
+            item.number !== undefined || item.current_number !== undefined ||
+            item.status !== undefined || item.waiting_count !== undefined
+        ));
+        if (normalizedQueue.length === 0) {
+            normalizedQueue = [{
+                number: snap.current_number,
+                status: '看診中'
+            }];
         }
 
         // Build scrollable table
@@ -927,7 +934,7 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId, sessionTy
                         <tbody>
         `;
 
-        queueDetails.forEach((item, idx) => {
+        normalizedQueue.forEach((item, idx) => {
             const isCurrent = item.number === snap.current_number;
             const rowBg = isCurrent ? 'background:var(--danger); color:white' :
                 item.status === '完成' ? 'background:var(--bg-elevated)' : '';
@@ -935,8 +942,8 @@ async function showClinicWaitingList(doctorName, clinicRoom, doctorId, sessionTy
 
             html += `
                             <tr ${rowStyle} style="border-bottom:1px solid var(--border-subtle)">
-                                <td style="padding:12px; text-align:center; font-weight:600">${item.number}</td>
-                                <td style="padding:12px; text-align:center">${item.status}</td>
+                                <td style="padding:12px; text-align:center; font-weight:600">${item.number ?? item.current_number ?? snap.current_number ?? '—'}</td>
+                                <td style="padding:12px; text-align:center">${item.status ?? (item.waiting_count !== undefined ? '等候中 (' + item.waiting_count + '人)' : '看診中')}</td>
                             </tr>
             `;
         });
