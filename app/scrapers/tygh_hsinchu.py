@@ -207,6 +207,9 @@ class TyghHsinchuScraper(BaseScraper):
             is_full = "額滿" in label_text or "滿號" in label_text or "停診" in label_text or "時段已過" in label_text
             status = "休診" if "停診" in label_text else ("額滿" if "額滿" in label_text or "滿號" in label_text else None)
             
+            reg_match = re.search(r"已掛號:?(\d+)人?", label_text)
+            registered = int(reg_match.group(1)) if reg_match else None
+            
             session_type = self._normalize_session_type(session_id)
             
             slots.append(DoctorSlot(
@@ -216,7 +219,7 @@ class TyghHsinchuScraper(BaseScraper):
                 session_date=slot_date,
                 session_type=session_type,
                 total_quota=None,
-                registered=None,
+                registered=registered,
                 clinic_room=None,
                 is_full=is_full,
                 status=status
@@ -261,43 +264,68 @@ class TyghHsinchuScraper(BaseScraper):
         period_str = self.PERIOD_MAP.get(period, period)
         
         # We find the table that has 'room' text as Header or within td
-        # TYGH format usually involves `<tr><td>科別</td><td>醫師</td><td>燈號</td></tr>`
+        # TYGH uses li elements for modern layout
         target_number = None
         target_doctor = None
+        target_room = None
         status = None
 
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            if len(rows) > 0:
-                for row in rows:
-                    cells = row.find_all(["td", "th"])
-                    if len(cells) >= 3:
-                        dept_name = cells[0].get_text(strip=True)
-                        doc_name = cells[1].get_text(strip=True)
-                        number_str = cells[2].get_text(strip=True)
-                        
-                        # Compare dept parameter logic. 
-                        # We may only have code, so we need to match by finding actual text from DB.
-                        # It is easiest to return all data and let DB matcher handle, 
-                        # but standard API interface demands we query exactly one room/dept.
-                        # Since kwargs may contain 'dept_name', let's use it.
-                        kwargs_dept = kwargs.get('dept_name', '')
-                        
-                        # Strict match might be risky, try `in`
-                        if kwargs_dept and kwargs_dept in dept_name:
-                            target_number = _parse_int(number_str)
-                            target_doctor = doc_name
-                            break
-            if target_number is not None:
+        items = soup.find_all("li", class_="number-light-box")
+        for item in items:
+            room_tag = item.find("h2", class_="room")
+            name_tag = item.find("p", class_="name")
+            number_tag = item.find("span", class_="number")
+            
+            if not room_tag or not name_tag or not number_tag:
+                continue
+                
+            item_room = room_tag.get_text(strip=True)
+            doc_name = name_tag.get_text(strip=True)
+            number_str = number_tag.get_text(strip=True)
+            
+            kwargs_doctor = kwargs.get('doctor_name', '')
+            
+            is_match = False
+            if kwargs_doctor and kwargs_doctor in doc_name:
+                is_match = True
+            elif str(room) == item_room:
+                is_match = True
+                
+            if is_match:
+                target_number = _parse_int(number_str)
+                target_doctor = doc_name
+                target_room = item_room
                 break
+
+        if target_number is None and not items:
+            tables = soup.find_all("table")
+            for table in tables:
+                rows = table.find_all("tr")
+                if len(rows) > 0:
+                    for row in rows:
+                        cells = row.find_all(["td", "th"])
+                        if len(cells) >= 3:
+                            dept_name = cells[0].get_text(strip=True)
+                            doc_name = cells[1].get_text(strip=True)
+                            number_str = cells[2].get_text(strip=True)
+                            
+                            kwargs_dept = kwargs.get('dept_name', '')
+                            kwargs_doctor = kwargs.get('doctor_name', '')
+                            
+                            if (kwargs_doctor and kwargs_doctor in doc_name) or (kwargs_dept and kwargs_dept in dept_name):
+                                target_number = _parse_int(number_str)
+                                target_doctor = doc_name
+                                target_room = dept_name # the page uses dept_name position for rooms in this older format
+                                break
+                if target_number is not None:
+                    break
 
         if target_number is None and not status:
             return None
 
         # Return matching format
         return ClinicProgress(
-            clinic_room=room,
+            clinic_room=target_room or room,
             session_type=period_str,
             current_number=target_number or 0,
             status=status,

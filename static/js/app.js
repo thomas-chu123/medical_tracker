@@ -820,7 +820,7 @@ function renderClinicCard(sub, snap) {
     ${deptLabel ? `<div style="font-size:12px; color:var(--text-muted); margin-bottom:2px">🏥 ${escHtml(hospLabel)}｜${escHtml(deptLabel)}</div>` : ''}
     <div style="margin-bottom: 8px;">
       <span class="dept-tag">📅 ${escHtml(sessionLabel)}</span>
-      ${(sub.clinic_room || snap?.clinic_room) ? `<span class="dept-tag" style="margin-left:6px;">🚪 診間：${escHtml(sub.clinic_room || snap.clinic_room)}診</span>` : ''}
+      ${(sub.clinic_room || snap?.clinic_room) ? `<span class="dept-tag" style="margin-left:6px;">🚪 診間：${escHtml((sub.clinic_room || snap.clinic_room).replace(/診$/, ''))}診</span>` : ''}
     </div>
     ${apptNoHtml}
     ${etaHtml}
@@ -856,7 +856,7 @@ async function refreshAll() {
 
 async function showClinicWaitingList(doctorName, clinicRoom, doctorId, sessionType) {
     const modal = document.getElementById('clinic-waiting-modal');
-    document.getElementById('clinic-waiting-title').textContent = `🚪 診間 ${escHtml(clinicRoom)}診 - ${escHtml(doctorName)}`;
+    document.getElementById('clinic-waiting-title').textContent = `🚪 診間 ${escHtml(clinicRoom.replace(/診$/, ''))}診 - ${escHtml(doctorName)}`;
     document.getElementById('clinic-waiting-body').innerHTML = '<div class="spinner"></div>';
 
     modal.classList.add('open');
@@ -2028,7 +2028,7 @@ function renderTrackingCard(sub, isExpired = false) {
       <div>
         <div style="font-weight:600; font-size:15px">👩‍⚕️ ${escHtml(docName)}</div>
         ${(hospital || dept) ? `<div style="font-size:12px; color:var(--accent); margin-top:2px">🏥 ${escHtml(hospital)} ${dept ? '｜' + escHtml(dept) : ''}</div>` : ''}
-        <div style="font-size:13px; color:var(--text-muted); margin-top:4px">📅 ${sessionLabel}${sub.clinic_room ? ` ｜ 🚪 診間：${escHtml(sub.clinic_room)}診` : ''}</div>
+        <div style="font-size:13px; color:var(--text-muted); margin-top:4px">📅 ${sessionLabel}${sub.clinic_room ? ` ｜ 🚪 診間：${escHtml(sub.clinic_room.replace(/診$/, ''))}診` : ''}</div>
         <div style="font-size:12px; color:var(--text-muted)">🎫 我的號碼：${apptNo}</div>
         ${quotaHtml}
         ${sub.current_number ? `<div style="font-size:12px; color:var(--primary); font-weight:bold; margin-top:2px">🔔 目前看診號碼：${sub.current_number}</div>` : ''}

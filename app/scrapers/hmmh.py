@@ -58,13 +58,16 @@ class HMMHScraper(BaseScraper):
     DEPT_CODE_PATTERN = re.compile(r"depid=(\d+)")
     DOC_CODE_PATTERN = re.compile(r"drcode=([A-Za-z0-9]+)")
     DATE_PATTERN = re.compile(r"(\d{4})[/-](\d{2})[/-](\d{2})")  # AD year format
-    
+
     # Period mapping: 1=上午, 2=下午, 3=晚上
     PERIOD_MAP = {"1": "上午", "2": "下午", "3": "晚上"}
     PERIOD_REVERSE_MAP = {"上午": "1", "下午": "2", "晚上": "3"}
 
     def __init__(self):
+        super().__init__()
         self._client: Optional[httpx.AsyncClient] = None
+        self._internal_dept_cache: dict[str, str] = {}
+        self._cache_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -477,11 +480,25 @@ class HMMHScraper(BaseScraper):
             "code": doctor_code
         }
 
+    async def _get_internal_dept_code(self, dept_code: str, doctor_name: str) -> Optional[str]:
+        cache_key = f"{dept_code}_{doctor_name}"
+        async with self._cache_lock:
+            if cache_key in self._internal_dept_cache:
+                return self._internal_dept_cache[cache_key]
+            
+        slots = await self.fetch_schedule(dept_code)
+        
+        async with self._cache_lock:
+            for slot in slots:
+                if slot.doctor_name and slot.internal_dept_code:
+                    self._internal_dept_cache[f"{dept_code}_{slot.doctor_name}"] = slot.internal_dept_code
+            return self._internal_dept_cache.get(cache_key)
+
     # ─────────────────────────────────────────────────────────
     # 3. Fetch clinic queue progress
     # ─────────────────────────────────────────────────────────
     async def fetch_clinic_progress(
-        self, room: str, period: str
+        self, room: str, period: str, **kwargs
     ) -> Optional[ClinicProgress]:
         """
         Query current calling number and clinic status from progressstatus.php.
@@ -500,28 +517,34 @@ class HMMHScraper(BaseScraper):
         if period in self.PERIOD_REVERSE_MAP:
             period = self.PERIOD_REVERSE_MAP[period]
 
-        url = f"{self.BASE_URL}/progressstatus.php"
-        params = {"dept": room, "ap": period}
+        target_dept = room
+        doctor_name = kwargs.get('doctor_name', '')
+        dept_code = kwargs.get('dept_code', '')
+        
+        if dept_code and doctor_name:
+            internal_code = await self._get_internal_dept_code(dept_code, doctor_name)
+            if internal_code:
+                log.info(f"[HMMH] Resolved internal dept_code {internal_code} for {doctor_name} (original room={room})")
+                target_dept = internal_code
 
-        log.info(f"[HMMH] Fetching clinic progress: dept={room}, ap={period}")
+        url = f"{self.BASE_URL}/progressstatus.php"
+        params = {"dept": target_dept, "ap": period}
+
+        log.info(f"[HMMH] Fetching clinic progress: dept={target_dept}, ap={period}, kwargs={kwargs}")
 
         try:
             html = await self._get(url, params=params)
         except Exception as e:
-            log.error(f"[HMMH] Error fetching clinic progress for dept={room}, ap={period}: {e}")
+            log.error(f"[HMMH] Error fetching clinic progress for dept={target_dept}, ap={period}: {e}")
             return None
 
         soup = BeautifulSoup(html, "lxml")
 
-        # Check for status messages in page text first
+        # Check for global status ONLY if there is no regtable found
         page_text = soup.get_text()
-        status = None
-        if "已停診" in page_text:
-            status = "已停診"
-        elif "未開診" in page_text or "尚未開始看診" in page_text:
-            status = "未開診"
-        elif "看診完畢" in page_text or "已結束看診" in page_text:
-            status = "看診完畢"
+        global_status = None
+        if "尚未開始看診" in page_text and "regtable" not in html:
+            global_status = "未開診"
 
         # Find the progress table (class="regtable")
         # Table columns: 位置 | 診別 | 醫師 | 目前看診號 | 未看診人數
@@ -529,7 +552,7 @@ class HMMHScraper(BaseScraper):
 
         if not table:
             log.warning(f"[HMMH] No regtable found for dept={room}, ap={period}")
-            if status:
+            if global_status:
                 # Return the status only (e.g. "已停診")
                 return ClinicProgress(
                     clinic_room=room,
@@ -537,7 +560,7 @@ class HMMHScraper(BaseScraper):
                     current_number=0,
                     total_quota=0,
                     registered_count=0,
-                    status=status,
+                    status=global_status,
                     waiting_list=[],
                     clinic_queue_details=[],
                 )
@@ -546,6 +569,7 @@ class HMMHScraper(BaseScraper):
         clinic_queue_details = []
         current_number = None
         total_waiting = 0
+        doctor_status = None
 
         rows = table.find("tbody").find_all("tr") if table.find("tbody") else table.find_all("tr")[1:]
         for row in rows:
@@ -556,8 +580,28 @@ class HMMHScraper(BaseScraper):
             location = cells[0].get_text(strip=True)    # 位置 e.g. 福音樓 02樓
             clinic_name = cells[1].get_text(strip=True)  # 診別 e.g. 胃內01診
             doctor = cells[2].get_text(strip=True)       # 醫師 e.g. 陳重助
-            current_no_text = cells[3].get_text(strip=True)  # 目前看診號 e.g. 88號
+            current_no_text = cells[3].get_text(strip=True)  # 目前看診號 e.g. 88號或已停診
             waiting_text = cells[4].get_text(strip=True)     # 未看診人數 e.g. 5人
+
+            kwargs_doctor = kwargs.get('doctor_name', '')
+            if kwargs_doctor and kwargs_doctor not in doctor:
+                continue
+
+            # Parse status from the specific doctor's row
+            if "已停診" in current_no_text or "停診" in current_no_text:
+                doctor_status = "已停診"
+            elif "未開診" in current_no_text or "尚未開始看診" in current_no_text:
+                doctor_status = "未開診"
+            elif "看診完畢" in current_no_text or "已結束看診" in current_no_text:
+                doctor_status = "看診完畢"
+                
+            if not doctor_status:
+                if "已停診" in waiting_text or "停診" in waiting_text:
+                    doctor_status = "已停診"
+                elif "未開診" in waiting_text or "尚未開始看診" in waiting_text:
+                    doctor_status = "未開診"
+                elif "看診完畢" in waiting_text or "已結束看診" in waiting_text:
+                    doctor_status = "看診完畢"
 
             # Parse current calling number (remove 「號」)
             current_no = _parse_int(current_no_text)
@@ -576,16 +620,16 @@ class HMMHScraper(BaseScraper):
                 "current_number": current_no,
                 "waiting_count": waiting_count,
             })
-            log.debug(f"[HMMH] Clinic row: {clinic_name} 醫師={doctor} 看診號={current_no_text} 未看診={waiting_text}")
+            log.debug(f"[HMMH] Clinic row match: {clinic_name} 醫師={doctor} 看診號={current_no_text} 未看診={waiting_text}")
 
-        if not clinic_queue_details and not status:
+        if not clinic_queue_details and not doctor_status:
             log.warning(f"[HMMH] No data rows and no status for dept={room}, ap={period}")
             return None
 
         log.info(
             f"[HMMH] Clinic progress dept={room} ap={period}: "
             f"current={current_number}, waiting_total={total_waiting}, "
-            f"rows={len(clinic_queue_details)}, status={status}"
+            f"rows={len(clinic_queue_details)}, status={doctor_status}"
         )
 
         return ClinicProgress(
@@ -594,7 +638,7 @@ class HMMHScraper(BaseScraper):
             current_number=current_number or 0,
             total_quota=0,  # HMMH progressstatus.php does not expose total quota
             registered_count=total_waiting + (current_number or 0),  # estimate
-            status=status,
+            status=doctor_status,
             waiting_list=[],  # HMMH returns aggregate count, not individual numbers
             clinic_queue_details=clinic_queue_details,
         )

@@ -435,6 +435,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         current_number = slot.current_number 
         registered_count = slot.registered
         total_quota = slot.total_quota
+        clinic_room = slot.clinic_room or ""
         status = slot.status
         waiting_list = []
         clinic_queue_details = []
@@ -471,12 +472,17 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                     should_fetch_realtime = True
 
         # If it's time to fetch real-time progress
-        if should_fetch_realtime and slot.clinic_room:
+        if should_fetch_realtime:
             period_map = {"上午": "1", "下午": "2", "晚上": "3"}
             period = period_map.get(slot.session_type, "1")
             try:
-                logger.debug(f"[Scheduler] Fetching realtime for {slot.clinic_room}診 period={period}")
-                progress = await scraper.fetch_clinic_progress(slot.clinic_room, period, dept_code=slot.department_code)
+                logger.debug(f"[Scheduler] Fetching realtime for room='{slot.clinic_room}' period={period}")
+                progress = await scraper.fetch_clinic_progress(
+                    room=slot.clinic_room or "", 
+                    period=period, 
+                    dept_code=slot.department_code,
+                    doctor_name=slot.doctor_name
+                )
                 if progress:
                     logger.debug(f"[Scheduler] Got progress: current_number={progress.current_number}, queue_items={len(progress.clinic_queue_details) if progress.clinic_queue_details else 0}")
                     current_number = progress.current_number
@@ -487,6 +493,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         total_quota = progress.total_quota         # Max Number
                     if progress.status:
                         status = progress.status
+                    if progress.clinic_room:
+                        clinic_room = progress.clinic_room
                     if progress.waiting_list:
                         waiting_list = progress.waiting_list
                     if progress.clinic_queue_details:
@@ -563,7 +571,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
             "department_id": dept_id,
             "session_date": str(slot.session_date),
             "session_type": slot.session_type,
-            "clinic_room": slot.clinic_room or "",
+            "clinic_room": clinic_room,
             "is_full": slot.is_full,
             "scraped_at": now_utc_str(),
         }
@@ -574,8 +582,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         # Determine status. Favor realtime progress status, fallback to slot status if it exists and is meaningful.
         final_status = status if status else (slot.status if slot.status else None)
         
-        if final_status:
-            row["status"] = final_status
+        # Always set status so that previously falsely tagged statuses (like "已停診") get cleared if they are no longer true
+        row["status"] = final_status
             
         if registered_count is not None:
             row["current_registered"] = registered_count
