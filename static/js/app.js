@@ -408,6 +408,16 @@ function navigate(btn, pageId, options = {}) {
             debugLog('navigate: resetting stepper state', { reason: 'skipReset is false', autoSkip: autoSkipReset });
             Object.assign(AppState.stepper, { step: 1, hospitalId: '', hospitalName: '', cat: '', deptId: '', deptName: '', doctorId: '', doctorName: '' });
             console.log('[navigate] stepper RESET');
+            // Reset Step 4 Form UI elements
+            document.getElementById('modal-date').value = '';
+            document.getElementById('modal-session').value = '';
+            document.getElementById('modal-appointment-number').value = '';
+            document.getElementById('notify-20').checked = true;
+            document.getElementById('notify-10').checked = true;
+            document.getElementById('notify-5').checked = true;
+            document.getElementById('notify-email').checked = true;
+            document.getElementById('notify-line').checked = true;
+
             stepperGoTo(1);
             document.getElementById('stepper-breadcrumb').innerHTML = '';
             loadStepperHospitals();
