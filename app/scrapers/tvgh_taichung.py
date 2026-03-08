@@ -33,19 +33,29 @@ class TVGHTaichungScraper(BaseScraper):
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         departments = []
-        for link in soup.find_all('a'):
-            href = link.get('href', '')
-            if 'listDoctor.jsp' in href:
-                match = re.search(r'(?:section|§ion)=([A-Z0-9_]+)', href)
-                if match:
-                    code = match.group(1)
-                    name = link.text.strip()
-                    if name and code:
-                        departments.append(DepartmentData(
-                            name=name,
-                            code=code,
-                            hospital_code=self.HOSPITAL_CODE
-                        ))
+        current_category = None
+        
+        for tr in soup.find_all('tr'):
+            th = tr.find('th')
+            if th and th.get('colspan'):
+                category = th.text.strip()
+                if category:
+                    current_category = category
+                    
+            for link in tr.find_all('a'):
+                href = link.get('href', '')
+                if 'listDoctor.jsp' in href:
+                    match = re.search(r'(?:section|§ion)=([A-Z0-9_]+)', href)
+                    if match:
+                        code = match.group(1)
+                        name = link.text.strip()
+                        if name and code:
+                            departments.append(DepartmentData(
+                                name=name,
+                                code=code,
+                                category=current_category,
+                                hospital_code=self.HOSPITAL_CODE
+                            ))
         
         unique_depts = {d.code: d for d in departments}
         return list(unique_depts.values())

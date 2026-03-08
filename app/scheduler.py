@@ -407,7 +407,15 @@ async def _scrape_hospital_tracked_data(scraper):
                 try:
                     logger.info(f"[Scheduler] DEBUG: Fetching slots for {doc_name} ({doc_no})")
                     await asyncio.sleep(0.5)
-                    slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
+                    
+                    # Some scrapers (like TVGHTaichung) implement individual doctor fetching
+                    if hasattr(scraper, "_fetch_doctor_slots"):
+                        slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
+                    else:
+                        # Fallback: Fetch whole department and filter for this doctor
+                        all_dept_slots = await scraper.fetch_schedule(dept_code)
+                        slots = [s for s in all_dept_slots if s.doctor_no == doc_no]
+                        
                     logger.info(f"[Scheduler] DEBUG: Found {len(slots)} slots for {doc_name}")
                     for slot in slots:
                         row = await _build_snapshot_row(scraper, slot, doc_id, dept_id, True)
