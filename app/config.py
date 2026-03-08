@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     #   - TVGH_HSINCHU: 臺北榮民總醫院新竹分院
     # 範例：在 .env 中設為 "CMUH_TAICHUNG,CMUH_HSINCHU,NTUH_HSINCHU,HMMH,TVGH_HSINCHU"
     enabled_hospitals_str: str = Field(
-        default="CMUH_TAICHUNG,CMUH_HSINCHU,NTUH_HSINCHU,HMMH,TVGH_HSINCHU,TYGH_HSINCHU",
+        default="CMUH_TAICHUNG,CMUH_HSINCHU,NTUH_HSINCHU,HMMH,TVGH_HSINCHU,TYGH_HSINCHU,TVGH_TAICHUNG",
         validation_alias="ENABLED_HOSPITALS"  # 允許 ENABLED_HOSPITALS 環境變數對應此字段
     )
 
