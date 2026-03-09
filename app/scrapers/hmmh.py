@@ -17,6 +17,7 @@ Scrapes:
 
 import asyncio
 import re
+import random
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -30,12 +31,15 @@ from app.config import get_settings
 
 settings = get_settings()
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    ),
+RANDOM_USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+]
+
+DEFAULT_HEADERS = {
     "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": "https://www.hc.mmh.org.tw/",
@@ -72,7 +76,7 @@ class HMMHScraper(BaseScraper):
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                headers=HEADERS,
+                headers=self._get_headers(),
                 timeout=settings.request_timeout,
                 follow_redirects=True,
             )
@@ -82,10 +86,24 @@ class HMMHScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    def _get_headers(self) -> dict:
+        headers = DEFAULT_HEADERS.copy()
+        headers["User-Agent"] = random.choice(RANDOM_USER_AGENTS)
+        return headers
+
+    async def _apply_random_delay(self):
+        """Add a random delay between 2 to 5 seconds to avoid IP blocking."""
+        delay = random.uniform(2.0, 5.0)
+        log.debug(f"[HMMH] Applying random delay: {delay:.2f}s")
+        await asyncio.sleep(delay)
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get(self, url: str, **kwargs) -> str:
+        await self._apply_random_delay()
         log.info(f"[HMMH] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()
+        # Ensure each request potentially has a different User-Agent
+        kwargs.setdefault("headers", self._get_headers())
         resp = await client.get(url, **kwargs)
         resp.raise_for_status()
         log.info(f"[HMMH] GET {url} success ({len(resp.text)} chars)")
@@ -93,33 +111,69 @@ class HMMHScraper(BaseScraper):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _post(self, url: str, data: dict) -> str:
+        await self._apply_random_delay()
         log.info(f"[HMMH] POST {url} with data {data}")
         client = await self._get_client()
-        resp = await client.post(url, data=data)
+        headers = self._get_headers()
+        resp = await client.post(url, data=data, headers=headers)
         resp.raise_for_status()
         return resp.text
 
     # ─────────────────────────────────────────────────────────
     # 1. Fetch department list
     # ─────────────────────────────────────────────────────────
+    async def _fetch_registration_id_map(self) -> dict[str, str]:
+        """
+        Scrape find_division.php to build a mapping of department name -> Registration ID (depid).
+        Registration IDs are used for fetching doctor schedules (register_divide.php).
+        """
+        url = f"{self.BASE_URL}/find_division.php"
+        try:
+            html = await self._get(url)
+            soup = BeautifulSoup(html, "lxml")
+            
+            mapping = {}
+            # Links like <a href='register_divide.php?depid=217'>神經內科</a>
+            # Also handle absolute URLs just in case
+            links = soup.find_all("a", href=re.compile(r"register_divide\.php\?depid="))
+            
+            for link in links:
+                href = link.get("href", "")
+                name = link.get_text(strip=True)
+                
+                match = re.search(r"depid=([^&]+)", href)
+                if match and name:
+                    code = match.group(1)
+                    # Use the last part of the name if it contains "-" or "部"
+                    # Hospital sometimes uses "內科部-神經內科" but we just want "神經內科"
+                    clean_name = name.split("-")[-1].split("部")[-1]
+                    mapping[clean_name] = code
+                    # Also store full name just in case mapping is exact
+                    mapping[name] = code
+                    
+            log.info(f"[HMMH] Built dynamic registration ID map with {len(mapping)} entries")
+            return mapping
+        except Exception as e:
+            log.error(f"[HMMH] Error building registration ID map: {e}")
+            return {}
+
     async def fetch_departments(self) -> list[DepartmentData]:
         """
-        Scrape department list from progress.php
+        Scrape department list from progress.php and map them to registration IDs from find_division.php.
 
-        progress.php 是純伺服器渲染的 HTML 表單，科別列表已完整內嵌在
-        <select name="dept"> 中（非 AJAX），可直接 HTTP GET 取得。
-
-        各 option 的 value 即為 dept 代碼（可為英數混合，如 '12', '1G', 'O86A'）。
-        選項名稱格式為「部門-科別」，例如「內科部-胃腸肝膽科」。
+        progress.php provides the list of active clinical departments and their "Progress IDs" (value of select[name=dept]).
+        find_division.php provides the "Registration IDs" used for schedules.
         """
+        # First get the registration ID map
+        reg_map = await self._fetch_registration_id_map()
+
         url = f"{self.BASE_URL}/progress.php"
         html = await self._get(url)
         soup = BeautifulSoup(html, "lxml")
 
         departments: list[DepartmentData] = []
-        seen_codes: set[str] = set()  # Some dept codes appear multiple times (shared clinic room)
+        seen_codes: set[str] = set()
 
-        # Find the select element with name="dept" (the progress form select)
         select = soup.find("select", {"name": "dept"})
         if not select:
             log.warning("[HMMH] Could not find select[name=dept] in progress.php")
@@ -149,6 +203,15 @@ class HMMHScraper(BaseScraper):
             else:
                 category_prefix = ""
                 dept_name = full_name
+
+            # Dynamic Mapping to Registration ID
+            # If we found an ID for this department in find_division.php, use it as the primary code.
+            # This ensures fetch_schedule uses the correct Registration ID (e.g. 217 for Neurology).
+            reg_code = reg_map.get(dept_name) or reg_map.get(full_name)
+            if reg_code:
+                if reg_code != code:
+                    log.info(f"[HMMH] Mapping department '{dept_name}': Progress ID {code} -> Registration ID {reg_code}")
+                code = reg_code
 
             # Skip administrative/non-clinical departments
             skip_keywords = ["行政", "教學", "認證", "單位", "專案", "疫苗", "自費", "特別門診"]
