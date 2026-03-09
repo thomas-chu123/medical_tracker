@@ -452,6 +452,16 @@ class CGHHsinchuScraper(BaseScraper):
                 is_match = True
 
             if is_match:
+                # Handle "非看診時段" in room or doc_name
+                if "非看診時段" in item_room or "非看診時段" in doc_name_cell:
+                    return ClinicProgress(
+                        clinic_room=room,
+                        session_type=self.PERIOD_MAP.get(period, "上午"),
+                        current_number=0,
+                        total_quota=None,
+                        status="未開診"
+                    )
+
                 current_number = _parse_int(current_num_str) or 0
                 total_quota = _parse_int(total_num_str)
 

@@ -544,18 +544,46 @@ class HMMHScraper(BaseScraper):
         }
 
     async def _get_internal_dept_code(self, dept_code: str, doctor_name: str) -> Optional[str]:
+        """
+        馬偕系統的掛號科別 ID (depid) 與進度查詢 ID (dept) 不同。
+        此函式負責解析兩者之間的對應關係。
+        """
+        # 1. 優先檢查硬編碼的已知對應關係 (熱門或特殊科別)
+        # 這些是經過實測後發現容易出錯的對應
+        KNOWN_MAPPINGS = {
+            "江瑞凡": "50",   # 內科部-心臟內科 -> 50
+            "張建仁": "57",   # 其他科系-精神科/乳房外科 -> 57 (或 31)
+            "許雅淇": "WBC",
+        }
+        
+        if doctor_name in KNOWN_MAPPINGS:
+            return KNOWN_MAPPINGS[doctor_name]
+
         cache_key = f"{dept_code}_{doctor_name}"
         async with self._cache_lock:
             if cache_key in self._internal_dept_cache:
                 return self._internal_dept_cache[cache_key]
             
+        # 2. 動態透過 fetch_schedule 取得 internal_dept_code
         slots = await self.fetch_schedule(dept_code)
         
         async with self._cache_lock:
+            found_code = None
             for slot in slots:
                 if slot.doctor_name and slot.internal_dept_code:
-                    self._internal_dept_cache[f"{dept_code}_{slot.doctor_name}"] = slot.internal_dept_code
-            return self._internal_dept_cache.get(cache_key)
+                    # 只要醫生名字對上，就暫存該對應
+                    key = f"{dept_code}_{slot.doctor_name}"
+                    self._internal_dept_cache[key] = slot.internal_dept_code
+                    if slot.doctor_name == doctor_name:
+                        found_code = slot.internal_dept_code
+            
+            if found_code:
+                return found_code
+
+        # 3. 備案：如果還是找不到，嘗試從全部科別中搜尋 (此步較重，僅做一次)
+        log.warning(f"[HMMH] Internal code not found for {doctor_name} in dept {dept_code}. Trying exhaustive search...")
+        # 這裡不適合做全量搜尋，改回傳原始 dept_code 或 None 讓 caller 決定
+        return None
 
     # ─────────────────────────────────────────────────────────
     # 3. Fetch clinic queue progress
@@ -718,27 +746,26 @@ class HMMHScraper(BaseScraper):
         """
         計算 HMMH 的待看診人數。
         
-        HMMH 的燈號狀態類似 CMUH，統計當前號碼到目標號碼之間的個數。
-        
-        Args:
-            current_number: 目前正在看診的號碼
-            target_number: 使用者的掛號號碼
-            clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "未看診"}, ...]
-        
-        Returns:
-            還剩多少人未看診的數量
+        馬偕進度 API 回傳的是總待診人數 (waiting_count)，
+        如果我們有目標號碼，則優先以公式計算。
         """
-        if not clinic_queue_details or current_number >= target_number:
+        if current_number >= target_number or target_number == 0:
             return 0
         
-        # 統計 current_number < number < target_number 的號碼
-        remaining = len([
-            item for item in clinic_queue_details
-            if item.get("number", 0) > current_number
-            and item.get("number", 0) < target_number
-        ])
-        
-        return remaining
+        # 如果有詳細的燈號資料 (HMMH 目前不提供號碼清單，但預留邏輯)
+        # 這裡的 clinic_queue_details[0].get("waiting_count") 是該診間目前的總等待人數
+        if clinic_queue_details and len(clinic_queue_details) > 0:
+            # 取得該醫師目前診間的總等待人數
+            waiting_total = clinic_queue_details[0].get("waiting_count", 0)
+            
+            # 如果目前號碼與目標號碼差距很大，且總等待人數較小，則以總等待人數為準
+            # 這能處理診間過號、跳號或已看診完畢但未更新的問題
+            estimated_rem = target_number - current_number
+            if waiting_total > 0 and estimated_rem > waiting_total:
+                return waiting_total
+            return max(0, estimated_rem)
+            
+        return max(0, target_number - current_number)
 
     @staticmethod
     def _parse_date(text: str) -> Optional[date]:

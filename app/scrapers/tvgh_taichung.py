@@ -177,75 +177,107 @@ class TVGHTaichungScraper(BaseScraper):
             logger.warning(f"[{self.HOSPITAL_CODE}] fetch_clinic_progress needs dept_code")
             return None
             
-        url = f"https://www.vghtc.gov.tw/APIPage/OutpatientProcess2"
-        params = {
-            "SECTION_ID": dept_code,
-            "SECTION_NAME": "",
-            "WebMenuID": "7ee59e49-b2b8-4e1a-a3cb-45360caab01c"
-        }
-        resp = await self.client.get(url, params=params)
-        resp.raise_for_status()
-        
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        table = soup.find('table')
-        if not table:
-            return None
-            
+        # API endpoints: try OutpatientProcess2 first (standard), then 3 (special sections like WBC)
+        api_endpoints = ["OutpatientProcess2", "OutpatientProcess3"]
+        if dept_code == "WBC":
+            # For WBC, try 3 first as suggested by user
+            api_endpoints = ["OutpatientProcess3", "OutpatientProcess2"]
+
         period_map = {"1": "上午", "2": "下午", "3": "晚上"}
         target_period = period_map.get(period, period)
         
-        for row in table.find_all('tr'):
-            tds = row.find_all('td')
-            if len(tds) < 8:
-                continue
+        # We might need to try multiple dept_codes if searching in WBC as fallback
+        dept_codes_to_try = [dept_code]
+        # Robustness: if they specify a doctor name, and it's not found in their primary dept, 
+        # we try searching in "WBC" (Well Baby Clinic) as it often contains pediatricians from various sub-depts.
+        if dept_code != "WBC" and doctor_name:
+            dept_codes_to_try.append("WBC")
+
+        for try_dept in dept_codes_to_try:
+            for api in api_endpoints:
+                url = f"https://www.vghtc.gov.tw/APIPage/{api}"
+                params = {
+                    "SECTION_ID": try_dept,
+                    "SECTION_NAME": "",
+                    "WebMenuID": "7ee59e49-b2b8-4e1a-a3cb-45360caab01c"
+                }
                 
-            row_period = tds[0].text.strip()
-            row_room = tds[1].text.strip()
-            row_doctor = tds[2].text.strip()
-            
-            if doctor_name and doctor_name not in row_doctor:
-                continue
-            if target_period not in row_period:
-                continue
-                
-            total_quota_str = tds[3].text.strip()
-            current_num_str = tds[4].text.strip()
-            waiting_count_str = tds[6].text.strip()
-            status_str = tds[7].text.strip()
-            
-            current_number = None
-            if current_num_str.isdigit():
-                current_number = int(current_num_str)
-            else:
-                match = re.search(r'\d+', current_num_str)
-                if match:
-                    current_number = int(match.group())
+                try:
+                    resp = await self.client.get(url, params=params)
+                    if resp.status_code != 200:
+                        continue
+                        
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    table = soup.find('table')
+                    if not table:
+                        continue
                     
-            if current_number is None and '停診' in status_str:
-                status_str = '停診'
-                
-            total_quota = None
-            if total_quota_str.isdigit():
-                total_quota = int(total_quota_str)
-            
-            waiting_count = None
-            if waiting_count_str.isdigit():
-                waiting_count = int(waiting_count_str)
-                
-            queue_details = []
-            if waiting_count is not None:
-                queue_details.append({"waiting_count": waiting_count})
-                
-            return ClinicProgress(
-                clinic_room=row_room,
-                session_type=target_period,
-                current_number=current_number or 0,
-                total_quota=total_quota,
-                status=status_str if status_str else None,
-                clinic_queue_details=queue_details,
-                registered_count=waiting_count # optionally put it here too
-            )
-            
+                    found_rows = []
+                    for tr in table.find_all('tr'):
+                        tds = tr.find_all('td')
+                        if len(tds) < 8:
+                            continue
+                        found_rows.append(tds)
+
+                    for tds in found_rows:
+                        row_period = tds[0].text.strip()
+                        row_room = tds[1].text.strip()
+                        row_doctor = tds[2].text.strip()
+                        
+                        # Flexible period matching
+                        short_p = target_period[:1]
+                        if short_p not in row_period:
+                            continue
+
+                        # Doctor name matching
+                        if doctor_name:
+                            clean_row_doctor = row_doctor.replace(" ", "").replace("醫師", "")
+                            clean_target_doctor = doctor_name.replace(" ", "").replace("醫師", "")
+                            if clean_target_doctor not in clean_row_doctor:
+                                continue
+                        
+                        # Room matching (optional match if provided)
+                        if room and room.strip() and room.strip() not in row_room:
+                            continue
+
+                        total_quota_str = tds[3].text.strip()
+                        current_num_str = tds[4].text.strip()
+                        waiting_count_str = tds[6].text.strip()
+                        status_str = tds[7].text.strip()
+                        
+                        current_number = None
+                        if current_num_str.isdigit():
+                            current_number = int(current_num_str)
+                        else:
+                            # Handle things like "3 (過號)"
+                            match = re.search(r'\d+', current_num_str)
+                            if match:
+                                current_number = int(match.group())
+                                
+                        if current_number is None and '停診' in status_str:
+                            status_str = '停診'
+                            
+                        total_quota = None
+                        if total_quota_str.isdigit():
+                            total_quota = int(total_quota_str)
+                        
+                        waiting_count = None
+                        if waiting_count_str.isdigit():
+                            waiting_count = int(waiting_count_str)
+                        
+                        # Map to expected fields in ClinicProgress
+                        return ClinicProgress(
+                            clinic_room=row_room,
+                            session_type=target_period,
+                            current_number=current_number or 0,
+                            total_quota=total_quota,
+                            registered_count=total_quota, # Use total_quota as estimate if not specified
+                            status=status_str if status_str else "看診中",
+                            clinic_queue_details=[{"waiting_count": waiting_count}] if waiting_count is not None else []
+                        )
+                except Exception as e:
+                    logger.error(f"[{self.HOSPITAL_CODE}] Error fetching from {api} {try_dept}: {e}")
+                    
         return None
 
     def calculate_remaining_count(self, current_number: int, target_number: int, clinic_queue_details: list[dict]) -> int:
