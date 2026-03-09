@@ -149,8 +149,6 @@ def update_row(
     """
     try:
         supabase = get_supabase()
-        query = supabase.table(table)
-        
         # 應用篩選條件
         if filters:
             for key, op, value in filters:
@@ -226,8 +224,6 @@ def delete_row(table: str, filters: List[tuple]) -> Dict[str, Any]:
     """
     try:
         supabase = get_supabase()
-        query = supabase.table(table)
-        
         # 應用篩選條件
         if filters:
             for key, op, value in filters:

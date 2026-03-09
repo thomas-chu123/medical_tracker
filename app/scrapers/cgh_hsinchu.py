@@ -2,9 +2,19 @@
 CGH (國泰綜合醫院) Scraper - 新竹院區 (area=3)
 
 Scrapes:
-1. /tw/reg/main_01.jsp?area=3                -> department list
-2. /tw/reg/main_01.jsp                       -> doctor weekly schedule (POST)
-3. /tw/reg/RealTimeTable.jsp                 -> real-time clinic progress
+1. /tw/reg/main_01.jsp?area=3  (GET)  -> department list
+2. /tw/reg/main_01.jsp         (POST) -> weekly schedule page (form-based links)
+3. /tw/reg/main_02.jsp         (POST) -> actual available dates per doctor/period/room
+4. /tw/reg/RealTimeTable.jsp   (POST) -> real-time clinic progress
+
+--- Schedule page structure ---
+Page shows a weekly timetable with sections: 上午門診, 下午門診, 夜間門診
+Each doctor slot is a JS link: javascript:sub(document.sec10111, '07931/黃漢倫', '3', '000')
+  - The form name encodes: sec[PERIOD][ROOM][WEEK]
+    where PERIOD 1..3 maps to 上午/下午/夜間
+    ROOM is 3-digit, WEEK 1=Sun,2=Mon,3=Tue,4=Wed,5=Thu,6=Fri,7=Sat
+  - The form contains hidden inputs: area, dept, room, week, sec, deptn, source, roomType
+  - POSTing that form (with doctor+drn filled) to main_02.jsp yields available dates.
 """
 
 import asyncio
@@ -33,11 +43,41 @@ HEADERS = {
     "Referer": "https://reg.cgh.org.tw/tw/reg/main.jsp",
 }
 
+# CGH uses week=1 (Sun), 2 (Mon), ..., 7 (Sat)
+# We map to Python isoweekday: Mon=1..Sun=7
+WEEK_TO_ISO = {"1": 7, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6}
+
+SEC_TO_SESSION = {"1": "上午", "2": "下午", "3": "晚上"}
+
+
 def _parse_int(text: Optional[str]) -> Optional[int]:
     if not text:
         return None
     m = re.search(r"\d+", text.strip())
     return int(m.group()) if m else None
+
+
+def _roc_date_to_iso(roc: str) -> Optional[date]:
+    """
+    Convert ROC date string (115.03.16 or 1150316) to Python date.
+    Returns None on failure.
+    """
+    try:
+        roc = roc.strip().replace("/", ".").replace("-", ".")
+        if "." in roc:
+            parts = roc.split(".")
+            year = int(parts[0]) + 1911
+            month = int(parts[1])
+            day = int(parts[2])
+        else:
+            # YYYMMDD or similar compact form
+            year = int(roc[:3]) + 1911
+            month = int(roc[3:5])
+            day = int(roc[5:7])
+        return date(year, month, day)
+    except Exception:
+        return None
+
 
 class CGHHsinchuScraper(BaseScraper):
     HOSPITAL_CODE = "CGH_HSINCHU"
@@ -69,18 +109,21 @@ class CGHHsinchuScraper(BaseScraper):
         client = await self._get_client()
         resp = await client.get(url, **kwargs)
         resp.raise_for_status()
-        if resp.encoding is None or resp.encoding == "ISO-8859-1":
-            resp.encoding = "big5"  # CGH uses Big5
+        if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
+            resp.encoding = "utf-8"
         return resp.text
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def _post(self, url: str, data: dict, **kwargs) -> str:
+    async def _post(self, url: str, data: dict, extra_headers: dict = None, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] POST {url} with data {data}")
         client = await self._get_client()
-        resp = await client.post(url, data=data, **kwargs)
+        merged_headers = {}
+        if extra_headers:
+            merged_headers.update(extra_headers)
+        resp = await client.post(url, data=data, headers=merged_headers, **kwargs)
         resp.raise_for_status()
-        if resp.encoding is None or resp.encoding == "ISO-8859-1":
-            resp.encoding = "big5"
+        if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
+            resp.encoding = "utf-8"
         return resp.text
 
     async def fetch_departments(self) -> list[DepartmentData]:
@@ -89,42 +132,38 @@ class CGHHsinchuScraper(BaseScraper):
         soup = BeautifulSoup(html, "lxml")
 
         departments: list[DepartmentData] = []
-        
-        # In main_01.jsp, departments are in hidden forms like:
-        # <form name="f1" ...><input name="dept" value="CA100">...
+
+        # Departments are hidden forms: <form name="f1" ...><input name="dept" value="CA100">
         # Triggered by <a href="javascript:document.f1.submit();">Dept Name</a>
-        
         forms = soup.find_all("form")
         seen_codes = set()
         sort_order = 1
-        
+
         for form in forms:
             form_name = form.get("name")
             if not form_name or not form_name.startswith("f"):
                 continue
-                
-            depth_input = form.find("input", {"name": "dept"})
-            if not depth_input:
+
+            dept_input = form.find("input", {"name": "dept"})
+            if not dept_input:
                 continue
-                
-            code = depth_input.get("value")
+
+            code = dept_input.get("value")
             if not code or code in seen_codes:
                 continue
-                
-            # Find the trigger link
+
             trigger_link = soup.find("a", href=f"javascript:document.{form_name}.submit();")
             if not trigger_link:
                 continue
-                
+
             name = trigger_link.get_text(strip=True)
-            
+
             seen_codes.add(code)
-            
-            # Skip non-clinical depts
+
             skip_keywords = ["疫苗", "額滿", "代診", "COVID"]
             if any(k in name for k in skip_keywords):
                 continue
-                
+
             category = self._categorize_department(name)
             departments.append(DepartmentData(
                 name=name,
@@ -134,7 +173,7 @@ class CGHHsinchuScraper(BaseScraper):
                 sort_order=sort_order
             ))
             sort_order += 1
-            
+
         log.info(f"[{self.HOSPITAL_CODE}] Found {len(departments)} departments")
         return departments
 
@@ -153,81 +192,96 @@ class CGHHsinchuScraper(BaseScraper):
         return "其他專科"
 
     async def fetch_schedule(self, dept_code: str) -> list[DoctorSlot]:
-        # Step 1: Visit main_01.jsp?area=3 to set state
-        base_url = f"{self.BASE_URL}/tw/reg/main_01.jsp?area={self.AREA}"
-        await self._get(base_url)
-        
-        # Step 2: POST to main_01.jsp for the specific dept
-        url = f"{self.BASE_URL}/tw/reg/main_01.jsp"
-        data = {
+        """
+        Fetch available schedule slots for a department using CGH's form-based schedule.
+
+        Flow:
+        1. GET main.jsp to establish JSESSIONID cookie
+        2. GET main_01.jsp?area=3 to load department list and get dept name
+        3. POST main_01.jsp with area+dept+deptn to get the weekly timetable
+        4. Parse javascript:sub(document.FORMNAME, 'DOCNO/DOCNAME',...) links
+        5. For each unique (doctor, sec/period, room, week) combo, POST main_02.jsp to get actual dates
+        """
+        # Step 1: GET main.jsp first to establish JSESSIONID (critical for session auth)
+        main_url = f"{self.BASE_URL}/tw/reg/main.jsp"
+        await self._get(main_url)
+
+        # Step 2: GET department list page + get dept name
+        dept_list_url = f"{self.BASE_URL}/tw/reg/main_01.jsp?area={self.AREA}"
+        dept_html = await self._get(dept_list_url)
+        dept_name = self._extract_dept_name_from_html(dept_html, dept_code) or dept_code
+
+        # POST to get the weekly schedule
+        schedule_url = f"{self.BASE_URL}/tw/reg/main_01.jsp"
+        post_data = {
             "area": self.AREA,
+            "deptn": dept_name,
             "dept": dept_code,
-            "regType": "1"
+            "source": "",
         }
-        headers = {
-            "Referer": base_url,
+        extra_headers = {
+            "Referer": dept_list_url,
             "Origin": self.BASE_URL,
-            "Content-Type": "application/x-www-form-urlencoded"
+            "Content-Type": "application/x-www-form-urlencoded",
         }
-        html = await self._post(url, data=data, headers=headers)
+        html = await self._post(schedule_url, data=post_data, extra_headers=extra_headers)
         soup = BeautifulSoup(html, "lxml")
-        
-        slots: list[DoctorSlot] = []
-        
-        # Look for links with choice_date or period
-        links = soup.find_all("a", href=re.compile(r"choice_date=|period="))
-        
-        if not links:
-            log.warning(f"[{self.HOSPITAL_CODE}] No schedule links found for {dept_code}. Title: {soup.title.string if soup.title else 'No Title'}")
-        
-        for link in links:
+
+        # Step 3: Parse all javascript:sub() links
+        # Pattern: javascript:sub(document.sec10111,'07931/黃漢倫','3','000');
+        sub_pattern = re.compile(r"javascript:sub\(document\.(\w+),\s*'([^']+)',\s*'([^']+)',\s*'([^']+)'\)")
+
+        # Build a dict of form_name -> form inputs
+        forms_dict = {}
+        for form in soup.find_all("form"):
+            form_name = form.get("name", "")
+            if not re.match(r"sec\d+", form_name):
+                continue
+            inputs = {}
+            for inp in form.find_all("input"):
+                n = inp.get("name")
+                v = inp.get("value", "")
+                if n:
+                    inputs[n] = v
+            forms_dict[form_name] = inputs
+
+        # Build slot requests: key is (doc_no, sec, room, week) so we send week parameter correctly
+        slot_requests: dict[tuple, dict] = {}
+
+        for link in soup.find_all("a", href=sub_pattern):
             href = link.get("href", "")
-            
-            # Extract parameters from sub('...') or direct URL
-            params_match = re.search(r"sub\('([^']+)'", href)
-            if params_match:
-                params_str = params_match.group(1)
-            else:
-                params_str = href.split("?", 1)[-1] if "?" in href else href
-                
-            # Parse parameters
-            import urllib.parse
-            params = dict(urllib.parse.parse_qsl(params_str))
-            
-            date_str = params.get("choice_date")
-            period_code = params.get("period")
-            emp_info = params.get("empNo", "")
-            room = params.get("room", "")
-            
-            if not (date_str and period_code):
+            m = sub_pattern.search(href)
+            if not m:
                 continue
-            
-            try:
-                session_date = datetime.strptime(date_str, "%Y%m%d").date()
-            except ValueError:
+
+            form_name = m.group(1)
+            emp_info = m.group(2)  # "07931/黃漢倫"
+            area_val = m.group(3)
+            room_type = m.group(4)
+            link_text = link.get_text(strip=True)
+
+            form_data = forms_dict.get(form_name, {})
+            if not form_data:
                 continue
-                
-            session_type = self.PERIOD_MAP.get(period_code, "上午")
-            
-            # Split empNo or get from text
+
+            sec = form_data.get("sec", "1")
+            room = form_data.get("room", "")
+            week = form_data.get("week", "")
+            deptn = form_data.get("deptn", dept_name)
+
+            # Parse employee info
             if "/" in emp_info:
                 doc_no, doc_name = emp_info.split("/", 1)
             else:
                 doc_no = emp_info
-                doc_name = link.get_text(strip=True).replace("(額滿)", "").replace("(停診)", "").strip()
-            
+                doc_name = link_text.replace("(額滿)", "").replace("(停診)", "").strip()
+
             if not doc_no:
                 continue
 
-            font_tag = link.find("font")
+            # Status
             is_full = False
             status = None
-            link_text = link.get_text()
-            
-            if font_tag and font_tag.get("color") == "red":
-                is_full = True
-                status = "額滿"
-            
             if "停診" in link_text:
                 status = "停診"
                 is_full = True
@@ -235,60 +289,179 @@ class CGHHsinchuScraper(BaseScraper):
                 status = "額滿"
                 is_full = True
 
-            slots.append(DoctorSlot(
-                doctor_no=doc_no,
-                doctor_name=doc_name,
-                department_code=dept_code,
-                session_date=session_date,
-                session_type=session_type,
-                total_quota=None,
-                registered=None,
-                clinic_room=room,
-                is_full=is_full,
-                status=status
-            ))
-            
+            # Key includes week so we send week to main_02 (required by CGH server)
+            key = (doc_no, sec, room, week)
+            if key not in slot_requests:
+                slot_requests[key] = {
+                    "doc_no": doc_no,
+                    "doc_name": doc_name,
+                    "sec": sec,
+                    "room": room,
+                    "week": week,
+                    "is_full": is_full,
+                    "status": status,
+                    "deptn": deptn,
+                    "room_type": room_type,
+                }
+
+        if not slot_requests:
+            log.warning(f"[{self.HOSPITAL_CODE}] No schedule form links found for {dept_code}")
+            return []
+
+        log.info(f"[{self.HOSPITAL_CODE}] Found {len(slot_requests)} doctor-period-room combos for {dept_code}")
+
+        # Step 5: For each (doctor, sec, room, week) combo, POST to main_02.jsp to get actual dates
+        slots: list[DoctorSlot] = []
+        main02_url = f"{self.BASE_URL}/tw/reg/main_02.jsp"
+        # Track globally seen (doc_no, sec, date) to avoid duplicates across week queries
+        seen_doc_dates: set[tuple] = set()
+        from datetime import timedelta
+
+        for key, req in slot_requests.items():
+            doc_no = req["doc_no"]
+            doc_name = req["doc_name"]
+            sec = req["sec"]
+            room = req["room"]
+            week = req["week"]
+            deptn = req["deptn"]
+            room_type = req["room_type"]
+            is_full = req["is_full"]
+            status = req["status"]
+
+            post_data2 = {
+                "area": self.AREA,
+                "dept": dept_code,
+                "room": room,
+                "week": week,  # REQUIRED by CGH server to return dates
+                "sec": sec,
+                "doctor": doc_no,
+                "deptn": deptn,
+                "drn": doc_name,
+                "source": "",
+                "roomType": room_type,
+            }
+            extra_headers2 = {
+                "Referer": schedule_url,
+                "Origin": self.BASE_URL,
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+
+            try:
+                html2 = await self._post(main02_url, data=post_data2, extra_headers=extra_headers2)
+
+                # main_02.jsp lists available dates as ROC date strings like 115.03.16
+                date_strings = re.findall(r"\b(1\d{2}\.\d{1,2}\.\d{1,2})\b", html2)
+
+                session_type = self.PERIOD_MAP.get(sec, "上午")
+                for ds in date_strings:
+                    d = _roc_date_to_iso(ds)
+                    if not d:
+                        continue
+                    if d < date.today():
+                        continue
+                    if d > date.today() + timedelta(days=90):
+                        continue
+                    # Global dedup: same doctor shouldn't appear for same date+session twice
+                    global_key = (doc_no, sec, str(d))
+                    if global_key in seen_doc_dates:
+                        continue
+                    seen_doc_dates.add(global_key)
+
+                    slots.append(DoctorSlot(
+                        doctor_no=doc_no,
+                        doctor_name=doc_name,
+                        department_code=dept_code,
+                        session_date=d,
+                        session_type=session_type,
+                        total_quota=None,
+                        registered=None,
+                        clinic_room=room,
+                        is_full=is_full,
+                        status=status,
+                    ))
+
+            except Exception as e:
+                log.warning(f"[{self.HOSPITAL_CODE}] Error fetching dates for {doc_name}/{sec}/{room}: {e}")
+                continue
+
         log.info(f"[{self.HOSPITAL_CODE}] Found {len(slots)} slots for dept {dept_code}")
         return slots
 
+    def _extract_dept_name_from_html(self, html: str, dept_code: str) -> Optional[str]:
+        """Extract department Chinese name from already-fetched department list HTML."""
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            for form in soup.find_all("form"):
+                form_name = form.get("name", "")
+                if not form_name.startswith("f"):
+                    continue
+                dept_input = form.find("input", {"name": "dept"})
+                if not dept_input:
+                    continue
+                code = dept_input.get("value")
+                if code == dept_code:
+                    trigger_link = soup.find("a", href=f"javascript:document.{form_name}.submit();")
+                    if trigger_link:
+                        return trigger_link.get_text(strip=True)
+        except Exception:
+            pass
+        return None
+
     async def fetch_clinic_progress(self, room: str, period: str, **kwargs) -> Optional[ClinicProgress]:
+        """
+        Query real-time clinic progress from RealTimeTable.jsp.
+        Requires selecting area (3=Hsinchu), sec (session), and room.
+        """
         url = f"{self.BASE_URL}/tw/reg/RealTimeTable.jsp"
-        # The site uses 'hosarea' for area selection in progress page
-        data = {"hosarea": self.AREA}
-        html = await self._post(url, data=data)
+
+        # The page requires: hosarea, sec, room to query progress
+        data = {
+            "hosarea": self.AREA,
+            "sec": period,
+            "room": room,
+        }
+        extra_headers = {
+            "Referer": f"{self.BASE_URL}/tw/reg/RealTimeTable.jsp",
+            "Origin": self.BASE_URL,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        try:
+            html = await self._post(url, data=data, extra_headers=extra_headers)
+        except Exception as e:
+            log.warning(f"[{self.HOSPITAL_CODE}] Error fetching real-time progress: {e}")
+            return None
+
         soup = BeautifulSoup(html, "lxml")
-        
         target_doctor = kwargs.get("doctor_name")
         rows = soup.find_all("tr")
-        
+
         for row in rows:
             cells = row.find_all("td")
             if len(cells) < 3:
                 continue
-            
+
             item_room = cells[0].get_text(strip=True)
-            doc_name = cells[1].get_text(strip=True)
+            doc_name_cell = cells[1].get_text(strip=True)
             current_num_str = cells[2].get_text(strip=True)
             total_num_str = cells[3].get_text(strip=True) if len(cells) > 3 else None
-            
-            # Match by room or doctor name
+
             is_match = False
-            if target_doctor and target_doctor in doc_name:
+            if target_doctor and target_doctor in doc_name_cell:
                 is_match = True
             elif room and room == item_room:
                 is_match = True
-                
+
             if is_match:
                 current_number = _parse_int(current_num_str) or 0
                 total_quota = _parse_int(total_num_str)
-                
+
                 return ClinicProgress(
                     clinic_room=item_room,
                     session_type=self.PERIOD_MAP.get(period, "上午"),
                     current_number=current_number,
                     total_quota=total_quota
                 )
-                
+
         return None
 
     def calculate_remaining_count(

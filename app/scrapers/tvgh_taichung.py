@@ -134,11 +134,11 @@ class TVGHTaichungScraper(BaseScraper):
                 continue
                 
             noon_flag = noon_input.get('value', '').upper()
-            if noon_flag == 'M':
+            if noon_flag == 'A':
                 session_type = '上午'
-            elif noon_flag == 'A':
+            elif noon_flag == 'P':
                 session_type = '下午'
-            elif noon_flag == 'E':
+            elif noon_flag in ('N', 'E'):
                 session_type = '晚上'
             else:
                 session_type = '上午'

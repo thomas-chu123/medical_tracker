@@ -235,6 +235,7 @@ class TvghHsinchuScraper(BaseScraper):
         # The room argument passed in will be dept_code or dept_name depending on how scheduling binds it
         # TVGH uses doctor and department names in progress
         target_dept_name = room 
+        doctor_name = kwargs.get("doctor_name")
         
         found_current_number = None
         found_doctor = None
@@ -247,9 +248,17 @@ class TvghHsinchuScraper(BaseScraper):
             info_text = tds[0].get_text(separator=' ', strip=True)
             number_text = tds[1].get_text(separator=' ', strip=True)
             
+            # Priority 1: Match doctor name if provided
+            if doctor_name and doctor_name in info_text:
+                found_current_number = _parse_int(number_text)
+                found_doctor = doctor_name
+                break
+                
+            # Priority 2: Match dept/room name
             if target_dept_name in info_text:
                 found_current_number = _parse_int(number_text)
-                # Parse out doctor name by taking text before the space
+                # Parse out doctor name by taking text before the space (if any)
+                # e.g. "尹居浩 神經內科" -> "尹居浩"
                 doc_parts = info_text.split()
                 if doc_parts:
                     found_doctor = doc_parts[0]
