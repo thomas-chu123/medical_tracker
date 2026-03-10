@@ -137,8 +137,8 @@ class TestCMUHHsinchuScraperRemainingCount:
 class TestNTUHScraperRemainingCount:
     """Test NTUH's calculate_remaining_count implementation."""
 
-    def test_ntuh_no_status_filtering(self):
-        """NTUH should NOT filter by status (unlike CMUH)."""
+    def test_ntuh_filters_not_arrived(self):
+        """NTUH should filter out patients with '未報到' status."""
         scraper = NTUHHsinchuScraper()
         
         # Sample queue with different statuses
@@ -146,40 +146,45 @@ class TestNTUHScraperRemainingCount:
             {"number": 1, "status": "未報到"},
             {"number": 2, "status": "已報到"},
             {"number": 3, "status": "看診中"},
-            {"number": 4, "status": "已報到"},
+            {"number": 4, "status": "未報到"}, # Filtered
             {"number": 5, "status": "初診"},
             {"number": 6, "status": "已報到"},
         ]
         
         # Current at 2, target at 6
-        # All numbers between 2 and 6 (without status filtering): 3, 4, 5 = 3 people
+        # Between 2 and 6: 3, 4, 5
+        # Statuses: 3:看診中, 4:未報到, 5:初診
+        # Remaining (exclude "未報到"): 3, 5 = 2 people
         remaining = scraper.calculate_remaining_count(
             current_number=2,
             target_number=6,
             clinic_queue_details=clinic_queue_details,
         )
-        assert remaining == 3
+        assert remaining == 2
 
-    def test_ntuh_mixed_statuses_all_counted(self):
-        """NTUH should count all statuses equally."""
+    def test_ntuh_mixed_statuses_filtered(self):
+        """NTUH should count only arrived patients."""
         scraper = NTUHHsinchuScraper()
         
         clinic_queue_details = [
-            {"number": 3, "status": "未報到"},
+            {"number": 3, "status": "未報到"}, # Filtered
             {"number": 4, "status": "已報到"},
-            {"number": 5, "status": "看診中"},  # Even "看診中" is counted
+            {"number": 5, "status": "看診中"},
             {"number": 6, "status": "初診"},
             {"number": 7, "status": "已報到"},
+            {"number": 8, "status": "未報到"}, # Not in range
         ]
         
         # Current at 2, target at 8
-        # All between: 3, 4, 5, 6, 7 = 5 people
+        # All between: 3, 4, 5, 6, 7
+        # Statuses: 3:未報到, 4:已報到, 5:看診中, 6:初診, 7:已報到
+        # Remaining: 4, 5, 6, 7 = 4 people
         remaining = scraper.calculate_remaining_count(
             current_number=2,
             target_number=8,
             clinic_queue_details=clinic_queue_details,
         )
-        assert remaining == 5
+        assert remaining == 4
 
     def test_ntuh_empty_queue(self):
         """NTUH should return 0 for empty queue."""
@@ -214,44 +219,35 @@ class TestNTUHScraperRemainingCount:
 class TestRealWorldScenarios:
     """Test real-world scenarios mentioned in the issue."""
 
-    def test_ntuh_issue_scenario(self):
+    def test_ntuh_issue_scenario_with_filtering(self):
         """
-        Test the real-world scenario from the issue:
+        Test the real-world scenario from the issue with status filtering:
         Current: 3, Target: 44
         Queue shows numbers 3-44 with various statuses
-        Expected remaining: count between 3 (exclusive) and 44 (exclusive)
+        Expected remaining: count between 3 (exclusive) and 44 (exclusive),
+        but EXCLUDING "未報到" status.
         """
         scraper = NTUHHsinchuScraper()
         
-        # Simulate the scenario from the issue
-        clinic_queue_details = [
-            {"number": 3, "status": "已報到"},
-            {"number": 4, "status": "已報到"},
-            {"number": 5, "status": "已報到"},
-            {"number": 6, "status": "已報到"},
-            {"number": 7, "status": "已報到"},
-            {"number": 8, "status": "已報到"},
-            {"number": 9, "status": "已報到"},
-            {"number": 10, "status": "已報到"},
-            {"number": 11, "status": "已報到"},
-            {"number": 12, "status": "已報到"},
-            {"number": 13, "status": "已報到"},
-            {"number": 14, "status": "未報到"},
-            # ... more numbers up to 44
-        ]
+        # Simulate the scenario: only numbers 4-13 are "已報到"
+        clinic_queue_details = []
+        for num in range(3, 14):
+            clinic_queue_details.append({"number": num, "status": "已報到"})
         
-        # For simplicity, let's assume numbers 3-44 exist
-        for num in range(15, 45):
+        # Numbers 14 to 44 are "未報到"
+        for num in range(14, 45):
             clinic_queue_details.append({"number": num, "status": "未報到"})
         
         # Current at 3, target at 44
-        # Between 3 (exclusive) and 44 (exclusive): 4, 5, ... 43 = 40 people
+        # Between 3 (exclusive) and 44 (exclusive): 4, 5, ... 43
+        # Arrived: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 (10 people)
+        # Not arrived: 14 to 43 (Filtered)
         remaining = scraper.calculate_remaining_count(
             current_number=3,
             target_number=44,
             clinic_queue_details=clinic_queue_details,
         )
-        assert remaining == 40  # 4, 5, ... 43 = 40 people
+        assert remaining == 10  # Only arrived patients are counted
 
     def test_cmuh_realistic_scenario(self):
         """Test realistic CMUH scenario with completed patients."""

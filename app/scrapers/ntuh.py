@@ -1275,11 +1275,11 @@ class NTUHHsinchuScraper(BaseScraper):
         """
         計算 NTUH 的待看診人數。
         
-        NTUH 的燈號狀態不包含"完成"，所以統計所有號碼。
-        統計 current_number 到 target_number 之間的號碼（不做狀態過濾）。
+        過濾掉狀態為 "未報到" 的病患，僅統計已到場（已報到、看診中、初診等）的人數。
+        統計範圍：current_number < number < target_number。
         
         Args:
-            current_number: 目前正在看診的號碼
+            current_number: 目前正在看診的號號
             target_number: 使用者的掛號號碼
             clinic_queue_details: 燈號清單，格式為 [{"number": 1, "status": "已報到"}, ...]
         
@@ -1289,11 +1289,12 @@ class NTUHHsinchuScraper(BaseScraper):
         if not clinic_queue_details or current_number >= target_number:
             return 0
         
-        # 統計 current_number < number < target_number 的所有號碼（不做狀態過濾）
+        # 僅統計已到場的人數 (排除 "未報到")
         remaining = len([
             item for item in clinic_queue_details
             if item.get("number", 0) > current_number
             and item.get("number", 0) < target_number
+            and item.get("status") != "未報到"
         ])
         
         return remaining

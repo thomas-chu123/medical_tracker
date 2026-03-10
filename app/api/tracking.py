@@ -157,7 +157,8 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
             s.get("current_registered"),
             s.get("waiting_list"),
             target_number=s.get("appointment_number"),
-            session_speed_mins=session_speed_mins
+            session_speed_mins=session_speed_mins,
+            clinic_queue_details=s.get("clinic_queue_details")
         )
 
         # Clinic room fallback

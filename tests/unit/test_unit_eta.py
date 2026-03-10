@@ -82,3 +82,38 @@ def test_calculate_eta_clinic_already_started(mocker):
     # 14:00 + 5*5 mins = 14:25
     eta = calculate_eta(SESSION_DATE_TODAY_STR, "下午", 10, 20, [], 15)
     assert eta == "14:25"
+
+@pytest.mark.unit
+def test_calculate_eta_with_queue_details(mocker):
+    """Test that ETA filters out '未報到' when clinic_queue_details is provided."""
+    mock_now_dt = datetime.strptime(f"{SESSION_DATE_TODAY_STR} 09:00", "%Y-%m-%d %H:%M").replace(tzinfo=TAIWAN_TZ)
+    mocker.patch("app.api.hospitals.now_tw", return_value=mock_now_dt)
+    mocker.patch("app.api.hospitals.today_tw", return_value=SESSION_DATE_TODAY_OBJ)
+
+    # Current: 5, Target: 20
+    # Queue details from 5 to 20: 15 numbers
+    # If 10 are "未報到", only 5 are ahead.
+    # 09:00 + 5*5 mins = 09:25
+    queue_details = []
+    for i in range(1, 25):
+        status = "已報到"
+        if 10 <= i <= 19: # 10 patients between 5 and 20 are "未報到"
+            status = "未報到"
+        queue_details.append({"number": i, "status": status})
+
+    eta = calculate_eta(
+        session_date_str=SESSION_DATE_TODAY_STR,
+        session_type="上午",
+        current_number=5,
+        registered_count=30,
+        waiting_list=[], # ignored when clinic_queue_details is present
+        target_number=20,
+        clinic_queue_details=queue_details
+    )
+    # Total people ahead should be: numbers 6, 7, 8, 9 (4 people) 
+    # (Numbers 10-19 are "未報到", which are 10 people)
+    # Wait, 20 is my number. Between 5 and 20 are 6,7,8,9,10,11,12,13,14,15,16,17,18,19 (14 numbers)
+    # Numbers 10-19 are "未報到" (10 numbers)
+    # Remaining are 6,7,8,9 (4 numbers)
+    # 09:00 + 4*5 mins = 09:20
+    assert eta == "09:20"

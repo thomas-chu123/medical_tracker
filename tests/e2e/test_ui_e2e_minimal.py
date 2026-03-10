@@ -29,6 +29,7 @@ TEST_EMAIL = os.getenv('TEST_EMAIL', 'test_e2e@example.com')
 TEST_PASSWORD = os.getenv('TEST_PASSWORD', 'TestPassword123')
 
 
+@pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/e2e/test_ui_e2e_minimal.py -v -s")
 class TestE2EMinimal:
     """最小端到端測試套件"""
     

@@ -15,7 +15,8 @@ def calculate_eta(
     registered_count: int, 
     waiting_list: list[int],
     target_number: Optional[int] = None,
-    session_speed_mins: Optional[float] = None
+    session_speed_mins: Optional[float] = None,
+    clinic_queue_details: Optional[list[dict]] = None
 ) -> Optional[str]:
     """
     Calculate Estimated Appointment Time (ETA).
@@ -73,7 +74,17 @@ def calculate_eta(
         # 3. Calculate how many people are ahead
         total_people_ahead = 0
         if target_number:
-            if waiting_list:
+            if clinic_queue_details:
+                # Use detailed queue information if available (e.g. NTUH)
+                # Count people whose number < target and status is NOT "未報到" and NOT "完成"
+                # Also ensure they are ahead of current_number
+                total_people_ahead = len([
+                    item for item in clinic_queue_details 
+                    if item.get("number", 0) < target_number 
+                    and item.get("number", 0) > (current_number or 0)
+                    and item.get("status") not in ["未報到", "完成"]
+                ])
+            elif waiting_list:
                 # Count people in waiting list whose number is strictly less than target
                 total_people_ahead = len([x for x in waiting_list if x < target_number])
             elif current_number is not None:
@@ -89,9 +100,13 @@ def calculate_eta(
                     return "已過號"
         else:
             # Doctor's current time: Based on how many are already finished
-            waiting_count = len(waiting_list) if waiting_list else 0
-            total_people_ahead = (registered_count or 0) - waiting_count
-            if total_people_ahead < 0: total_people_ahead = 0
+            if clinic_queue_details:
+                # Count completed patients
+                total_people_ahead = len([item for item in clinic_queue_details if item.get("status") == "完成"])
+            else:
+                waiting_count = len(waiting_list) if waiting_list else 0
+                total_people_ahead = (registered_count or 0) - waiting_count
+                if total_people_ahead < 0: total_people_ahead = 0
 
         # 4. Final ETA Calculation
         # For future dates or today before clinic starts, use schedule_start as the baseline

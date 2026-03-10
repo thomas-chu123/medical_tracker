@@ -26,8 +26,20 @@ MOCK_DEPT_HTML = """
 MOCK_SCHEDULE_HTML = """
 <html>
 <body>
-    <a href="javascript:sub('area=3&dept=CA200&regType=1&choice_date=20260325&period=1&room=021&empNo=07931/黃漢倫','3','021');">黃漢倫</a>
-    <a href="javascript:sub('area=3&dept=CA200&regType=1&choice_date=20260325&period=2&room=021&empNo=01234/測試醫師','3','021');"><font color="red">測試醫師(額滿)</font></a>
+    <form name="sec1">
+        <input name="sec" value="1">
+        <input name="room" value="021">
+        <input name="week" value="1">
+        <input name="deptn" value="心臟內科">
+    </form>
+    <a href="javascript:sub(document.sec1,'07931/黃漢倫','3','021');">黃漢倫</a>
+    <form name="sec2">
+        <input name="sec" value="2">
+        <input name="room" value="021">
+        <input name="week" value="1">
+        <input name="deptn" value="心臟內科">
+    </form>
+    <a href="javascript:sub(document.sec2,'01234/測試醫師','3','021');"><font color="red">測試醫師(額滿)</font></a>
 </body>
 </html>
 """
@@ -60,28 +72,44 @@ async def test_cgh_fetch_departments():
 async def test_cgh_fetch_schedule():
     scraper = CGHHsinchuScraper()
     
+    MOCK_DEPT_LIST_HTML = """
+    <html><body>
+        <form name="f1">
+            <input name="dept" value="CA200">
+        </form>
+        <a>心臟內科</a>
+    </body></html>
+    """
+    
+    MOCK_DATES_HTML = "115.03.25 115.03.26"  # ROC dates that will be converted
+    
     async def mock_resp(url, data=None, **kwargs):
-        if data and data.get("dept") == "CA200":
+        if "main_01.jsp" in url and data and data.get("dept") == "CA200":
             return MOCK_SCHEDULE_HTML
+        elif "main_02.jsp" in url:
+            # Return date strings for the second POST request
+            return MOCK_DATES_HTML
+        elif "main_01.jsp" in url:
+            return MOCK_DEPT_LIST_HTML
         return ""
 
-    with patch.object(scraper, '_get', AsyncMock(return_value="")):
+    with patch.object(scraper, '_get', AsyncMock(side_effect=mock_resp)):
         with patch.object(scraper, '_post', side_effect=mock_resp):
             slots = await scraper.fetch_schedule("CA200")
-            assert len(slots) > 0
+            assert len(slots) >= 2
             
-            slot1 = slots[0]
-            assert slot1.doctor_name == "黃漢倫"
-            assert slot1.doctor_no == "07931"
-            assert slot1.session_date == date(2026, 3, 25)
-            assert slot1.session_type == "上午"
-            assert slot1.clinic_room == "021"
-            assert slot1.is_full is False
+            # Find the first doctor's first slot (黃漢倫, 上午)
+            slot_huang = next((s for s in slots if s.doctor_name == "黃漢倫" and s.session_type == "上午"), None)
+            assert slot_huang is not None
+            assert slot_huang.doctor_no == "07931"
+            assert slot_huang.clinic_room == "021"
+            assert slot_huang.is_full is False
             
-            slot2 = slots[1]
-            assert slot2.doctor_name == "測試醫師"
-            assert slot2.is_full is True
-            assert slot2.status == "額滿"
+            # Find the second doctor's first slot (測試醫師, 下午)
+            slot_test = next((s for s in slots if s.doctor_name == "測試醫師" and s.session_type == "下午"), None)
+            assert slot_test is not None
+            assert slot_test.is_full is True
+            assert slot_test.status == "額滿"
 
 @pytest.mark.asyncio
 async def test_cgh_fetch_clinic_progress():

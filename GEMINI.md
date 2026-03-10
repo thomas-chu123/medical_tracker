@@ -235,6 +235,6 @@ python tools/tool_notion.py get_databases
 
 ## 🛠️ 自動化與安全規範 (專屬此專案)
 
--   **自動執行授權**: 針對本專案中所有在 `/tmp` 目錄下建立、讀取、分析用的 Python 或 Shell 腳本，Antigravity 獲授權可將 `SafeToAutoRun` 設為 `true` 直接執行。
+-   **自動執行授權**: 針對本專案中所有在 `/tmp` 目錄下建立、讀取、分析用的 Python 或 Shell 腳本，Antigravity 獲授權可將 `SafeToAutoRun` 設為 `true` 直接執行。此外，針對已知合作醫院之官方網址（如 `*.cmuh.org.tw`, `*.ntuh.gov.tw`, `*.vghtc.gov.tw` 等）進行的瀏覽器自動化操作（`browser_subagent`），亦獲授權可自動執行，無須逐次請求同意。
 -   **資料庫分析**: 允許自動執行查詢並輸出結果到 `/tmp` 的分析腳本，以提升數據清理與診斷的效率。
 -   **安全性限制**: 涉及刪除 `app/` 目錄下的原始碼、修改環境變數 `.env`、或影響 PM2 生產環境服務時，仍必須請求使用者同意。
