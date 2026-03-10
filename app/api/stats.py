@@ -495,10 +495,14 @@ async def get_doctor_speed(hospital_id: str = None, category: str = None, dept_i
     )
 
 @router.get("/categories")
-async def get_categories():
-    """Returns unique department categories."""
+async def get_categories(hospital_id: str = None):
+    """Returns unique department categories, optionally filtered by hospital."""
     supabase = get_supabase()
-    res = await asyncio.to_thread(lambda: supabase.table("departments").select("category").execute())
+    query = supabase.table("departments").select("category")
+    if hospital_id:
+        query = query.eq("hospital_id", hospital_id)
+    
+    res = await asyncio.to_thread(lambda: query.execute())
     cats = sorted(list(set(d["category"] for d in res.data if d.get("category"))))
     return cats
 

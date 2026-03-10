@@ -2885,19 +2885,22 @@ async function switchAnalysisSheet(sheetId) {
     }
 
     if (sheetId === 'sheet1') {
+        const hSelect = document.getElementById('analysis-sheet1-hosp-select');
         loadAnalysisHospitals('analysis-sheet1-hosp-select', true);
-        loadAnalysisCategories('analysis-sheet1-cat-select');
+        loadAnalysisCategories('analysis-sheet1-cat-select', hSelect?.value || '');
         loadDeptComparison();
     } else if (sheetId === 'sheet2') {
+        const hSelect = document.getElementById('analysis-sheet2-hosp-select');
         loadAnalysisHospitals('analysis-sheet2-hosp-select');
-        loadAnalysisCategories('analysis-sheet2-cat-select');
+        loadAnalysisCategories('analysis-sheet2-cat-select', hSelect?.value || '');
         refreshDoctorComparison();
     } else if (sheetId === 'sheet3') {
         loadAnalysisHospitals('rank-hosp-filter', true);
         loadRankingTable();
     } else if (sheetId === 'sheet4') {
+        const hSelect = document.getElementById('analysis-sheet4-hosp-select');
         loadAnalysisHospitals('analysis-sheet4-hosp-select', true);
-        loadAnalysisCategories('analysis-sheet4-cat-select');
+        loadAnalysisCategories('analysis-sheet4-cat-select', hSelect?.value || '');
         loadDoctorSpeedAnalysis();
     }
 }
@@ -2943,17 +2946,38 @@ async function loadDeptComparison() {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function loadAnalysisCategories(selectId) {
+async function loadAnalysisCategories(selectId, hospitalId = '') {
     const select = document.getElementById(selectId);
-    if (!select || select.dataset.loaded === '1') return;
+    if (!select) return;
+
+    // If same hospital already loaded, skip to avoid flicker
+    if (select.dataset.loaded === '1' && (select.dataset.lastHospId || '') === hospitalId) {
+        return;
+    }
 
     try {
-        const cats = await apiFetch('/api/stats/categories') || [];
+        let url = '/api/stats/categories';
+        if (hospitalId) url += `?hospital_id=${hospitalId}`;
+        
+        const cats = await apiFetch(url) || [];
+        // Preserve current selection if it still exists in the new list
+        const currentVal = select.value;
+        
         let html = '<option value="">所有類別</option>';
         html += cats.map(c => `<option value="${c}">${c}</option>`).join('');
         select.innerHTML = html;
+        
+        if (cats.includes(currentVal)) {
+            select.value = currentVal;
+        }
+        
         select.dataset.loaded = '1';
-    } catch (e) { console.error('Load categories failed', e); }
+        select.dataset.lastHospId = hospitalId;
+    } catch (e) { 
+        console.error('Load categories failed', e); 
+        // If it fails, at least show the base state
+        select.innerHTML = '<option value="">所有類別</option>';
+    }
 }
 
 async function loadAnalysisHospitals(selectId, includeAll = false) {
