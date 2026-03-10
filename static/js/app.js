@@ -80,6 +80,7 @@ let _selectedDashHospId = null;
 let _selectedDashRegion = ''; // Selected region filter for dashboard
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
+let _dashboardRefreshTimer = null; // Timer for dashboard auto-refresh
 
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
@@ -332,6 +333,17 @@ async function initApp(userFromLogin = null) {
 
     // Load dashboard
     loadDashboard();
+
+    // Start auto-refresh timer if starting on dashboard
+    if (document.getElementById('page-dashboard').classList.contains('active')) {
+        if (_dashboardRefreshTimer) clearInterval(_dashboardRefreshTimer);
+        _dashboardRefreshTimer = setInterval(() => {
+            if (document.getElementById('page-dashboard').classList.contains('active')) {
+                console.log('[Dashboard] Auto-refreshing...');
+                loadDashboard();
+            }
+        }, 180000);
+    }
 }
 
 // ── Mobile Navigation Drawer ──────────────────────────────────
@@ -361,6 +373,11 @@ function navigate(btn, pageId, options = {}) {
     if (pageId !== 'profile') {
         _clearLineTimers && _clearLineTimers();
     }
+    // Clear dashboard refresh timer if navigating away from dashboard
+    if (pageId !== 'dashboard' && _dashboardRefreshTimer) {
+        clearInterval(_dashboardRefreshTimer);
+        _dashboardRefreshTimer = null;
+    }
     // Close mobile drawer when navigating
     closeMobileMenu();
 
@@ -376,6 +393,14 @@ function navigate(btn, pageId, options = {}) {
     // Lazy-load page data
     if (pageId === 'dashboard') {
         loadDashboard();
+        // Start auto-refresh timer (3 minutes)
+        if (_dashboardRefreshTimer) clearInterval(_dashboardRefreshTimer);
+        _dashboardRefreshTimer = setInterval(() => {
+            if (document.getElementById('page-dashboard').classList.contains('active')) {
+                console.log('[Dashboard] Auto-refreshing...');
+                loadDashboard();
+            }
+        }, 180000);
     } else if (pageId === 'hospitals') {
         loadHospitalsPage();
     } else if (pageId === 'tracking') {
