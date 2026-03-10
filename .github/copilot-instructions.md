@@ -113,6 +113,57 @@ result = await asyncio.to_thread(
 
 認證依賴：一般路由使用 `get_current_user`，管理員路由使用 `get_current_admin`，皆位於 `app/auth.py`。
 
+## 開發工具與工作流程
+
+### 工具概述
+
+本專案提供多個 CLI 工具協助開發和除錯，所有工具位於 `tools/` 目錄：
+
+| 工具 | 用途 | 路徑 |
+|------|------|------|
+| `tool_supabase.py` | 快速查詢和修改 Supabase 數據庫 | `tools/tool_supabase.py` |
+| `tool_notion.py` | 快速查詢和修改 Notion 項目 | `tools/tool_notion.py` |
+
+### 工具使用方式
+
+#### 運行工具的基本方式
+
+```bash
+# 在項目根目錄運行工具
+python tools/tool_supabase.py <command> [options]
+python tools/tool_notion.py <command> [options]
+
+# 帶 cd 進項目目錄
+cd /path/to/medical_help
+python tools/tool_supabase.py list_hospitals
+```
+
+#### 在 Copilot Chat 中使用工具
+
+1. **查詢數據**：直接要求工具執行查詢
+   ```
+   "查詢馬偕醫院的眼科醫生"
+   → Copilot 會自動執行: python tools/tool_supabase.py list_doctors --department_id <眼科ID>
+   ```
+
+2. **修改數據**：明確指定更新內容
+   ```
+   "更新用戶 user123 的追蹤設定"
+   → Copilot 會執行 update 或 upsert 操作
+   ```
+
+3. **調試問題**：使用工具驗證數據
+   ```
+   "檢查為什麼眼科沒有醫生"
+   → Copilot 會查詢相關表格並分析
+   ```
+
+#### 工具執行環境要求
+
+- Python 3.8+
+- 環境變數已設定：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`
+- 對於 Notion 工具：`NOTION_API` 環境變數已設定
+
 ### Supabase 讀寫工具 (CLI & Copilot Chat)
 
 > ⚠️ **強制規範**：所有需要讀寫 Supabase 資料的 prompt 操作，**必須優先使用** `tools/tool_supabase.py`，禁止直接呼叫 MCP Supabase 工具或在 CLI 環境中撰寫臨時 Python 腳本存取資料庫。
@@ -313,5 +364,171 @@ code review 指引：在 code review 時，請檢查以下幾點：
 
 /docs 相關：請確保所有公共 API 和重要功能都有適當的文檔說明，使用 docstring 格式，並包含參數說明、返回值說明和示例（如有必要）。文檔應該清晰、簡潔且易於理解，避免使用過於技術性的術語或行話。
 
+### 開發工具與臨時文件信任設定
+
+為了提升開發效率，以下路徑下的所有操作 **自動信任，無需批准**：
+
+**信任路徑**：
+1. `/tmp/*` — 臨時檔案和開發腳本（自動批准理由：純粹開發輔助工具，不影響項目代碼）
+2. `./temp/*` — 項目本地臨時文件夾
+3. `*/cache/*` — 快取相關文件
+
+**允許的操作**：
+- ✅ 創建臨時 Python、Shell 腳本
+- ✅ 修改臨時測試數據或日誌文件
+- ✅ 執行 `/tmp` 目錄下的任何腳本或命令（包括資料庫查詢、API 測試等）
+- ✅ 刪除過期的臨時文件
+
+**重要提醒**：
+- `/tmp` 下的所有変更 **都不會被提交到 Git**（此目錄已在 `.gitignore` 中）
+- 臨時腳本完成後應移至 `tools/` 目錄或刪除，避免重複代碼
+- 不適用於項目核心代碼的修改（`app/`、`tests/` 等仍需適當審查）
+
 /temp 放置臨時文件或測試腳本，請確保這些文件不會被提交到版本控制系統中，並且在不再需要時及時清理。
+
+## 爬蟲調試指南
+
+### 常見問題與解決方案
+
+#### 1. 科室列表為空或不完整
+**症狀**：爬蟲無法獲取科室列表，導致 `fetch_departments()` 返回空列表。
+
+**檢查步驟**：
+1. 使用工具驗證數據庫中是否有科室記錄：
+   ```bash
+   python tools/tool_supabase.py list_departments --hospital_id <hospital_id>
+   ```
+2. 查看爬蟲日誌中的 `[HOSPITAL] Built dynamic registration ID map` 信息
+3. 檢查目標網站是否使用 JavaScript 動態加載內容（可使用 Chrome 開發者工具查看）
+
+**根本原因**：
+- 目標網站使用 JavaScript 動態加載（常見的 Cloudflare DDoS 保護、Vue.js 等框架）
+- httpx 無法執行 JavaScript，因此無法獲得實際內容
+
+**解決方案**：
+- 使用 Selenium 或 Playwright 代替 httpx 以支持 JavaScript 執行
+- 或改用其他數據源（如 API endpoint、HTML 伺服器端渲染的部分）
+
+#### 2. 醫生列表為空
+
+**症狀**：科室正確，但無法獲取該科室的醫生列表。
+
+**檢查步驟**：
+1. 驗證科室代碼是否正確：
+   ```bash
+   python tools/tool_supabase.py select doctors --filter department_id eq <dept_id> --limit 10
+   ```
+2. 檢查爬蟲日誌中 `fetch_schedule` 的輸出，查看是否成功解析了 HTML
+3. 使用調試腳本直接抓取網頁： 
+   ```python
+   import httpx
+   import re
+   from bs4 import BeautifulSoup
+   
+   # 直接抓取醫生排班頁面 HTML，檢查表格結構
+   resp = httpx.get("https://hospital.com/schedule?dept=45")
+   soup = BeautifulSoup(resp.text, "lxml")
+   table = soup.find("table", id="tblSch")
+   if table:
+       rows = table.find_all("tr")
+       print(f"Found {len(rows)} rows")
+   ```
+
+**根本原因**：
+- HTML 表格結構已改變（網站更新）
+- 科室代碼映射不匹配（使用了錯誤的 depid）
+- 該科室確實沒有醫生排班（如某些特殊門診）
+
+**解決方案**：
+1. 檢查網站的實際 HTML 結構並更新爬蟲的解析邏輯
+2. 驗證科室代碼是否正確（可對比網站上的 URL 參數）
+3. 確認該科室是否為有效的臨床科室
+
+#### 3. 特定醫院爬蟲失敗
+
+**症狀**：某個醫院的爬蟲無法正常工作。
+
+**診斷步驟**：
+1. 檢查該醫院是否已啟用：
+   ```bash
+   python tools/tool_supabase.py select hospitals --filter code eq HOSPITAL_CODE
+   ```
+2. 查看 `app/scheduler.py` 中是否包含該醫院的爬蟲
+3. 檢查 `.env` 中是否設定了 `ENABLED_HOSPITALS`
+4. 查看最近的爬蟲日誌，找出具體的錯誤信息
+
+**常見原因**：
+- 爬蟲未在 scheduler 中註冊
+- 醫院代碼與數據庫中的代碼不匹配
+- 網站結構已改變，爬蟲的 HTML 解析邏輯過時
+
+### 調試技巧
+
+#### 直接執行爬蟲進行測試
+```bash
+python << 'EOF'
+import asyncio
+from app.scrapers.hmmh import HMMHScraper
+
+async def test():
+    scraper = HMMHScraper()
+    try:
+        depts = await scraper.fetch_departments()
+        print(f"Found {len(depts)} departments")
+        
+        for dept in depts[:3]:
+            print(f"  {dept.name}: {dept.code}")
+            schedule = await scraper.fetch_schedule(dept.code)
+            print(f"    - {len(schedule)} slots")
+    finally:
+        await scraper.close()
+
+asyncio.run(test())
+EOF
+```
+
+#### 保存並檢查 HTML 內容
+```bash
+# 檢查爬蟲實際抓取的 HTML 內容
+python << 'EOF'
+import asyncio
+import httpx
+from bs4 import BeautifulSoup
+
+async def debug_html():
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("https://hospital.com/page")
+        with open("/tmp/debug.html", "w") as f:
+            f.write(resp.text)
+        print(f"Saved {len(resp.text)} bytes to /tmp/debug.html")
+
+asyncio.run(debug_html())
+EOF
+
+# 然後在瀏覽器中打開 /tmp/debug.html 查看實際內容
+```
+
+#### 比較不同時間的爬蟲輸出
+```bash
+# 記錄爬蟲的日誌輸出並比較
+grep "HMMH\|CMUH\|NTUH" logs/app.log | tail -100
+```
+
+### 工具集成示例
+
+查詢眼科沒有醫生的原因（如本項目曾遇到的問題）：
+
+```bash
+# 1. 查詢眼科科室是否存在
+python tools/tool_supabase.py select departments --filter name like 眼科 --limit 5
+
+# 2. 查詢該科室的醫生數
+python tools/tool_supabase.py select doctors --filter department_id eq <dept_id>
+
+# 3. 檢查爬蟲日誌
+grep "眼科\|депt_code" logs/app.log | tail -50
+
+# 4. 手動運行爬蟲以進行調試
+python -c "from app.scrapers.hmmh import HMMHScraper; import asyncio; asyncio.run(HMMHScraper().fetch_departments())" 2>&1 | grep -i 眼科
+```
 

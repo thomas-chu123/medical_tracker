@@ -45,6 +45,50 @@ DEFAULT_HEADERS = {
     "Referer": "https://www.hc.mmh.org.tw/",
 }
 
+# Fallback department code mapping (registration IDs from find_division.php)
+# Used when dynamic loading fails to extract from find_division.php
+# These codes are needed because progress.php uses different "Progress IDs" (dept select values)
+# while register_divide.php uses "Registration IDs" (depid parameter)
+DEPARTMENT_CODE_MAPPING = {
+    "M痘疫苗門診": "26",
+    "一般外科": "14",
+    "乳房外科": "21",
+    "內分泌暨新陳代謝科": "7",
+    "大腸直腸外科": "15",
+    "家庭醫學科": "49",
+    "影像介入及疼痛門診": "80",
+    "復健科": "220",
+    "心臟內科": "2",
+    "心臟血管外科": "18",
+    "感染科": "219",
+    "放射腫瘤科": "130",
+    "整形外科": "168",
+    "泌尿科": "42",
+    "減重暨代謝手術門診": "226",
+    "減重特別門診": "12",
+    "牙科": "47",
+    "皮膚科": "50",
+    "眼科": "45",
+    "神經內科": "217",
+    "神經外科": "13",
+    "精神科": "218",
+    "美容門診": "12",
+    "老年醫學科": "917",
+    "耳鼻喉頭頸外科": "127",
+    "職業病科": "915",
+    "胃腸肝膽科": "5",
+    "胸腔內科": "3",
+    "胸腔外科": "17",
+    "腎臟內科": "4",
+    "腦血管微創治療特別門診": "80",
+    "自費記憶門診": "20",
+    "血友病特別門診": "30",
+    "血液腫瘤科": "6",
+    "過敏免疫風濕科": "9",
+    "預立醫療諮商門診": "906",
+    "骨科": "43",
+}
+
 
 def _parse_int(text: Optional[str]) -> Optional[int]:
     """Extract first integer from a string."""
@@ -125,6 +169,10 @@ class HMMHScraper(BaseScraper):
     async def _fetch_registration_id_map(self) -> dict[str, str]:
         """
         Scrape find_division.php to build a mapping of department name -> Registration ID (depid).
+        
+        ⚠️ Note: find_division.php uses JavaScript dynamic loading (Cloudflare DDoS protection).
+        This method may return empty results. Fallback: use progress.php dept codes directly.
+        
         Registration IDs are used for fetching doctor schedules (register_divide.php).
         """
         url = f"{self.BASE_URL}/find_division.php"
@@ -159,13 +207,24 @@ class HMMHScraper(BaseScraper):
 
     async def fetch_departments(self) -> list[DepartmentData]:
         """
-        Scrape department list from progress.php and map them to registration IDs from find_division.php.
-
+        Scrape department list from progress.php.
+        
         progress.php provides the list of active clinical departments and their "Progress IDs" (value of select[name=dept]).
-        find_division.php provides the "Registration IDs" used for schedules.
+        However, these Progress IDs (e.g., 70 for 眼科) are different from Registration IDs (e.g., 45 for 眼科)
+        used by register_divide.php?depid={code}.
+        
+        To map between them, we:
+        1. Try to fetch the mapping from find_division.php (may fail due to JavaScript dynamic loading)
+        2. Fall back to DEPARTMENT_CODE_MAPPING (hardcoded from last successful extraction)
+        
+        This ensures we use the correct Registration IDs with register_divide.php.
         """
-        # First get the registration ID map
+        # Attempt to get registration ID map
         reg_map = await self._fetch_registration_id_map()
+        
+        if not reg_map:
+            log.info("[HMMH] Registration ID map is empty, using fallback DEPARTMENT_CODE_MAPPING")
+            reg_map = DEPARTMENT_CODE_MAPPING
 
         url = f"{self.BASE_URL}/progress.php"
         html = await self._get(url)
@@ -185,7 +244,7 @@ class HMMHScraper(BaseScraper):
         current_sort_order = 1
         for option in options:
             code = option.get("value", "").strip()
-            full_name = option.get_text(strip=True)  # e.g. "內科部-胃腸肝膽科"
+            full_name = option.get_text(strip=True)  # e.g. "內科部-胃腸肝膽科" or "其他科系-眼科"
 
             # Skip placeholder option (empty value)
             if not code or not full_name or full_name == "請選擇":
@@ -204,14 +263,14 @@ class HMMHScraper(BaseScraper):
                 category_prefix = ""
                 dept_name = full_name
 
-            # Dynamic Mapping to Registration ID
-            # If we found an ID for this department in find_division.php, use it as the primary code.
-            # This ensures fetch_schedule uses the correct Registration ID (e.g. 217 for Neurology).
+            # Try to get Registration ID from mapping
+            # Try both the cleaned name and full name
             reg_code = reg_map.get(dept_name) or reg_map.get(full_name)
-            if reg_code:
-                if reg_code != code:
-                    log.info(f"[HMMH] Mapping department '{dept_name}': Progress ID {code} -> Registration ID {reg_code}")
+            if reg_code and reg_code != code:
+                log.info(f"[HMMH] Mapping department '{dept_name}': Progress ID {code} -> Registration ID {reg_code}")
                 code = reg_code
+            else:
+                log.debug(f"[HMMH] No mapping found for '{dept_name}', using progress.php code: {code}")
 
             # Skip administrative/non-clinical departments
             skip_keywords = ["行政", "教學", "認證", "單位", "專案", "疫苗", "自費", "特別門診"]

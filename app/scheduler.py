@@ -447,6 +447,7 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         status = slot.status
         waiting_list = []
         clinic_queue_details = []
+        waiting_count = None  # 從進度或 fallback 計算中設定
 
         # User's dynamic time gates for real-time progress (current_number):
         # 上午診: 08:00-16:00 (8 hours)
@@ -505,6 +506,12 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         clinic_room = progress.clinic_room
                     if progress.waiting_list:
                         waiting_list = progress.waiting_list
+                    if hasattr(progress, 'waiting_count') and progress.waiting_count is not None:
+                        waiting_count = progress.waiting_count
+                    # Fallback for waiting_count if not provided by scraper (like TYGH)
+                    if waiting_count is None and registered_count is not None and current_number is not None:
+                        waiting_count = max(0, registered_count - current_number)
+                        logger.info(f"[Scheduler] Fallback waiting_count={waiting_count} for {slot.doctor_name}")
                     if progress.clinic_queue_details:
                         clinic_queue_details = progress.clinic_queue_details
                         logger.debug(f"[Scheduler] Set clinic_queue_details: {len(clinic_queue_details)} items")
@@ -515,7 +522,6 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         # When we have waiting_count from a HMMH-style progress response,
         # record a speed sample and compute estimated wait time.
         estimated_wait_minutes = None
-        waiting_count = None  # raw waiting count from progress
 
         # Extract waiting_count from clinic_queue_details (HMMH format stores it there)
         if clinic_queue_details:

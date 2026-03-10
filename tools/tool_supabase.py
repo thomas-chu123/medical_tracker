@@ -297,7 +297,7 @@ def get_latest_snapshots(doctor_id: str, limit: int = 10) -> Dict[str, Any]:
             supabase.table("appointment_snapshots")
             .select("*")
             .eq("doctor_id", doctor_id)
-            .order("created_at", desc=True)
+            .order("scraped_at", desc=True) # Changed from created_at to scraped_at
             .limit(limit)
             .execute()
         )

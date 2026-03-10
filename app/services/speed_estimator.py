@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from app.core.logger import logger
@@ -162,12 +162,15 @@ async def get_estimated_wait_minutes(
         return 0.0
 
     try:
+        # Calculate 30 days ago in Python as string
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        
         res = await asyncio.to_thread(
             lambda: supabase.table("clinic_speed_samples")
             .select("calls_per_min, sample_at")
             .eq("doctor_id", doctor_id)
             .eq("session_type", session_type)
-            .gt("sample_at", "NOW() - INTERVAL '30 days'")  # recent data only
+            .gt("sample_at", cutoff)  # recent data only
             .order("sample_at", desc=True)
             .limit(MAX_SAMPLES_FOR_AVG)
             .execute()
@@ -233,9 +236,10 @@ async def get_previous_snapshot(
     session_type: str,
 ) -> Optional[dict]:
     """
-    Fetch the most recent previous appointment_snapshot for this doctor/session
-    that has a valid current_number and scraped_at.
-    Returns None if no previous snapshot found.
+    Fetch the historical snapshot for this doctor/session to compute speed.
+    Note: Since we use UPSERT in the scheduler, 'limit(2)' will:
+    - Return 1 row if we haven't updated yet in this poll (this IS the previous snapshot).
+    - Return 2 rows if we just updated (the 2nd one is the previous snapshot).
     """
     try:
         res = await asyncio.to_thread(
@@ -246,14 +250,33 @@ async def get_previous_snapshot(
             .eq("session_type", session_type)
             .not_.is_("current_number", "null")
             .order("scraped_at", desc=True)
-            .limit(2)     # limit=2: [0]=most recent (just written), [1]=previous
+            .limit(2)
             .execute()
         )
-        rows = res.data or []
-        # We want the PREVIOUS one (index 1), since index 0 is the one we just wrote
-        if len(rows) >= 2:
-            return rows[1]
+        data = res.data or []
+        if not data:
+            return None
+            
+        # If we have 2 rows, index 1 is the 'previous' one
+        if len(data) >= 2:
+            return data[1]
+            
+        # If we have only 1 row, and it's reasonably 'old' (e.g., > 1 min ago),
+        # it means the scheduler hasn't performed the UPSERT for the current poll yet.
+        # This single row IS our previous baseline.
+        snap = data[0]
+        scraped_at_str = snap.get("scraped_at")
+        if scraped_at_str:
+            scraped_at = datetime.fromisoformat(scraped_at_str.replace("Z", "+00:00"))
+            if scraped_at.tzinfo is None:
+                scraped_at = scraped_at.replace(tzinfo=timezone.utc)
+            
+            # If it was scraped more than 30 seconds ago, treat it as a valid previous baseline
+            if (datetime.now(timezone.utc) - scraped_at).total_seconds() > 30:
+                return snap
+                
         return None
+
     except Exception as e:
         logger.error(f"[SpeedEstimator] Error fetching previous snapshot: {e}")
         return None
