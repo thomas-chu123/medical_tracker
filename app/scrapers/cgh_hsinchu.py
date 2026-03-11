@@ -61,21 +61,72 @@ def _roc_date_to_iso(roc: str) -> Optional[date]:
     """
     Convert ROC date string (115.03.16 or 1150316) to Python date.
     Returns None on failure.
+
+    ✅ 問題3修正：增強的日期轉換邏輯
+    支持格式：
+    - "115.03.16" / "115-03-16" → ISO 2026-03-16
+    - "1150316" → ISO 2026-03-16
+
+    驗證項目：
+    - 月份範圍：1-12
+    - 日期範圍：1-31
+    - 年份有效性：確保轉換後是合理的西元年份
     """
     try:
-        roc = roc.strip().replace("/", ".").replace("-", ".")
-        if "." in roc:
-            parts = roc.split(".")
-            year = int(parts[0]) + 1911
+        roc = roc.strip()
+        if not roc:
+            return None
+
+        # ✅ 問題3修正：標準化分隔符
+        roc_normalized = roc.replace("/", ".").replace("-", ".")
+
+        # ✅ 問題3修正：分情況處理
+        if "." in roc_normalized:
+            # 格式：115.03.16 或 115.3.16
+            parts = roc_normalized.split(".")
+            if len(parts) != 3:
+                log.warning(f"[{__name__}] Invalid ROC date format (wrong part count): {roc}")
+                return None
+            roc_year = int(parts[0])
             month = int(parts[1])
             day = int(parts[2])
         else:
-            # YYYMMDD or similar compact form
-            year = int(roc[:3]) + 1911
-            month = int(roc[3:5])
-            day = int(roc[5:7])
-        return date(year, month, day)
-    except Exception:
+            # 格式：1150316 或 115316（7 位數或 6 位數）
+            if len(roc) not in (7, 6):
+                log.warning(f"[{__name__}] Invalid ROC date format (wrong length): {roc}")
+                return None
+
+            roc_year = int(roc[:3])
+            # ✅ 問題3修正：支持 6 位數格式 (115316 表示 115年3月16日，需要補零)
+            if len(roc) == 6:
+                month = int(roc[3])
+                day = int(roc[4:6])
+            else:
+                month = int(roc[3:5])
+                day = int(roc[5:7])
+
+        # ✅ 問題3修正：驗證月份和日期的有效性
+        if not (1 <= month <= 12):
+            log.warning(f"[{__name__}] Invalid month: {month} from {roc}")
+            return None
+
+        if not (1 <= day <= 31):
+            log.warning(f"[{__name__}] Invalid day: {day} from {roc}")
+            return None
+
+        # ✅ 問題3修正：ROC 轉西元（民國年份 + 1911）
+        gregorian_year = roc_year + 1911
+
+        # ✅ 問題3修正：驗證轉換後的年份合理性（確保不是負數或異常大的值）
+        if gregorian_year < 1900 or gregorian_year > 2100:
+            log.warning(f"[{__name__}] Gregorian year out of reasonable range: {gregorian_year} from ROC {roc_year}")
+            return None
+
+        # ✅ 問題3修正：嘗試創建日期物件，會自動驗證日期有效性
+        return date(gregorian_year, month, day)
+
+    except (ValueError, IndexError) as e:
+        log.error(f"[{__name__}] Date conversion failed for '{roc}': {e}")
         return None
 
 
@@ -445,7 +496,8 @@ class CGHHsinchuScraper(BaseScraper):
         # 遍歷所有行
         for row in rows:
             cells = row.find_all("td")
-            if not cells:
+            # ✅ 問題1修正：檢查最小單元格數量 (至少需要4個欄位：診間 | 醫生 | 當前號 | 尚未人數)
+            if len(cells) < 4:
                 continue
 
             # 獲取整行文本（用於全局搜索）
@@ -454,27 +506,32 @@ class CGHHsinchuScraper(BaseScraper):
             # ───────────────────────────────────────────────────────
             # 檢查 1: 精確匹配診間代碼或醫生名字
             # ───────────────────────────────────────────────────────
-            # 首先嘗試精確匹配單元格内容（第一列是診間代碼，第二列是醫生名字）
+            # ✅ 問題1修正：支持診間代碼末尾有 "號" 字的情況
+            cell_texts = [cell.get_text(strip=True) for cell in cells[:4]]
+
             room_found = False
             doctor_found = False
             
-            if room and len(cells) > 0:
-                cell_text = cells[0].get_text(strip=True)
-                room_found = cell_text == room
-            
-            if target_doctor and len(cells) > 1:
-                cell_text = cells[1].get_text(strip=True)
+            if room:
+                room_cell = cell_texts[0].replace("號", "").replace(" ", "")
+                room_param = room.replace("號", "").replace(" ", "")
+                room_found = room_cell == room_param
+
+            if target_doctor and len(cell_texts) > 1:
                 # 精確匹配醫生名字（不使用 in）
-                doctor_found = cell_text == target_doctor
-            
+                doctor_found = cell_texts[1] == target_doctor
+
             # 如果精確匹配失敗，但有多個搜索條件，不進行備選搜索
             # 這避免了誤匹配（例如搜索 "眼1" 不應該匹配 "眼10"）
             if room and target_doctor:
                 # 兩個條件都要符合
                 if not (room_found and doctor_found):
                     continue
-            elif not (room_found or doctor_found):
-                # 單個條件時，至少要符合一個
+            elif room and not room_found:
+                # 僅搜索診間
+                continue
+            elif target_doctor and not doctor_found:
+                # 僅搜索醫生
                 continue
 
             log.debug(f"[{self.HOSPITAL_CODE}] Found potential match: room_found={room_found}, doctor_found={doctor_found}")
@@ -495,49 +552,39 @@ class CGHHsinchuScraper(BaseScraper):
             # ───────────────────────────────────────────────────────
             # 檢查 3: 嘗試標準表格解析
             # ───────────────────────────────────────────────────────
-            if len(cells) >= 2:
+            # ✅ 問題2修正：改進數值提取邏輯
+            if len(cells) >= 4:  # 改為 >= 4，確保有足夠的欄位
                 # 試圖從表格中提取數值欄位
                 numeric_values = []
                 
-                # 確定從哪一列開始提取數值
-                # 如果有 room 匹配，表示找到了目標行，從第 2 列（index 1）開始
-                # 如果只有 doctor 匹配（room 為空或未找到），從第 2 列（index 1）開始
-                start_col = 1 if room_found or target_doctor else 0
-                
-                for i, cell in enumerate(cells):
-                    # 跳過應該用於識別的列（診間代碼和醫生名字）
-                    if i < 2:
+                # ✅ 問題2修正：正確遍歷從第3列開始的欄位（index 2 開始，跳過診間和醫生）
+                for i in range(2, len(cells)):
+                    cell_text = cells[i].get_text(strip=True)
+
+                    # ✅ 問題2修正：安全檢查 "無" 字狀態
+                    if cell_text in ("無", "無看診", "N/A", "-", ""):
                         continue
                     
-                    cell_text = cell.get_text(strip=True)
-                    # 跳過包含診間代碼本身或醫生名字的文本欄位
-                    if room and room in cell_text:
-                        continue
-                    if target_doctor and target_doctor in cell_text:
-                        continue
-                    
+                    # ✅ 問題2修正：使用改進的數值解析函數
                     val = _parse_int(cell_text)
                     if val is not None:
                         numeric_values.append(val)
 
-                # 如果找到數值欄位，返回進度
+                # ✅ 問題2修正：改進數值分配邏輯，正確識別當前號和尚未人數
                 if numeric_values:
                     registered_count = None
                     waiting_count = None
                     current_number = None
                     total_quota = None
 
-                    if len(numeric_values) >= 4:
-                        # 完整結構：registered | waiting | current | total
-                        registered_count = numeric_values[0]
-                        waiting_count = numeric_values[1]
-                        current_number = numeric_values[2]
-                        total_quota = numeric_values[3]
-                    elif len(numeric_values) >= 2:
-                        # 簡化結構：current | total
+                    # 根據提取到的數值個數進行不同的解析
+                    # 預期結構（從左至右）：當前號 | 尚未就診人數
+                    if len(numeric_values) >= 2:
+                        # ✅ 問題2修正：第一個數字是當前號，第二個是尚未就診人數（或範圍的最大值）
                         current_number = numeric_values[0]
-                        total_quota = numeric_values[1]
+                        waiting_count = numeric_values[-1]  # 若為範圍如 "1-30"，取最大值 30
                     elif len(numeric_values) == 1:
+                        # 只有一個數字，通常是當前號
                         current_number = numeric_values[0]
 
                     clinic_queue_details = []
