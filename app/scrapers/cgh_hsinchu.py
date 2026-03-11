@@ -504,7 +504,7 @@ class CGHHsinchuScraper(BaseScraper):
 
             row_text = row.get_text(strip=True)
 
-            # ✅ 檢查非看診時段
+            # ✅ 檢查各種診間狀態
             if "非看診時段" in row_text or "休診" in row_text:
                 log.debug(f"[{self.HOSPITAL_CODE}] 非看診時段 detected")
                 return ClinicProgress(
@@ -513,6 +513,17 @@ class CGHHsinchuScraper(BaseScraper):
                     current_number=0,
                     total_quota=None,
                     status="未開診"
+                )
+
+            # ✅ 檢查已結束看診
+            if "已結束看診" in row_text:
+                log.debug(f"[{self.HOSPITAL_CODE}] 已結束看診 detected")
+                return ClinicProgress(
+                    clinic_room=room,
+                    session_type=self.PERIOD_MAP.get(period, "上午"),
+                    current_number=0,
+                    total_quota=None,
+                    status="已結束"
                 )
 
             # ✅ 嘗試匹配診間和醫生

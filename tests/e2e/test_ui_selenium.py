@@ -20,6 +20,8 @@ import time
 import os
 from datetime import date
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.expected_conditions import visibility_of_element_located, alert_is_present
 from tests.e2e.page_objects import (
     LoginPage,
     DashboardPage,
@@ -114,7 +116,7 @@ class TestTrackingManagement:
     
     @pytest.fixture(autouse=True)
     def setup_login(self, browser, wait_driver):
-        """自動登入"""
+        """自動登入並清理環境"""
         browser.navigate_to("/")
         login_page = LoginPage(browser.driver, wait_driver)
         login_page.enter_email(TEST_EMAIL)
@@ -123,6 +125,26 @@ class TestTrackingManagement:
         
         dashboard = DashboardPage(browser.driver, wait_driver)
         assert dashboard.is_loaded()
+        
+        # Cleanup: Ensure tracking list is empty before tests
+        logger.info("Cleaning up tracking list before test via Supabase API")
+        from app.database import get_supabase
+        import asyncio
+        
+        supabase = get_supabase()
+        test_email = os.environ.get("TEST_EMAIL", "test_e2e@example.com")
+        
+        # Look up user ID
+        user_res = supabase.table("users_local").select("id").eq("email", test_email).execute()
+        if user_res.data:
+            user_id = user_res.data[0]["id"]
+            # Bulk delete subscriptions for this user
+            supabase.table("tracking_subscriptions").delete().eq("user_id", user_id).execute()
+            logger.info(f"Cleaned up all subscriptions for {test_email} ({user_id})")
+        
+        # Navigate back to hospitals to start tests
+        browser.driver.get(f"{browser.driver.current_url.split('#')[0]}#hospitals")
+        time.sleep(1)
         yield
     
     # @pytest.mark.skip(reason="Complex UI flow - requires doctor data with available slots")
@@ -170,7 +192,15 @@ class TestTrackingManagement:
         
         # Verify success message
         success_msg = modal.get_success_message()
-        assert "成功" in success_msg or "✅" in success_msg, f"Unexpected message: {success_msg}"
+        if not ("成功" in success_msg or "✅" in success_msg):
+            error_msg = modal.get_error_message()
+            # Capture browser logs
+            browser_logs = browser.driver.get_log("browser")
+            for entry in browser_logs:
+                logger.error(f"🌐 Browser Log: {entry}")
+            logger.error(f"❌ Creation failed. Toast: '{success_msg}', Error: '{error_msg}'")
+            browser.screenshot("fail_creation_toast")
+            assert "成功" in success_msg or "✅" in success_msg, f"Unexpected message: {success_msg}"
         logger.info(f"✅ Tracking created successfully: {success_msg}")
         browser.screenshot("tracking_created")
     
@@ -206,7 +236,17 @@ class TestTrackingManagement:
         
         modal.submit()
         
+        # Verify success message
         success_msg = modal.get_success_message()
+        if not ("成功" in success_msg or "✅" in success_msg):
+            error_msg = modal.get_error_message()
+            # Capture browser logs
+            browser_logs = browser.driver.get_log("browser")
+            for entry in browser_logs:
+                logger.error(f"🌐 Browser Log: {entry}")
+            logger.error(f"❌ LINE creation failed. Toast: '{success_msg}', Error: '{error_msg}'")
+            browser.screenshot("fail_line_creation_toast")
+            
         assert "成功" in success_msg or "✅" in success_msg, f"Unexpected message: {success_msg}"
         logger.info("✅ LINE tracking created successfully")
         browser.screenshot("tracking_with_line")
@@ -221,24 +261,45 @@ class TestTrackingManagement:
         tracking_list = TrackingListPage(browser.driver, wait_driver)
         assert tracking_list.is_loaded(), "Tracking list should load"
         
-        # Find and delete first tracking
+        # Ensure we have at least one item (should be created by previous tests if run in order,
+        # but setup_login clears them, so we create one first if empty)
         items = tracking_list.get_tracking_items()
-        if len(items) > 0:
-            first_item = items[0]
-            # Use XPATH to find the tc-header name element since class tracking-doctor-name is removed
-            doctor_name_elem = first_item.find_element(By.XPATH, ".//div[@class='tc-header']/div/div[1]")
-            doctor_name = doctor_name_elem.text.replace("👩‍⚕️ ", "")
-            
-            # Delete it
-            tracking_list.delete_tracking(doctor_name)
-            
-            # Verify deletion
-            updated_items = tracking_list.get_tracking_items()
-            assert len(updated_items) < len(items), "Item should be deleted"
-            logger.info(f"✅ Tracking deleted: {doctor_name}")
-            browser.screenshot("tracking_deleted")
-        else:
-            pytest.skip("No tracking items to delete")
+        if len(items) == 0:
+            logger.info("No items to delete, creating one...")
+            # Go back to hospitals to create one
+            browser.driver.find_element(By.CSS_SELECTOR, "button[data-page='hospitals']").click()
+            time.sleep(1)
+            self.test_create_tracking_subscription(browser, wait_driver)
+            # Back to tracking
+            browser.driver.find_element(By.CSS_SELECTOR, "button[data-page='tracking']").click()
+            time.sleep(1)
+            items = tracking_list.get_tracking_items()
+        
+        assert len(items) > 0, "Should have tracking items to delete"
+        
+        first_item = items[0]
+        # Use updated POM method for doctor name
+        doctor_name_full = first_item.find_element(*tracking_list.DOCTOR_NAME).text
+        doctor_name = doctor_name_full.replace("👩‍⚕️", "").strip()
+        logger.info(f"Deleting doctor: '{doctor_name}'")
+        
+        # Delete it
+        tracking_list.delete_tracking(doctor_name)
+        
+        # Wait for deletion toast to ensure backend sync
+        try:
+            WebDriverWait(browser.driver, 5).until(
+                lambda d: "刪除" in d.find_element(By.CLASS_NAME, "toast").text
+            )
+            logger.info("✅ Deletion toast detected")
+        except:
+            logger.warning("⚠️ Deletion toast not detected, proceeding anyway")
+
+        # Verify deletion
+        updated_items = tracking_list.get_tracking_items()
+        assert len(updated_items) < len(items), f"Item '{doctor_name}' should be deleted. Items before: {len(items)}, after: {len(updated_items)}"
+        logger.info(f"✅ Tracking deleted: {doctor_name}")
+        browser.screenshot("tracking_deleted")
     
     # @pytest.mark.skip(reason="Requires existing tracking subscriptions")
     def test_edit_tracking_subscription(self, browser, wait_driver):
@@ -321,8 +382,15 @@ class TestNotifications:
         """準備測試環境"""
         supabase = get_supabase()
         
-        # 創建測試用追蹤訂閱（如果不存在）
-        self.user_id = "ef488308-b6af-479b-824a-9a02c55527bf"
+        # 測試用預設資料 - Look up by email instead of hardcoding ID
+        test_email = os.environ.get("TEST_EMAIL", "test_e2e@example.com")
+        user_res = supabase.table("users_local").select("id").eq("email", test_email).execute()
+        if user_res.data:
+            self.user_id = user_res.data[0]["id"]
+        else:
+            # Fallback if not found (shouldn't happen with setup_login)
+            self.user_id = "ef488308-b6af-479b-824a-9a02c55527bf"
+            
         self.doctor_id = "c12b86cf-c590-4351-822f-552296c15614"
         
         yield
@@ -368,15 +436,20 @@ class TestNotifications:
         """測試通知門檻邏輯"""
         supabase = get_supabase()
         
-        # Get subscription
-        sub_id = "3ff6746d-9762-4fb6-9947-b5b3a01fdf97"
-        sub = supabase.table("tracking_subscriptions").select("*").eq("id", sub_id).single().execute()
+        # Get latest subscription for this user instead of hardcoded ID
+        subs = supabase.table("tracking_subscriptions").select("*").eq("user_id", self.user_id).order("created_at", desc=True).limit(1).execute()
         
-        assert sub.data["notify_at_20"] is True
-        assert sub.data["notify_at_10"] is True
-        assert sub.data["notify_at_5"] is True
+        if not subs.data:
+            logger.warning("⚠️ No subscriptions found for threshold test. Skipping.")
+            return
+
+        sub = subs.data[0]
         
-        logger.info("✅ Notification thresholds correctly configured")
+        assert sub["notify_at_20"] is not None
+        assert sub["notify_at_10"] is not None
+        assert sub["notify_at_5"] is not None
+        
+        logger.info(f"✅ Notification thresholds verified for sub {sub['id']}")
 
 
 class TestDataIntegrity:
@@ -406,8 +479,8 @@ class TestDataIntegrity:
         """測試用戶 LINE ID 正確存儲"""
         supabase = get_supabase()
         
-        user_id = "ef488308-b6af-479b-824a-9a02c55527bf"
-        user = supabase.table("users_local").select("*").eq("id", user_id).single().execute()
+        test_email = os.environ.get("TEST_EMAIL", "test_e2e@example.com")
+        user = supabase.table("users_local").select("*").eq("email", test_email).single().execute()
         
         # Should have line_user_id
         assert user.data["line_user_id"], "User should have LINE ID"

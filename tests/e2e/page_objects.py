@@ -156,10 +156,11 @@ class QuickTrackModal:
     NOTIFY_EMAIL = (By.ID, "qt-notify-email")
     NOTIFY_LINE = (By.ID, "qt-notify-line")
     APPOINTMENT_NUMBER = (By.ID, "qt-appointment-number")
-    SUBMIT_BUTTON = (By.XPATH, "//button[contains(., '確認追蹤')]")
+    SUBMIT_BUTTON = (By.CSS_SELECTOR, "#quick-track-modal .btn-primary")
     CLOSE_BUTTON = (By.CLASS_NAME, "modal-close")
     SUCCESS_MESSAGE = (By.CSS_SELECTOR, ".toast.success")
-    ERROR_MESSAGE = (By.CSS_SELECTOR, ".toast.error")
+    ERROR_MESSAGE = (By.CSS_SELECTOR, ".toast.error, .toast.warning")
+    ANY_TOAST = (By.CLASS_NAME, "toast")
     
     def is_open(self) -> bool:
         """檢查彈窗是否開啟"""
@@ -262,7 +263,7 @@ class QuickTrackModal:
         """提交表單"""
         logger.info("Submitting tracking form")
         button = self.wait.until(visibility_of_element_located(self.SUBMIT_BUTTON))
-        button.click()
+        self.driver.execute_script("arguments[0].click();", button)
     
     def close(self):
         """關閉彈窗"""
@@ -274,6 +275,22 @@ class QuickTrackModal:
         """取得成功訊息"""
         try:
             msg = self.wait.until(visibility_of_element_located(self.SUCCESS_MESSAGE))
+            return msg.text
+        except:
+            return self.get_any_toast()
+
+    def get_any_toast(self) -> str:
+        """取得任何出現的 toast 訊息"""
+        try:
+            msg = self.wait.until(visibility_of_element_located(self.ANY_TOAST))
+            return msg.text
+        except:
+            return ""
+
+    def get_error_message(self) -> str:
+        """取得錯誤訊息"""
+        try:
+            msg = self.wait.until(visibility_of_element_located(self.ERROR_MESSAGE))
             return msg.text
         except:
             return ""
@@ -405,7 +422,7 @@ class TrackingListPage:
     TRACKING_ITEM = (By.CLASS_NAME, "tracking-card")
     DELETE_BUTTON = (By.CSS_SELECTOR, "button.btn-danger, .delete-tracking-btn")
     EDIT_BUTTON = (By.CLASS_NAME, "edit-tracking-btn")
-    DOCTOR_NAME = (By.CSS_SELECTOR, ".tc-header .doctor-name, .tracking-doctor-name")
+    DOCTOR_NAME = (By.XPATH, ".//div[contains(@style, 'font-weight:600')]")
     CONFIRM_DELETE = (By.ID, "confirmDeleteBtn")
     CANCEL_DELETE = (By.ID, "cancelDeleteBtn")
     
