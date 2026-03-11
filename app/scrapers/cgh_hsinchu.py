@@ -462,15 +462,18 @@ class CGHHsinchuScraper(BaseScraper):
         """
         Query real-time clinic progress from RealTimeTable.jsp.
         
-        國泰醫院的頁面結構複雜，可能返回：
-        1. 表格行（有數據時）：診間 | 醫生 | 當前號 | 總號數...
-        2. 文本行（非看診時段）：115年3月10日 上午眼科 游琇瑾醫師 非看診時段...
-        
-        Requires selecting area (3=Hsinchu), sec (session), and room.
+        ✅ 修正版本：正確解析國泰表格結構
+        國泰的表格結構為：
+        - 目前看診序號：14
+        - 尚未就診號人數：1, 3, 6, 8, 10, 12, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
+
+        表格通常包含以下行：
+        1. 標籤行：包含"目前看診序號"和"尚未就診號人數"
+        2. 數據行：診間 | 醫生 | [當前號] | [等候號碼列表...]
+        3. 非看診時段提示
         """
         url = f"{self.BASE_URL}/tw/reg/RealTimeTable.jsp"
 
-        # The page requires: hosarea, sec, room to query progress
         data = {
             "hosarea": self.AREA,
             "sec": period,
@@ -493,52 +496,15 @@ class CGHHsinchuScraper(BaseScraper):
 
         log.debug(f"[{self.HOSPITAL_CODE}] fetch_clinic_progress searching for room={room}, doctor={target_doctor}, total rows={len(rows)}")
 
-        # 遍歷所有行
+        # 遍歷所有行尋找數據行
         for row in rows:
             cells = row.find_all("td")
-            # ✅ 問題1修正：檢查最小單元格數量 (至少需要4個欄位：診間 | 醫生 | 當前號 | 尚未人數)
-            if len(cells) < 4:
+            if len(cells) < 2:
                 continue
 
-            # 獲取整行文本（用於全局搜索）
             row_text = row.get_text(strip=True)
 
-            # ───────────────────────────────────────────────────────
-            # 檢查 1: 精確匹配診間代碼或醫生名字
-            # ───────────────────────────────────────────────────────
-            # ✅ 問題1修正：支持診間代碼末尾有 "號" 字的情況
-            cell_texts = [cell.get_text(strip=True) for cell in cells[:4]]
-
-            room_found = False
-            doctor_found = False
-            
-            if room:
-                room_cell = cell_texts[0].replace("號", "").replace(" ", "")
-                room_param = room.replace("號", "").replace(" ", "")
-                room_found = room_cell == room_param
-
-            if target_doctor and len(cell_texts) > 1:
-                # 精確匹配醫生名字（不使用 in）
-                doctor_found = cell_texts[1] == target_doctor
-
-            # 如果精確匹配失敗，但有多個搜索條件，不進行備選搜索
-            # 這避免了誤匹配（例如搜索 "眼1" 不應該匹配 "眼10"）
-            if room and target_doctor:
-                # 兩個條件都要符合
-                if not (room_found and doctor_found):
-                    continue
-            elif room and not room_found:
-                # 僅搜索診間
-                continue
-            elif target_doctor and not doctor_found:
-                # 僅搜索醫生
-                continue
-
-            log.debug(f"[{self.HOSPITAL_CODE}] Found potential match: room_found={room_found}, doctor_found={doctor_found}")
-
-            # ───────────────────────────────────────────────────────
-            # 檢查 2: 非看診時段、休診等狀態
-            # ───────────────────────────────────────────────────────
+            # ✅ 檢查非看診時段
             if "非看診時段" in row_text or "休診" in row_text:
                 log.debug(f"[{self.HOSPITAL_CODE}] 非看診時段 detected")
                 return ClinicProgress(
@@ -549,64 +515,79 @@ class CGHHsinchuScraper(BaseScraper):
                     status="未開診"
                 )
 
-            # ───────────────────────────────────────────────────────
-            # 檢查 3: 嘗試標準表格解析
-            # ───────────────────────────────────────────────────────
-            # ✅ 問題2修正：改進數值提取邏輯
-            if len(cells) >= 4:  # 改為 >= 4，確保有足夠的欄位
-                # 試圖從表格中提取數值欄位
-                numeric_values = []
-                
-                # ✅ 問題2修正：正確遍歷從第3列開始的欄位（index 2 開始，跳過診間和醫生）
-                for i in range(2, len(cells)):
-                    cell_text = cells[i].get_text(strip=True)
+            # ✅ 嘗試匹配診間和醫生
+            cell_texts = [cell.get_text(strip=True) for cell in cells]
 
-                    # ✅ 問題2修正：安全檢查 "無" 字狀態
+            room_found = False
+            doctor_found = False
+
+            if room and len(cell_texts) > 0:
+                room_cell = cell_texts[0].replace("號", "").replace(" ", "")
+                room_param = room.replace("號", "").replace(" ", "")
+                room_found = room_cell == room_param
+
+            if target_doctor and len(cell_texts) > 1:
+                doctor_found = cell_texts[1] == target_doctor
+
+            # 匹配邏輯
+            if room and target_doctor:
+                if not (room_found and doctor_found):
+                    continue
+            elif room and not room_found:
+                continue
+            elif target_doctor and not doctor_found:
+                continue
+
+            log.debug(f"[{self.HOSPITAL_CODE}] Found potential match: room_found={room_found}, doctor_found={doctor_found}")
+
+            # ✅ 提取當前號碼和等候號碼
+            # 從匹配的行開始，第3列及以後都是號碼
+            current_number = None
+            all_queue_numbers = []
+
+            if len(cells) >= 3:
+                for i in range(2, len(cells)):
+                    cell_text = cell_texts[i] if i < len(cell_texts) else ""
+
+                    # 跳過特殊文本
                     if cell_text in ("無", "無看診", "N/A", "-", ""):
                         continue
                     
-                    # ✅ 問題2修正：使用改進的數值解析函數
-                    val = _parse_int(cell_text)
-                    if val is not None:
-                        numeric_values.append(val)
+                    # 提取號碼
+                    numbers = re.findall(r"\d+", cell_text)
+                    for num_str in numbers:
+                        try:
+                            num = int(num_str)
+                            all_queue_numbers.append(num)
+                        except ValueError:
+                            continue
 
-                # ✅ 問題2修正：改進數值分配邏輯，正確識別當前號和尚未人數
-                if numeric_values:
-                    registered_count = None
-                    waiting_count = None
-                    current_number = None
-                    total_quota = None
+                # ✅ 解析號碼邏輯
+                if all_queue_numbers:
+                    # 排序並去重
+                    all_queue_numbers = sorted(set(all_queue_numbers))
+                    log.debug(f"[{self.HOSPITAL_CODE}] Extracted queue numbers: {all_queue_numbers}")
 
-                    # 根據提取到的數值個數進行不同的解析
-                    # 預期結構（從左至右）：當前號 | 尚未就診人數
-                    if len(numeric_values) >= 2:
-                        # ✅ 問題2修正：第一個數字是當前號，第二個是尚未就診人數（或範圍的最大值）
-                        current_number = numeric_values[0]
-                        waiting_count = numeric_values[-1]  # 若為範圍如 "1-30"，取最大值 30
-                    elif len(numeric_values) == 1:
-                        # 只有一個數字，通常是當前號
-                        current_number = numeric_values[0]
+                    # 第一個號碼通常是當前看診號
+                    current_number = all_queue_numbers[0]
 
-                    clinic_queue_details = []
-                    if registered_count is not None:
-                        clinic_queue_details.append({"registered_count": registered_count})
-                    if waiting_count is not None:
-                        clinic_queue_details.append({"waiting_count": waiting_count})
+                    # 計算等候人數：最後一個號碼減去當前號
+                    waiting_count = all_queue_numbers[-1] - current_number if len(all_queue_numbers) > 1 else 0
 
                     log.info(
-                        f"[{self.HOSPITAL_CODE}] Clinic progress found - room={room}, doctor={target_doctor}, "
-                        f"current={current_number}, total={total_quota}, registered={registered_count}"
+                        f"[{self.HOSPITAL_CODE}] Clinic progress - room={room}, doctor={target_doctor}, "
+                        f"current={current_number}, waiting={waiting_count}, queue={all_queue_numbers[:5]}..."
                     )
 
                     return ClinicProgress(
                         clinic_room=room,
                         session_type=self.PERIOD_MAP.get(period, "上午"),
-                        current_number=current_number or 0,
-                        total_quota=total_quota,
-                        registered_count=registered_count,
+                        current_number=current_number,
+                        total_quota=all_queue_numbers[-1] if all_queue_numbers else None,
+                        registered_count=len(all_queue_numbers),
                         waiting_list=[],
-                        clinic_queue_details=clinic_queue_details,
-                        status="看診中" if current_number is not None else None
+                        clinic_queue_details=[{"queue_numbers": all_queue_numbers}],
+                        status="看診中"
                     )
 
         log.debug(f"[{self.HOSPITAL_CODE}] No data found for room={room}, doctor={target_doctor}")
