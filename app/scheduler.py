@@ -279,10 +279,13 @@ async def _scrape_hospital_tracked_data(scraper):
             logger.warning(f"[Scheduler] {scraper.HOSPITAL_CODE} hospital not found in DB.")
             return
 
-        # Fetch all active tracking subscriptions for this hospital
+        # Fetch ONLY active tracking subscriptions for today onwards
+        today_str = str(date.today())
         track_res = await asyncio.to_thread(
             lambda: supabase.table("tracking_subscriptions")
             .select("department_id, doctor_id")
+            .eq("is_active", True)
+            .gte("session_date", today_str)  # Only track today and future dates
             .execute()
         )
         tracks = track_res.data or []

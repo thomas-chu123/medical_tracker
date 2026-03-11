@@ -123,12 +123,7 @@ def calculate_eta(
             
         estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
         
-        # 防止 ETA 超過診間結束時間
-        if estimated_eta > schedule_end:
-            # 如果計算出的 ETA 已超過診間結束時間，表示已結束或過號
-            return "已結束"
-        
-        
+        # 允許 ETA 超過表定診間結束時間，因為熱門醫師經常會超時看診
         return estimated_eta.strftime("%H:%M")
     except Exception:
         return None
@@ -231,6 +226,57 @@ async def list_doctors(department_id: str):
         .execute()
     )
     return result.data
+
+
+@router.get("/departments/{department_id}/appointment-snapshots")
+async def get_department_appointment_snapshots(
+    department_id: str,
+    days: int = Query(default=30, ge=1, le=90),
+):
+    """
+    回傳該科室未來排班的輕量索引資料（doctor_id, session_date, session_type）。
+    前端用此資料判斷哪個醫師在選定日期/時段有排班，以實作篩選功能。
+    """
+    supabase = get_supabase()
+    today_str = today_tw().isoformat()
+    end_date = (today_tw() + timedelta(days=days)).isoformat()
+
+    # 透過 doctors 表取得此 department_id 下的所有 doctor_id
+    doctors_res = (
+        supabase.table("doctors")
+        .select("id")
+        .eq("department_id", department_id)
+        .eq("is_active", True)
+        .execute()
+    )
+    doctor_ids = [d["id"] for d in (doctors_res.data or [])]
+    if not doctor_ids:
+        return []
+
+    # 查詢這些醫師的排班快照索引
+    result = (
+        supabase.table("appointment_snapshots")
+        .select("doctor_id, session_date, session_type")
+        .in_("doctor_id", doctor_ids)
+        .gte("session_date", today_str)
+        .lte("session_date", end_date)
+        .order("session_date", desc=False)
+        .execute()
+    )
+
+    # 去重：每個 (doctor_id, session_date, session_type) 只保留一筆
+    seen = set()
+    index = []
+    for row in result.data or []:
+        key = (row["doctor_id"], row["session_date"], row.get("session_type") or "")
+        if key not in seen:
+            seen.add(key)
+            index.append({
+                "doctor_id": row["doctor_id"],
+                "session_date": row["session_date"],
+                "session_type": row.get("session_type"),
+            })
+    return index
 
 
 @router.get("/hospitals/{hospital_id}/doctors", response_model=list[DoctorOut])

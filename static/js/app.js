@@ -30,6 +30,12 @@ const AppState = {
         allDoctors: [],
         doctorSearchTimer: null,
         departmentData: { depts: [], hospName: '', cat: '' },
+        // 日期 / 時段篩選
+        scheduleIndex: [],           // 排班快照輕量索引 [{doctor_id, session_date, session_type}]
+        availableDates: [],          // 此科室可用的日期清單
+        availableSessionTypes: [],   // 此科室可用的時段清單
+        selectedDates: [],           // 使用者選定的日期
+        selectedSessionTypes: [],    // 使用者選定的時段
     },
 
     // Add Tracking Stepper
@@ -81,6 +87,7 @@ let _selectedDashRegion = ''; // Selected region filter for dashboard
 let _allDashboardSubs = [];
 let _notificationLogsBySubscription = {}; // Map: sub_id -> {threshold: [logs]}
 let _dashboardRefreshTimer = null; // Timer for dashboard auto-refresh
+
 
 // ── Utility: API fetch ────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
@@ -771,9 +778,13 @@ function renderClinicCard(sub, snap) {
     // 3. Status & Progress
     const remaining = sub.remaining ?? '—';
     // If we have no current number and no status from the scraper, it's likely "Not Started/Not Open"
-    const status = sub.status || (current === '—' ? '未開診' : '看診中');
+    let status = sub.status || (current === '—' ? '未開診' : '看診中');
+    // Align status if the backend ETA logic explicitly determined it has ended
+    if (status === '未開診' && eta === '已結束') {
+        status = '已結束';
+    }
     const isNum = typeof remaining === 'number';
-    const isFinished = status === '看診完畢' || status === '已關診';
+    const isFinished = status === '看診完畢' || status === '已關診' || status === '已結束';
 
     const pct = isNum && total > 0 && typeof total === 'number' ? Math.round((1 - remaining / total) * 100) : 0;
     const barClass = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'safe';
@@ -1370,8 +1381,17 @@ async function hsSelectDept(deptId, deptName, hospName, cat) {
     const parts = cat ? [hospName, cat, deptName] : [hospName, deptName];
     _hsBreadcrumb(parts);
     document.getElementById('doctors-grid').innerHTML = '<div class="spinner"></div>';
+
+    // 獲取科室的醫生
     const docs = await apiFetch(`/api/departments/${deptId}/doctors`) || [];
     allDoctors = docs;
+
+    // 載入該科室的可用日期與時段
+    await loadAvailableDatesAndSessions(deptId);
+
+    // 顯示日期與時段篩選
+    renderDateSessionFilters();
+
     renderDoctorCards(docs);
 }
 
@@ -1425,6 +1445,177 @@ function renderDoctorCards(doctors) {
       </div>
     </div>`).join('');
 }
+
+/**
+ * 從 appointment_snapshots 中提取該科室的可用日期與時段
+ * 限制在未來 30 天內
+ */
+async function loadAvailableDatesAndSessions(deptId) {
+    // 重置快照索引
+    AppState.hospitalSearch.scheduleIndex = [];
+
+    try {
+        // 從 API 獲取該科室的排班快照索引（doctor_id, session_date, session_type）
+        const snapshots = await apiFetch(`/api/departments/${deptId}/appointment-snapshots?days=30`).catch(() => null);
+
+        if (snapshots && snapshots.length) {
+            // 儲存完整索引供篩選使用
+            AppState.hospitalSearch.scheduleIndex = snapshots;
+
+            // 提取唯一的日期和時段
+            const dates = [...new Set(snapshots.map(s => s.session_date).filter(Boolean))].sort();
+            const sessionTypes = [...new Set(snapshots.map(s => s.session_type).filter(Boolean))];
+
+            // 排序時段順序：上午 < 下午 < 晚上
+            const sessionOrder = { '上午': 1, '下午': 2, '晚上': 3 };
+            sessionTypes.sort((a, b) => (sessionOrder[a] ?? 99) - (sessionOrder[b] ?? 99));
+
+            AppState.hospitalSearch.availableDates = dates;
+            AppState.hospitalSearch.availableSessionTypes = sessionTypes;
+            return;
+        }
+
+        // 如果無排班資料，隱藏篩選區塊（不顯示無意義的預設日期）
+        console.log('[Hospital Search] No snapshot data available for this department');
+        AppState.hospitalSearch.availableDates = [];
+        AppState.hospitalSearch.availableSessionTypes = [];
+
+    } catch (e) {
+        console.error('[Hospital Search] Error loading available dates/sessions:', e);
+        AppState.hospitalSearch.availableDates = [];
+        AppState.hospitalSearch.availableSessionTypes = [];
+    }
+}
+
+/**
+ * 渲染日期與時段篩選下拉選單
+ */
+function renderDateSessionFilters() {
+    const wrap = document.getElementById('hs-date-session-wrap');
+    const dateSelect = document.getElementById('hs-date-select');
+    const sessionSelect = document.getElementById('hs-session-select');
+
+    if (!wrap || !dateSelect || !sessionSelect) return;
+
+    // 如果沒有可用的日期/時段，隱藏篩選區塊
+    if (!AppState.hospitalSearch.availableDates.length && !AppState.hospitalSearch.availableSessionTypes.length) {
+        wrap.style.display = 'none';
+        return;
+    }
+
+    // 清除之前的選擇狀態
+    AppState.hospitalSearch.selectedDates = [];
+    AppState.hospitalSearch.selectedSessionTypes = [];
+
+    // 填充日期下拉選單
+    dateSelect.innerHTML = '<option value="">-- 選擇日期 --</option>' +
+        AppState.hospitalSearch.availableDates.map(date => {
+            const label = new Date(date + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+            return `<option value="${date}">${label}</option>`;
+        }).join('');
+
+    // 填充時段下拉選單
+    sessionSelect.innerHTML = '<option value="">-- 選擇診次 --</option>' +
+        AppState.hospitalSearch.availableSessionTypes.map(sessionType => {
+            return `<option value="${sessionType}">${sessionType}</option>`;
+        }).join('');
+
+    wrap.style.display = 'block';
+}
+
+/**
+ * 日期下拉選單變化時的回調
+ */
+function onDateSelectChange() {
+    const dateSelect = document.getElementById('hs-date-select');
+    const selectedDate = dateSelect.value;
+
+    if (selectedDate) {
+        AppState.hospitalSearch.selectedDates = [selectedDate];
+    } else {
+        AppState.hospitalSearch.selectedDates = [];
+    }
+
+    applyDateSessionFilters(allDoctors);
+}
+
+/**
+ * 時段下拉選單變化時的回調
+ */
+function onSessionSelectChange() {
+    const sessionSelect = document.getElementById('hs-session-select');
+    const selectedSession = sessionSelect.value;
+
+    if (selectedSession) {
+        AppState.hospitalSearch.selectedSessionTypes = [selectedSession];
+    } else {
+        AppState.hospitalSearch.selectedSessionTypes = [];
+    }
+
+    applyDateSessionFilters(allDoctors);
+}
+
+/**
+ * 清除日期與時段篩選
+ */
+function resetDateSessionFilter() {
+    AppState.hospitalSearch.selectedDates = [];
+    AppState.hospitalSearch.selectedSessionTypes = [];
+
+    // 重置下拉選單
+    const dateSelect = document.getElementById('hs-date-select');
+    const sessionSelect = document.getElementById('hs-session-select');
+    if (dateSelect) dateSelect.value = '';
+    if (sessionSelect) sessionSelect.value = '';
+
+    renderDateSessionFilters();
+    renderDoctorCards(allDoctors);
+}
+
+/**
+ * 根據選定的日期和時段篩選醫生列表
+ * 使用 scheduleIndex（排班快照索引）精確過濾有排班的醫師
+ */
+function applyDateSessionFilters(doctors) {
+    const { selectedDates, selectedSessionTypes, scheduleIndex } = AppState.hospitalSearch;
+
+    // 如果沒有選擇任何篩選條件，直接顯示所有醫生
+    if (!selectedDates.length && !selectedSessionTypes.length) {
+        renderDoctorCards(doctors);
+        return;
+    }
+
+    // 若無排班索引資料（此科室無快照），直接顯示所有醫生
+    if (!scheduleIndex || !scheduleIndex.length) {
+        renderDoctorCards(doctors);
+        return;
+    }
+
+    // 從排班索引中找出符合條件的 doctor_id 集合
+    const matchingDoctorIds = new Set(
+        scheduleIndex
+            .filter(s => {
+                const dateMatch = !selectedDates.length || selectedDates.includes(s.session_date);
+                const sessionMatch = !selectedSessionTypes.length || selectedSessionTypes.includes(s.session_type);
+                return dateMatch && sessionMatch;
+            })
+            .map(s => s.doctor_id)
+    );
+
+    // 只保留有符合排班的醫師
+    const filtered = doctors.filter(d => matchingDoctorIds.has(d.id));
+
+    if (!filtered.length) {
+        const grid = document.getElementById('doctors-grid');
+        const dateLabel = selectedDates[0] ? new Date(selectedDates[0] + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' }) : '';
+        const sessionLabel = selectedSessionTypes[0] || '';
+        grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><p>此條件下（${[dateLabel, sessionLabel].filter(Boolean).join(' ')}）無醫師看診</p></div>`;
+        return;
+    }
+
+    renderDoctorCards(filtered);
+}
+
 
 // ── Add Tracking Stepper ───────────────────────────────────────
 async function loadStepperHospitals() {
@@ -2071,7 +2262,7 @@ function renderTrackingCard(sub, isExpired = false) {
         <button class="btn btn-secondary btn-sm" onclick="toggleSubActive('${sub.id}', ${!sub.is_active})">
           ${sub.is_active ? '暫停' : '啟用'}
         </button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSub('${sub.id}')">刪除</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSub(event, '${sub.id}')">刪除</button>
       </div>`}
     </div>
     <div class="threshold-pills">
@@ -2095,8 +2286,12 @@ async function toggleSubActive(subId, isActive) {
     }
 }
 
-async function deleteSub(subId) {
-    if (!confirm('確定要刪除這筆追蹤紀錄嗎？')) return;
+async function deleteSub(event, subId) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    if (!confirm('確定要刪除此追蹤嗎？')) return;
     try {
         await apiFetch(`/api/tracking/${subId}`, { method: 'DELETE' });
         toast('已刪除紀錄', 'success');

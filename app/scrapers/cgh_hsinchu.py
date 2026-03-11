@@ -462,25 +462,25 @@ class CGHHsinchuScraper(BaseScraper):
         """
         Query real-time clinic progress from RealTimeTable.jsp.
         
-        ✅ 修正版本：正確解析國泰表格結構
-        國泰的表格結構為：
-        - 目前看診序號：14
-        - 尚未就診號人數：1, 3, 6, 8, 10, 12, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
-
-        表格通常包含以下行：
-        1. 標籤行：包含"目前看診序號"和"尚未就診號人數"
-        2. 數據行：診間 | 醫生 | [當前號] | [等候號碼列表...]
-        3. 非看診時段提示
+        ✅ 修正版本：建立 Session 並傳送正確參數 (_sec)
         """
         url = f"{self.BASE_URL}/tw/reg/RealTimeTable.jsp"
 
+        # Step 1: GET to establish session cookies
+        try:
+            await self._get(url)
+        except Exception as e:
+            log.warning(f"[{self.HOSPITAL_CODE}] Error establishing session for progress: {e}")
+
+        # Step 2: POST with full parameters
         data = {
             "hosarea": self.AREA,
             "sec": period,
+            "_sec": period,  # Hidden field found in HTML
             "room": room,
         }
         extra_headers = {
-            "Referer": f"{self.BASE_URL}/tw/reg/RealTimeTable.jsp",
+            "Referer": url,
             "Origin": self.BASE_URL,
             "Content-Type": "application/x-www-form-urlencoded",
         }
@@ -494,114 +494,97 @@ class CGHHsinchuScraper(BaseScraper):
         target_doctor = kwargs.get("doctor_name", "")
         rows = soup.find_all("tr")
 
-        log.debug(f"[{self.HOSPITAL_CODE}] fetch_clinic_progress searching for room={room}, doctor={target_doctor}, total rows={len(rows)}")
+        # 檢查頁面是否包含目標醫生
+        if target_doctor and target_doctor not in soup.get_text():
+            log.warning(f"[{self.HOSPITAL_CODE}] Doctor {target_doctor} not found in the response page.")
+            return None
 
-        # 遍歷所有行尋找數據行
+        current_number = 0
+        all_queue_numbers = []
+        found_active_data = False
+
+        # 遍歷所有行尋找數據
         for row in rows:
-            cells = row.find_all("td")
-            if len(cells) < 2:
-                continue
-
             row_text = row.get_text(strip=True)
-
-            # ✅ 檢查各種診間狀態
-            if "非看診時段" in row_text or "休診" in row_text:
-                log.debug(f"[{self.HOSPITAL_CODE}] 非看診時段 detected")
-                return ClinicProgress(
-                    clinic_room=room,
-                    session_type=self.PERIOD_MAP.get(period, "上午"),
-                    current_number=0,
-                    total_quota=None,
-                    status="未開診"
-                )
-
-            # ✅ 檢查已結束看診
-            if "已結束看診" in row_text:
-                log.debug(f"[{self.HOSPITAL_CODE}] 已結束看診 detected")
-                return ClinicProgress(
-                    clinic_room=room,
-                    session_type=self.PERIOD_MAP.get(period, "上午"),
-                    current_number=0,
-                    total_quota=None,
-                    status="已結束"
-                )
-
-            # ✅ 嘗試匹配診間和醫生
-            cell_texts = [cell.get_text(strip=True) for cell in cells]
-
-            room_found = False
-            doctor_found = False
-
-            if room and len(cell_texts) > 0:
-                room_cell = cell_texts[0].replace("號", "").replace(" ", "")
-                room_param = room.replace("號", "").replace(" ", "")
-                room_found = room_cell == room_param
-
-            if target_doctor and len(cell_texts) > 1:
-                doctor_found = cell_texts[1] == target_doctor
-
-            # 匹配邏輯
-            if room and target_doctor:
-                if not (room_found and doctor_found):
-                    continue
-            elif room and not room_found:
-                continue
-            elif target_doctor and not doctor_found:
+            if not row_text:
                 continue
 
-            log.debug(f"[{self.HOSPITAL_CODE}] Found potential match: room_found={room_found}, doctor_found={doctor_found}")
+            # ✅ 1. 提取目前看診序號
+            if "目前看診序號：" in row_text:
+                match_current = re.search(r"目前看診序號：(\d+)", row_text)
+                if match_current:
+                    current_number = int(match_current.group(1))
+                    found_active_data = True
+                    log.debug(f"[{self.HOSPITAL_CODE}] Found current_number: {current_number}")
 
-            # ✅ 提取當前號碼和等候號碼
-            # 從匹配的行開始，第3列及以後都是號碼
-            current_number = None
-            all_queue_numbers = []
+            # ✅ 2. 提取尚未就診號碼
+            # 如果這行包含 "尚未就診病人號碼："，或者這行本身就是一堆數字
+            if "尚未就診病人號碼：" in row_text or (found_active_data and not all_queue_numbers):
+                cells = row.find_all("td")
+                for cell in cells:
+                    ct = cell.get_text(strip=True)
+                    # 國泰的號碼通常是單獨的 TD
+                    if ct.isdigit() and len(ct) <= 3:
+                        all_queue_numbers.append(int(ct))
+                
+                # 如果這行是 "尚未就診" 但 TD 沒東西，數字可能在下一行或是嵌套表格中
+                if "尚未就診病人號碼：" in row_text and not all_queue_numbers:
+                    # 嘗試在當前 row 內找所有數字
+                    nums = re.findall(r"\d+", row_text)
+                    # 排除掉 "目前看診序號" 的數字
+                    for n in nums:
+                        val = int(n)
+                        if val != current_number and val < 500: # 假設號碼不會太大
+                            all_queue_numbers.append(val)
 
-            if len(cells) >= 3:
-                for i in range(2, len(cells)):
-                    cell_text = cell_texts[i] if i < len(cell_texts) else ""
+        if found_active_data:
+            all_queue_numbers = sorted(list(set(all_queue_numbers)))
+            registered_count = len(all_queue_numbers)
+            # 如果 queue 裡有東西，總號至少是最後一個；否則就是目前號碼
+            total_quota = all_queue_numbers[-1] if all_queue_numbers else current_number
 
-                    # 跳過特殊文本
-                    if cell_text in ("無", "無看診", "N/A", "-", ""):
-                        continue
-                    
-                    # 提取號碼
-                    numbers = re.findall(r"\d+", cell_text)
-                    for num_str in numbers:
-                        try:
-                            num = int(num_str)
-                            all_queue_numbers.append(num)
-                        except ValueError:
-                            continue
+            log.info(
+                f"[{self.HOSPITAL_CODE}] Clinic progress SUCCESS - room={room}, doctor={target_doctor}, "
+                f"current={current_number}, registered={registered_count}"
+            )
 
-                # ✅ 解析號碼邏輯
-                if all_queue_numbers:
-                    # 排序並去重
-                    all_queue_numbers = sorted(set(all_queue_numbers))
-                    log.debug(f"[{self.HOSPITAL_CODE}] Extracted queue numbers: {all_queue_numbers}")
+            return ClinicProgress(
+                clinic_room=room,
+                session_type=self.PERIOD_MAP.get(period, "上午"),
+                current_number=current_number,
+                total_quota=total_quota,
+                registered_count=registered_count,
+                waiting_list=[],
+                clinic_queue_details=[{"queue_numbers": all_queue_numbers}],
+                status="看診中"
+            )
 
-                    # 第一個號碼通常是當前看診號
-                    current_number = all_queue_numbers[0]
+        # ✅ 3. 如果沒找到 Active Data，檢查狀態
+        page_text = soup.get_text(strip=True)
+        
+        # 檢查是否已結束
+        if "已結束看診" in page_text:
+            log.debug(f"[{self.HOSPITAL_CODE}] Clinic ended for room={room}, doctor={target_doctor}")
+            return ClinicProgress(
+                clinic_room=room,
+                session_type=self.PERIOD_MAP.get(period, "上午"),
+                current_number=0,
+                total_quota=None,
+                status="已結束"
+            )
 
-                    # 計算等候人數：最後一個號碼減去當前號
-                    waiting_count = all_queue_numbers[-1] - current_number if len(all_queue_numbers) > 1 else 0
+        # 檢查其他未開診狀態
+        if any(kw in page_text for kw in ["非看診時段", "休診", "不提供看診進度"]):
+            log.debug(f"[{self.HOSPITAL_CODE}] No active data, but off-session keywords found.")
+            return ClinicProgress(
+                clinic_room=room,
+                session_type=self.PERIOD_MAP.get(period, "上午"),
+                current_number=0,
+                total_quota=None,
+                status="未開診"
+            )
 
-                    log.info(
-                        f"[{self.HOSPITAL_CODE}] Clinic progress - room={room}, doctor={target_doctor}, "
-                        f"current={current_number}, waiting={waiting_count}, queue={all_queue_numbers[:5]}..."
-                    )
-
-                    return ClinicProgress(
-                        clinic_room=room,
-                        session_type=self.PERIOD_MAP.get(period, "上午"),
-                        current_number=current_number,
-                        total_quota=all_queue_numbers[-1] if all_queue_numbers else None,
-                        registered_count=len(all_queue_numbers),
-                        waiting_list=[],
-                        clinic_queue_details=[{"queue_numbers": all_queue_numbers}],
-                        status="看診中"
-                    )
-
-        log.debug(f"[{self.HOSPITAL_CODE}] No data found for room={room}, doctor={target_doctor}")
+        log.debug(f"[{self.HOSPITAL_CODE}] No progress data found for room={room}, doctor={target_doctor}")
         return None
 
     def calculate_remaining_count(
