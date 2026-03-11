@@ -45,7 +45,19 @@ def chrome_driver(selenium_config):
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
     
-    service = Service(ChromeDriverManager().install())
+    driver_path = ChromeDriverManager().install()
+    
+    # Bug fix: ChromeDriverManager might return THIRD_PARTY_NOTICES.chromedriver
+    # We want EXACTLY 'chromedriver' (binary)
+    if os.path.basename(driver_path) != "chromedriver" or not os.access(driver_path, os.X_OK):
+        # Look for the actual binary in the same directory
+        dir_path = os.path.dirname(driver_path)
+        potential_binary = os.path.join(dir_path, "chromedriver")
+        if os.path.exists(potential_binary):
+            driver_path = potential_binary
+            logger.info(f"📍 Manually corrected driver path to: {driver_path}")
+            
+    service = Service(executable_path=driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.implicitly_wait(selenium_config["implicit_wait"])
     

@@ -29,7 +29,8 @@ TEST_EMAIL = os.getenv('TEST_EMAIL', 'test_e2e@example.com')
 TEST_PASSWORD = os.getenv('TEST_PASSWORD', 'TestPassword123')
 
 
-@pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/e2e/test_ui_e2e_minimal.py -v -s")
+
+# @pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/e2e/test_ui_e2e_minimal.py -v -s")
 class TestE2EMinimal:
     """最小端到端測試套件"""
     
@@ -136,7 +137,7 @@ class TestE2EMinimal:
             
             # Check if status info is displayed
             try:
-                current_number = browser.driver.find_element(By.ID, "currentNumber")
+                current_number = browser.driver.find_element(By.ID, "current-number")
                 logger.info(f"✅ Doctor status displayed: {current_number.text}")
                 browser.screenshot("05_doctor_status")
             except:
@@ -158,16 +159,18 @@ class TestE2EMinimal:
         )
         
         try:
-            add_btn = browser.driver.find_element(By.ID, "addTrackingBtn")
+            add_btn = browser.driver.find_element(By.ID, "fab-add-tracking")
             add_btn.click()
             
             # Check modal opens
-            modal = wait_driver.until(
-                visibility_of_element_located((By.ID, "quickTrackModal"))
+            wait_driver.until(
+                visibility_of_element_located((By.ID, "quick-track-modal"))
             )
-            assert modal.is_displayed()
-            logger.info("✅ Quick track modal opens")
+            logger.info("✅ Quick track modal opened")
             browser.screenshot("06_quick_track_modal")
+            
+            # Close modal
+            browser.driver.find_element(By.CSS_SELECTOR, "#quick-track-modal .modal-close").click()
         except Exception as e:
             logger.warning(f"⚠️ Quick track modal test skipped: {e}")
     
@@ -245,7 +248,8 @@ class TestE2EMinimal:
         logger.info(f"   Successful: {len(successful)}/{len(email_logs.data)}")
 
 
-@pytest.mark.skip(reason="Requires running server - run manually with: pytest -v -s")
+
+# @pytest.mark.skip(reason="Requires running server - run manually with: pytest -v -s")
 class TestUIManualOnly:
     """需要手動運行的測試（需要運行中的服務器）"""
     
@@ -266,8 +270,10 @@ class TestUIManualOnly:
         logger.info("Step 2: Logged in successfully")
         browser.screenshot("flow_02_after_login")
         
-        # 3. View doctor list
-        doctor_rows = browser.driver.find_elements(By.CLASS_NAME, "doctor-row")
+        # 3. View doctor list (clinic-card)
+        doctor_rows = wait_driver.until(
+            lambda driver: driver.find_elements(By.CLASS_NAME, "clinic-card")
+        )
         logger.info(f"Step 3: Found {len(doctor_rows)} doctors")
         
         # 4. Click on first doctor to view status
@@ -276,10 +282,24 @@ class TestUIManualOnly:
             time.sleep(1)
             logger.info("Step 4: Clicked on first doctor")
             browser.screenshot("flow_04_doctor_status")
+            # Close any open modals
+            try:
+                close_btn = browser.driver.find_element(By.CSS_SELECTOR, "#clinic-waiting-modal .modal-close")
+                if close_btn.is_displayed():
+                    close_btn.click()
+            except:
+                pass
+            try:
+                close_btn = browser.driver.find_element(By.CSS_SELECTOR, "#doctor-modal .modal-close")
+                if close_btn.is_displayed():
+                    close_btn.click()
+            except:
+                pass
+            time.sleep(1)
         
-        # 5. Navigate to tracking page
-        browser.navigate_to("/tracking")
-        wait_driver.until(visibility_of_element_located((By.ID, "trackingList")))
+        # 5. Navigate to tracking page via sidebar
+        browser.driver.find_element(By.CSS_SELECTOR, 'button[data-page="tracking"]').click()
+        wait_driver.until(visibility_of_element_located((By.ID, "tracking-list")))
         logger.info("Step 5: Navigated to tracking page")
         browser.screenshot("flow_05_tracking_list")
         

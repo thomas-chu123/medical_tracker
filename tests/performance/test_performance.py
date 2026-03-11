@@ -9,7 +9,8 @@ import httpx
 # Assuming local test environment for now
 BASE_URL = "http://localhost:8000"
 
-@pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/performance/test_performance.py -v")
+
+# @pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/performance/test_performance.py -v")
 @pytest.mark.asyncio
 async def test_global_stats_performance():
     """
@@ -30,7 +31,8 @@ async def test_global_stats_performance():
     # Even on a cache miss, it should return reasonably fast.
     assert duration < 5.0, f"Global stats API took too long: {duration:.2f} seconds"
 
-@pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/performance/test_performance.py -v")
+
+# @pytest.mark.skip(reason="Requires running server - run manually with: uvicorn app.main:app --reload && pytest tests/performance/test_performance.py -v")
 @pytest.mark.asyncio
 async def test_crowd_analysis_performance():
     """

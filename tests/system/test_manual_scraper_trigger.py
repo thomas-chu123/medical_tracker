@@ -395,7 +395,8 @@ def run_interactive():
 
 @allure.feature("Manual Testing")
 @allure.story("Trigger Master Data Scraper")
-@pytest.mark.skip(reason="Covered by test_manual_trigger_with_supabase option A — run directly if needed: pytest tests/test_manual_scraper_trigger.py::test_manual_trigger_master_data -v -s")
+
+# @pytest.mark.skip(reason="Covered by test_manual_trigger_with_supabase option A — run directly if needed: pytest tests/test_manual_scraper_trigger.py::test_manual_trigger_master_data -v -s")
 @pytest.mark.asyncio
 async def test_manual_trigger_master_data():
     """
