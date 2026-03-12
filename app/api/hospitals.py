@@ -16,14 +16,17 @@ def calculate_eta(
     waiting_list: list[int],
     target_number: Optional[int] = None,
     session_speed_mins: Optional[float] = None,
-    clinic_queue_details: Optional[list[dict]] = None
+    clinic_queue_details: Optional[list[dict]] = None,
+    estimated_wait_minutes: Optional[float] = None,
+    waiting_count: int = 0,
 ) -> Optional[str]:
     """
     Calculate Estimated Appointment Time (ETA).
     - If target_number is NOT provided: Returns the doctor's current estimated progress time.
     - If target_number IS provided: Returns the estimated time for that specific patient.
     
-    Formula: Clinic Start Time + (People Ahead) * 5 minutes.
+    If estimated_wait_minutes is provided (pre-computed by SpeedEstimator for TVGH/CGH),
+    it's used directly as the wait time, giving more accurate ETA than the formula fallback.
     """
     if not session_type or not session_date_str:
         return None
@@ -109,19 +112,26 @@ def calculate_eta(
                 if total_people_ahead < 0: total_people_ahead = 0
 
         # 4. Final ETA Calculation
-        # For future dates or today before clinic starts, use schedule_start as the baseline
+        # base_time is always 'now' (the current real-time), so ETA won't be stale
         if now < schedule_start:
             base_time = schedule_start
         else:
             # If the clinic has already started today, use now as the minimum baseline
             base_time = now
-        
-        if session_speed_mins and session_speed_mins > 0:
-            minutes_per_patient = session_speed_mins
+
+        # If estimated_wait_minutes is pre-computed (by SpeedEstimator for this doctor),
+        # use it directly instead of recalculating from total_people_ahead.
+        # This gives a more accurate ETA for TVGH/CGH (which provide waiting_count,
+        # not a per-number queue, so target-current may not equal people actually waiting).
+        if target_number and estimated_wait_minutes is not None:
+            estimated_eta = base_time + timedelta(minutes=float(estimated_wait_minutes))
         else:
-            minutes_per_patient = 3 if session_type == "晚上" else 5
-            
-        estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
+            if session_speed_mins and session_speed_mins > 0:
+                minutes_per_patient = session_speed_mins
+            else:
+                minutes_per_patient = 3 if session_type == "晚上" else 5
+                
+            estimated_eta = base_time + timedelta(minutes=total_people_ahead * minutes_per_patient)
         
         # 允許 ETA 超過表定診間結束時間，因為熱門醫師經常會超時看診
         return estimated_eta.strftime("%H:%M")

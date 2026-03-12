@@ -138,27 +138,32 @@ async def list_subscriptions(current_user: dict = Depends(get_current_user)):
         if s.get("waiting_list"):
             waiting_count = len(s["waiting_list"])
         elif s.get("clinic_queue_details"):
-            # HMMH fallback for waiting count
+            # TVGH/HMMH fallback for waiting count
             for detail in s["clinic_queue_details"]:
                 w = detail.get("waiting_count")
                 if w is not None:
                     waiting_count = w
                     break
         
+        # Derive session_speed_mins from estimated_wait_minutes if we have waiting_count
+        # This allows calculate_eta to use real doctor speed for ETA
         if waiting_count > 0 and s.get("estimated_wait_minutes") is not None:
             session_speed_mins = float(s["estimated_wait_minutes"]) / waiting_count
 
-        # Calculate ETA
+        # Calculate ETA using the current time as base (not stale snapshot time)
+        # If we have estimated_wait_minutes directly, use it for accuracy
         from app.api.hospitals import calculate_eta
         s["eta"] = calculate_eta(
             s["session_date"],
             s["session_type"],
             s.get("current_number"),
             s.get("current_registered"),
-            s.get("waiting_list"),
+            s.get("waiting_list") or [],
             target_number=s.get("appointment_number"),
             session_speed_mins=session_speed_mins,
-            clinic_queue_details=s.get("clinic_queue_details")
+            clinic_queue_details=s.get("clinic_queue_details"),
+            estimated_wait_minutes=s.get("estimated_wait_minutes"),
+            waiting_count=waiting_count,
         )
 
         # Clinic room fallback
