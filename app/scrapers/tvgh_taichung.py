@@ -242,8 +242,9 @@ class TVGHTaichungScraper(BaseScraper):
 
                         total_quota_str = tds[3].text.strip()
                         current_num_str = tds[4].text.strip()
-                        waiting_count_str = tds[6].text.strip()
-                        status_str = tds[7].text.strip()
+                        over_num_str = tds[5].text.strip()  # 過號看診號
+                        waiting_registered_str = tds[6].text.strip()  # 已報到待看診人次
+                        remark_str = tds[7].text.strip()  # td[7] = 備註/公告 (NOT status)
                         
                         current_number = None
                         if current_num_str.isdigit():
@@ -253,17 +254,25 @@ class TVGHTaichungScraper(BaseScraper):
                             match = re.search(r'\d+', current_num_str)
                             if match:
                                 current_number = int(match.group())
+                        
+                        # Determine actual clinic status from context
+                        # td[7] is a remark/notice column, not an actual status indicator
+                        if '停診' in remark_str or '停診' in current_num_str:
+                            actual_status = '停診'
+                        elif current_number is not None and current_number > 0:
+                            actual_status = '看診中'
+                        elif current_num_str == '' or current_num_str == '0':
+                            actual_status = '未開診'
+                        else:
+                            actual_status = '看診中'
                                 
-                        if current_number is None and '停診' in status_str:
-                            status_str = '停診'
-                            
                         total_quota = None
                         if total_quota_str.isdigit():
                             total_quota = int(total_quota_str)
                         
                         waiting_count = None
-                        if waiting_count_str.isdigit():
-                            waiting_count = int(waiting_count_str)
+                        if waiting_registered_str.isdigit():
+                            waiting_count = int(waiting_registered_str)
                         
                         # Map to expected fields in ClinicProgress
                         return ClinicProgress(
@@ -271,8 +280,8 @@ class TVGHTaichungScraper(BaseScraper):
                             session_type=target_period,
                             current_number=current_number or 0,
                             total_quota=total_quota,
-                            registered_count=total_quota, # Use total_quota as estimate if not specified
-                            status=status_str if status_str else "看診中",
+                            registered_count=total_quota, # Use total_quota as estimate
+                            status=actual_status,
                             clinic_queue_details=[{"waiting_count": waiting_count}] if waiting_count is not None else []
                         )
                 except Exception as e:

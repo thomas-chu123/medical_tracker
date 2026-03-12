@@ -501,7 +501,8 @@ class CGHHsinchuScraper(BaseScraper):
 
         current_number = 0
         all_queue_numbers = []
-        found_active_data = False
+        found_current_number_row = False  # 找到了「目前看診序號：」這行
+        found_waiting_list = False  # 找到了尚未就診號碼
 
         # 遍歷所有行尋找數據
         for row in rows:
@@ -511,15 +512,19 @@ class CGHHsinchuScraper(BaseScraper):
 
             # ✅ 1. 提取目前看診序號
             if "目前看診序號：" in row_text:
+                found_current_number_row = True  # 找到目前看診序號這行（即使是「無」也算）
                 match_current = re.search(r"目前看診序號：(\d+)", row_text)
                 if match_current:
                     current_number = int(match_current.group(1))
-                    found_active_data = True
                     log.debug(f"[{self.HOSPITAL_CODE}] Found current_number: {current_number}")
+                else:
+                    # 可能是「目前看診序號：無」，仍視為診間有資料但尚未叫號
+                    log.debug(f"[{self.HOSPITAL_CODE}] Found '目前看診序號：無' (clinic active but not started calling)")
+                    current_number = 0
 
             # ✅ 2. 提取尚未就診號碼
-            # 如果這行包含 "尚未就診病人號碼："，或者這行本身就是一堆數字
-            if "尚未就診病人號碼：" in row_text or (found_active_data and not all_queue_numbers):
+            if "尚未就診病人號碼：" in row_text:
+                found_waiting_list = True
                 cells = row.find_all("td")
                 for cell in cells:
                     ct = cell.get_text(strip=True)
@@ -527,15 +532,23 @@ class CGHHsinchuScraper(BaseScraper):
                     if ct.isdigit() and len(ct) <= 3:
                         all_queue_numbers.append(int(ct))
                 
-                # 如果這行是 "尚未就診" 但 TD 沒東西，數字可能在下一行或是嵌套表格中
-                if "尚未就診病人號碼：" in row_text and not all_queue_numbers:
-                    # 嘗試在當前 row 內找所有數字
+                # 如果 TD 沒有東西，嘗試在當前 row 內找所有數字
+                if not all_queue_numbers:
                     nums = re.findall(r"\d+", row_text)
-                    # 排除掉 "目前看診序號" 的數字
                     for n in nums:
                         val = int(n)
-                        if val != current_number and val < 500: # 假設號碼不會太大
+                        if val != current_number and val < 500:
                             all_queue_numbers.append(val)
+            
+            elif found_waiting_list and not all_queue_numbers:
+                # 嘗試從後續行取得 queue 號碼
+                cells = row.find_all("td")
+                for cell in cells:
+                    ct = cell.get_text(strip=True)
+                    if ct.isdigit() and len(ct) <= 3:
+                        all_queue_numbers.append(int(ct))
+
+        found_active_data = found_current_number_row
 
         if found_active_data:
             all_queue_numbers = sorted(list(set(all_queue_numbers)))

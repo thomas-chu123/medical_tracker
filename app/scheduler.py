@@ -388,11 +388,10 @@ async def _scrape_hospital_tracked_data(scraper):
                     lambda: supabase.table("doctors")
                     .select("id, name, doctor_no, department_id, departments(code)")
                     .in_("id", missing_ids)
-                    # Note: Do NOT filter by hospital_id here — tracked doctors may belong
-                    # to a different hospital entity (e.g. CMUH_HS doctor queried by CMUHScraper).
+                    .eq("hospital_id", hosp_id)  # MUST filter by hospital: only supplement doctors from THIS hospital
                     .execute()
                 )
-                logger.info(f"[Scheduler] DEBUG: Query returned {len(doc_info_res.data or [])} results")
+                logger.info(f"[Scheduler] DEBUG: Query returned {len(doc_info_res.data or [])} results (filtered by hospital_id={hosp_id})")
 
             except Exception as e:
                 logger.error(f"[Scheduler] Error querying doctors for supplement: {e}")
