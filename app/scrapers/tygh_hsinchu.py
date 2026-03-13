@@ -227,13 +227,15 @@ class TyghHsinchuScraper(BaseScraper):
 
         return slots
 
-    @staticmethod
-    def _normalize_session_type(text: str) -> str:
-        if "上" in text:
+    def _normalize_session_type(self, session_str: str) -> str:
+        """將東元醫院的時段字串標準化"""
+        if not session_str:
             return "上午"
-        if "下" in text:
+        if "早" in session_str or "上" in session_str or "1" in session_str:
+            return "上午"
+        if "午" in session_str or "下" in session_str or "2" in session_str:
             return "下午"
-        if "夜" in text or "晚" in text:
+        if "晚" in session_str or "3" in session_str:
             return "晚上"
         return "上午"
 
@@ -275,6 +277,7 @@ class TyghHsinchuScraper(BaseScraper):
             room_tag = item.find("h2", class_="room")
             name_tag = item.find("p", class_="name")
             number_tag = item.find("span", class_="number")
+            session_tag = item.select_one(".number-status-box span")
             
             if not room_tag or not name_tag or not number_tag:
                 continue
@@ -282,6 +285,21 @@ class TyghHsinchuScraper(BaseScraper):
             item_room = room_tag.get_text(strip=True)
             doc_name = name_tag.get_text(strip=True)
             number_str = number_tag.get_text(strip=True)
+            session_text = session_tag.get_text(strip=True) if session_tag else ""
+
+            # Session verification
+            item_period = "0"
+            if "上" in session_text or "早" in session_text:
+                item_period = "1"
+            elif "中" in session_text or "午" in session_text or "下" in session_text:
+                item_period = "2"
+            elif "晚" in session_text or "夜" in session_text:
+                item_period = "3"
+            
+            if period and item_period != period:
+                # Extra check: if session_text is "全日", might match any? 
+                # But TYGH usually specifies session.
+                continue
             
             kwargs_doctor = kwargs.get('doctor_name', '')
             

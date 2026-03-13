@@ -219,19 +219,23 @@ class HMMHScraper(BaseScraper):
         
         This ensures we use the correct Registration IDs with register_divide.php.
         """
-        # Attempt to get registration ID map
-        reg_map = await self._fetch_registration_id_map()
+        # Always start with the fallback mapping to ensure stable core departments
+        reg_map = DEPARTMENT_CODE_MAPPING.copy()
         
-        if not reg_map:
-            log.info("[HMMH] Registration ID map is empty, using fallback DEPARTMENT_CODE_MAPPING")
-            reg_map = DEPARTMENT_CODE_MAPPING
+        # Attempt to get dynamic registration ID map and update the base map
+        fetched_map = await self._fetch_registration_id_map()
+        if fetched_map:
+            log.info(f"[HMMH] Updating registration map with {len(fetched_map)} dynamically fetched entries.")
+            reg_map.update(fetched_map)
+        else:
+            log.info("[HMMH] Dynamic registration ID map is empty, relying solely on fallback DEPARTMENT_CODE_MAPPING")
 
         url = f"{self.BASE_URL}/progress.php"
         html = await self._get(url)
         soup = BeautifulSoup(html, "lxml")
 
         departments: list[DepartmentData] = []
-        seen_codes: set[str] = set()
+        dept_candidates: dict[str, list[tuple[str, str]]] = {}  # name -> [(code, full_name), ...]
 
         select = soup.find("select", {"name": "dept"})
         if not select:
@@ -241,7 +245,6 @@ class HMMHScraper(BaseScraper):
         options = select.find_all("option")
         log.info(f"[HMMH] Found {len(options)} options in dept select")
 
-        current_sort_order = 1
         for option in options:
             code = option.get("value", "").strip()
             full_name = option.get_text(strip=True)  # e.g. "內科部-胃腸肝膽科" or "其他科系-眼科"
@@ -250,12 +253,6 @@ class HMMHScraper(BaseScraper):
             if not code or not full_name or full_name == "請選擇":
                 continue
 
-            # Deduplicate: some codes appear multiple times (different special clinics share a dept code)
-            if code in seen_codes:
-                log.debug(f"[HMMH] Skipping duplicate dept code='{code}' for '{full_name}'")
-                continue
-            seen_codes.add(code)
-
             # Split "部門-科別" to extract just the department name
             if "-" in full_name:
                 category_prefix, dept_name = full_name.split("-", 1)
@@ -263,32 +260,52 @@ class HMMHScraper(BaseScraper):
                 category_prefix = ""
                 dept_name = full_name
 
-            # Try to get Registration ID from mapping
-            # Try both the cleaned name and full name
-            reg_code = reg_map.get(dept_name) or reg_map.get(full_name)
-            if reg_code and reg_code != code:
-                log.info(f"[HMMH] Mapping department '{dept_name}': Progress ID {code} -> Registration ID {reg_code}")
-                code = reg_code
-            else:
-                log.debug(f"[HMMH] No mapping found for '{dept_name}', using progress.php code: {code}")
-
             # Skip administrative/non-clinical departments
             skip_keywords = ["行政", "教學", "認證", "單位", "專案", "疫苗", "自費", "特別門診"]
             if any(keyword in full_name for keyword in skip_keywords):
                 log.debug(f"[HMMH] Skipping non-clinical dept: {full_name}")
                 continue
 
-            departments.append(
-                DepartmentData(
-                    name=dept_name,
-                    code=code,
-                    hospital_code=self.HOSPITAL_CODE,
-                    category=self._categorize_department(dept_name, category_prefix),
-                    sort_order=current_sort_order
+            # Collect candidates for each department name
+            if dept_name not in dept_candidates:
+                dept_candidates[dept_name] = []
+            dept_candidates[dept_name].append((code, full_name, category_prefix))
+
+        # Process each department, selecting the best code
+        current_sort_order = 1
+        for dept_name, candidates in dept_candidates.items():
+            # Select the best candidate: prefer one with registration mapping
+            best_code = None
+            best_full_name = None
+            best_category_prefix = None
+            
+            for code, full_name, category_prefix in candidates:
+                reg_code = reg_map.get(dept_name) or reg_map.get(full_name)
+                if reg_code:
+                    # Found a mapped code, use it
+                    best_code = reg_code
+                    best_full_name = full_name
+                    best_category_prefix = category_prefix
+                    log.info(f"[HMMH] Using mapped registration ID {reg_code} for '{dept_name}'")
+                    break
+                elif best_code is None:
+                    # No mapping found yet, use this as fallback
+                    best_code = code
+                    best_full_name = full_name
+                    best_category_prefix = category_prefix
+            
+            if best_code:
+                departments.append(
+                    DepartmentData(
+                        name=dept_name,
+                        code=best_code,
+                        hospital_code=self.HOSPITAL_CODE,
+                        category=self._categorize_department(dept_name, best_category_prefix),
+                        sort_order=current_sort_order
+                    )
                 )
-            )
-            log.debug(f"[HMMH] Added dept: code={code}, name={dept_name}")
-            current_sort_order += 1
+                log.debug(f"[HMMH] Added dept: code={best_code}, name={dept_name}")
+                current_sort_order += 1
 
         log.info(f"[HMMH] Found {len(departments)} departments after dedup")
         return departments

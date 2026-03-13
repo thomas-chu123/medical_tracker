@@ -93,9 +93,11 @@ class TVGHTaichungScraper(BaseScraper):
 
         docs = list(set(doctors))
         
+        tasks = [self._fetch_doctor_slots(drno, drname, dept_code) for drno, drname, dept_name in docs]
+        results = await asyncio.gather(*tasks)
+        
         slots = []
-        for drno, drname, dept_name in docs:
-            doc_slots = await self._fetch_doctor_slots(drno, drname, dept_code)
+        for doc_slots in results:
             slots.extend(doc_slots)
             
         return slots

@@ -598,6 +598,10 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
         # Determine status. Favor realtime progress status, fallback to slot status if it exists and is meaningful.
         final_status = status if status else (slot.status if slot.status else None)
         
+        # New protection: if we have a current_number but status is still None, it's likely "看診中"
+        if final_status is None and current_number and current_number > 0:
+            final_status = "看診中"
+        
         # Always set status so that previously falsely tagged statuses (like "已停診") get cleared if they are no longer true
         row["status"] = final_status
             

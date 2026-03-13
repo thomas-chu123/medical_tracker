@@ -1863,6 +1863,14 @@ let _qtSchedules = [];
 async function openQuickTrackModal(qtState) {
     _qtState = qtState;
 
+    // Use selected dates and session types if available
+    if (AppState.hospitalSearch.selectedDates && AppState.hospitalSearch.selectedDates.length > 0) {
+        _qtState.date = AppState.hospitalSearch.selectedDates[0];
+    }
+    if (AppState.hospitalSearch.selectedSessionTypes && AppState.hospitalSearch.selectedSessionTypes.length > 0) {
+        _qtState.session = AppState.hospitalSearch.selectedSessionTypes[0];
+    }
+
     // Update modal header and doctor info
     document.getElementById('quick-track-title').textContent = `快速追蹤 - ${escHtml(qtState.doctorName)}`;
     document.getElementById('qt-doctor-name').textContent = escHtml(qtState.doctorName);
@@ -1915,6 +1923,12 @@ async function loadQuickTrackSchedules() {
         }).join('');
     dateSel.disabled = false;
     dateSel.onchange = loadQuickTrackSessions;
+    
+    // Auto-select date if provided the state
+    if (_qtState.date && dates.includes(_qtState.date)) {
+        dateSel.value = _qtState.date;
+        loadQuickTrackSessions();
+    }
 }
 
 function loadQuickTrackSessions() {
@@ -1935,6 +1949,15 @@ function loadQuickTrackSessions() {
         sessionSel.innerHTML = unique.map(s => `<option value="${s}">${s}</option>`).join('');
     }
     sessionSel.disabled = false;
+
+    // Auto-select session if provided in the state
+    if (_qtState.session) {
+        // Find if the select actually contains this option
+        const options = Array.from(sessionSel.options).map(opt => opt.value);
+        if (options.includes(_qtState.session)) {
+            sessionSel.value = _qtState.session;
+        }
+    }
 }
 
 async function submitQuickTrack() {

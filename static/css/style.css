@@ -1168,6 +1168,27 @@ tbody td {
     padding: 24px 20px;
     max-height: 95vh;
   }
+
+  /* Fix for Hospital search controls overflow */
+  #hs-search-controls {
+    min-width: 100% !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Fix search bar max width on mobile */
+  .search-bar {
+    max-width: 100% !important;
+  }
+
+  /* Make topbar slightly more compact to fit user and logo */
+  .topbar {
+    padding: 0 12px;
+  }
+  
+  #user-name-display {
+    display: none;
+  }
 }
 
 /* ── Category Chips (horizontal scrollable) ── */

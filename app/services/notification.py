@@ -230,6 +230,11 @@ async def _process_subscription(supabase, sub: dict):
         if sub.get(notified_flag):
             continue  # Already notified for this threshold
         
+        if current_number == 0:
+            # Prevent notifications if the clinic hasn't officially started (Current Number is 0)
+            # This avoids "Ghost notifications" when the clinic progress isn't yet available.
+            continue
+
         if current_number > target_number:
             # If we missed the window entirely, mark as notified to stop trying, 
             # but don't send an alert for a past appointment.
