@@ -18,12 +18,18 @@ Scrapes:
 import asyncio
 import re
 import random
+import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -141,17 +147,80 @@ class HMMHScraper(BaseScraper):
         log.debug(f"[HMMH] Applying random delay: {delay:.2f}s")
         await asyncio.sleep(delay)
 
+    def _init_driver(self):
+        """Initialize a headless Chrome driver."""
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        # Bypass Cloudflare/WAF detection
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+        chrome_options.add_argument(f"user-agent={random.choice(RANDOM_USER_AGENTS)}")
+
+        try:
+            driver_path = ChromeDriverManager().install()
+            # Fix path if it points to the notice file instead of binary
+            if os.path.basename(driver_path) != "chromedriver" or not os.access(driver_path, os.X_OK):
+                dir_path = os.path.dirname(driver_path)
+                potential_binary = os.path.join(dir_path, "chromedriver")
+                if os.path.exists(potential_binary):
+                    driver_path = potential_binary
+            
+            service = Service(executable_path=driver_path)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            })
+            return driver
+        except Exception as e:
+            log.error(f"[HMMH] Failed to initialize Selenium driver: {e}")
+            raise
+
+    async def _get_selenium_content(self, url: str) -> str:
+        """Fetch page content using Selenium to bypass WAF."""
+        log.info(f"[HMMH] Fetching with Selenium: {url}")
+        return await asyncio.to_thread(self._sync_get_selenium_content, url)
+
+    def _sync_get_selenium_content(self, url: str) -> str:
+        driver = None
+        try:
+            driver = self._init_driver()
+            driver.get(url)
+            # Wait a bit for JS challenge to complete
+            time_to_wait = random.uniform(3.0, 6.0)
+            import time
+            time.sleep(time_to_wait)
+            
+            # Check if we were blocked anyway
+            if "blocked" in driver.title.lower() or "403 Forbidden" in driver.page_source:
+                log.warning(f"[HMMH] Selenium request blocked for {url}")
+            
+            return driver.page_source
+        finally:
+            if driver:
+                driver.quit()
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get(self, url: str, **kwargs) -> str:
-        await self._apply_random_delay()
-        log.info(f"[HMMH] GET {url} with params {kwargs.get('params')}")
-        client = await self._get_client()
-        # Ensure each request potentially has a different User-Agent
-        kwargs.setdefault("headers", self._get_headers())
-        resp = await client.get(url, **kwargs)
-        resp.raise_for_status()
-        log.info(f"[HMMH] GET {url} success ({len(resp.text)} chars)")
-        return resp.text
+        params = kwargs.get("params")
+        if params:
+            import urllib.parse
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+
+        # Use Selenium for ALL HMMH requests to be safe against WAF
+        try:
+            html = await self._get_selenium_content(url)
+            if not html or len(html) < 200: # Very small response usually means failure
+                 log.warning(f"[HMMH] Content suspiciously small ({len(html)} chars).")
+            log.info(f"[HMMH] GET {url} success ({len(html)} chars) via Selenium")
+            return html
+        except Exception as e:
+            log.error(f"[HMMH] Selenium fetch failed for {url}: {e}")
+            raise
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _post(self, url: str, data: dict) -> str:
