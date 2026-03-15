@@ -235,7 +235,7 @@ python tools/tool_notion.py get_databases
 
 ## 🛠️ 自動化與安全規範 (專屬此專案)
 
--   **自動執行授權**: 針對本專案中所有在 `/tmp` 目錄下建立、讀取、分析用的 Python 或 Shell 腳本，Antigravity 獲授權可將 `SafeToAutoRun` 設為 `true` 直接執行。此外，針對已知合作醫院之官方網址進行的瀏覽器自動化操作（`browser_subagent`），亦獲授權可自動執行，無須逐次請求同意。
+-   **自動執行授權**: 針對本專案中所有在 `/tmp` 目錄以及 `/doc` 目錄下建立、讀取、分析用的 Markdown、Python 或 Shell 腳本，Antigravity 獲授權可將 `SafeToAutoRun` 設為 `true` 直接執行。此外，針對已知合作醫院之官方網址進行的瀏覽器自動化操作（`browser_subagent`），亦獲授權可自動執行，無須逐次請求同意。
     
     **允許的醫院網址域名**:
     - `*.cmuh.org.tw` - 中國醫藥大學附設醫院
