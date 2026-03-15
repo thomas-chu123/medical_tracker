@@ -340,7 +340,6 @@ class NTUHHsinchuScraper(BaseScraper):
             params={"vHospCode": "T4", "vDeptCode": dept_code, "showBlock": show_block},
         )
         soup = BeautifulSoup(html, "html.parser")
-
         slots = await self._parse_schedule_page(soup, dept_code)
         log.info(f"[NTUH] fetch_schedule dept={dept_code}: {len(slots)} slots")
         return slots
@@ -365,7 +364,6 @@ class NTUHHsinchuScraper(BaseScraper):
         for s in all_slots:
             if s.doctor_name == doctor_name or s.doctor_no == doctor_no:
                 matched.append(s)
-        
         log.info(f"[NTUH] Found {len(matched)} slots for {doctor_name} via dept scan")
         return matched
 
@@ -374,35 +372,21 @@ class NTUHHsinchuScraper(BaseScraper):
     ) -> list[DoctorSlot]:
         """
         Parse a RegDeptSchedule HTML page into DoctorSlot entries.
-
-        Actual page structure (as of 2026-03):
-          div.date-doctor-block#deptScheduleList
-            div.row#deptScheduleResult
-              div.col-1 (date column: "3/2" + "星期一")
-              div.col-md-11 (schedule column)
-                div.table-content
-                  div.row (period group, yellow/blue bg)
-                    div.col-12 → span.date "下午門診"  (period heading)
-                    div.col-12.col-sm-6 id="N_doctorName"
-                      button.doctor-tag
-                        div.doc-name "呂紹宇 | 39 診"
-                        div.btn.btn-secondary "老年醫學部 | 普通門診"
-
-        All date rows share a single #deptScheduleResult wrapper with paired
-        col-1 (date) and col-md-11 (schedule) children.
-
-        Fallback strategies:
-          B: h5 headings with surrounding date/period context
-          C: global button.doctor-tag scan with _infer_date_period
         """
         slots: list[DoctorSlot] = []
         today = date.today()
 
-        # ── Strategy A: walk #deptScheduleResult date/schedule column pairs ──
-        slots.extend(self._parse_result_div(soup, dept_code, today))
+        # ── Strategy A: walk ALL #deptScheduleResult DIVs ──
+        # Note: NTUH often uses duplicate IDs for different date columns.
+        result_divs = soup.find_all(id="deptScheduleResult")
+        if result_divs:
+            for div in result_divs:
+                slots.extend(self._parse_result_div(div, dept_code, today))
+            
+            if slots:
+                return self._deduplicate_slots(slots)
 
         # ── Strategy B: parse h5 headings with context tracking ──────────────
-        # Handles pages that render doctor entries as h5 headings
         if not slots:
             slots.extend(self._parse_h5_schedule(soup, dept_code, today))
 
@@ -414,86 +398,67 @@ class NTUHHsinchuScraper(BaseScraper):
 
     def _parse_result_div(
         self,
-        soup: BeautifulSoup,
+        container: Tag,
         dept_code: str,
         today: date,
     ) -> list[DoctorSlot]:
         """
         Strategy A: Walk the actual NTUH schedule DOM.
-
-        The page structure:
-          #deptScheduleResult
-            div.col-md-11
-              div.table-content          ← one per date group
-                div.sm-table-header      ← date label: "3/2(一), 老年醫學部"
-                div.row (period group)
-                  div.col-12 → span.date  ← period: "下午門診"
-                  div.col-12.col-sm-6     ← doctor card wrapper
-                    button.doctor-tag
-
-        We iterate sm-table-header elements as date anchors, then scan
-        the sibling row divs in order for period headings and buttons.
         """
         slots: list[DoctorSlot] = []
-        result_div = soup.select_one("#deptScheduleResult")
-        if not result_div:
-            return slots
 
-        schedule_col = result_div.select_one("div.col-md-11")
-        if not schedule_col:
-            return slots
+        session_date = today
+        current_period = "上午"
+        seen_btn_ids: set[int] = set()
 
-        # Each table-content is one date group
-        table_contents = schedule_col.find_all("div", class_="table-content", recursive=False)
-        if not table_contents:
-            # Some layouts nest table-content one level deeper
-            table_contents = schedule_col.select("div.table-content")
-        if not table_contents:
-            return slots
+        # Iterate all elements in document order to track state correctly
+        all_items = container.find_all(
+            [re.compile(r"div|span|button|a", re.I)],
+            class_=re.compile(r"sm-table-header|date|doctor.?tag", re.I)
+        )
 
-        seen_btn_ids: set[int] = set()  # prevent duplicates from nested rows
+        for item in all_items:
+            # 1. Date detection
+            if "sm-table-header" in item.get("class", []):
+                text = item.get_text(strip=True)
+                m_date = DATE_SLASH_RE.search(text)
+                if m_date:
+                    session_date = _resolve_date(int(m_date.group(1)), int(m_date.group(2)), today)
+                continue
 
-        for tc in table_contents:
-            # Date from sm-table-header: "3/2(一), 老年醫學部"
-            sm_header = tc.find("div", class_="sm-table-header")
-            session_date = today
-            if sm_header:
-                m = DATE_SLASH_RE.search(sm_header.get_text(strip=True))
-                if m:
-                    session_date = _resolve_date(int(m.group(1)), int(m.group(2)), today)
+            # 2. Period detection
+            # Must have class 'date' and NOT be a doctor tag wrapper
+            classes = item.get("class", [])
+            if "date" in classes and not any("doctor" in c.lower() for c in classes):
+                # Extra check: ensure it's not the date column label (col-1)
+                # which might also have class 'date'
+                text = item.get_text(strip=True)
+                period = _parse_period(text)
+                if period:
+                    # If it's just a date like "3/17", don't treat it as a period
+                    if not DATE_SLASH_RE.match(text):
+                        current_period = period
+                continue
 
-            # Period context — scan the direct children of tc in order
-            current_period = "上午"
+            # 3. Doctor button detection
+            class_str = " ".join(classes)
+            if item.name.lower() in ("button", "a") and re.search(r"doctor.?tag", class_str, re.I):
+                btn_id = id(item)
+                # For some reason same instances might show up if parents also match?
+                # find_all usually doesn't do that but let's be safe.
+                if btn_id in seen_btn_ids:
+                    continue
+                seen_btn_ids.add(btn_id)
 
-            # Walk only DIRECT child rows of tc (not recursive), to avoid
-            # descending into modal pop-up divs that repeat the same buttons.
-            direct_rows = tc.find_all("div", class_="row", recursive=False)
-            # If no direct row children (page layout differs), fall one level deeper
-            if not direct_rows:
-                inner = tc.find("div", class_="row")
-                direct_rows = inner.find_all("div", class_="row", recursive=False) if inner else []
+                # Ensure we don't accidentally parse buttons from modals if they are nested here
+                # Modals usually have 'modal' class in parents
+                if any("modal" in p.get("class", []) for p in item.parents if isinstance(p, Tag)):
+                    continue
 
-            for row in direct_rows:
-                # Period heading detection
-                period_span = row.find("span", class_="date")
-                if period_span:
-                    detected = _parse_period(period_span.get_text(strip=True))
-                    if detected:
-                        current_period = detected
-
-                # Doctor buttons — only DIRECT child col-divs to avoid modals
-                col_divs = row.find_all("div", recursive=False)
-                for col in col_divs:
-                    for btn in col.find_all("button", class_=re.compile(r"doctor.?tag", re.I), recursive=False):
-                        btn_id = id(btn)
-                        if btn_id in seen_btn_ids:
-                            continue
-                        seen_btn_ids.add(btn_id)
-                        doctor_slots = self._extract_doctor_tags(
-                            col, dept_code, session_date, current_period
-                        )
-                        slots.extend(doctor_slots)
-                        break  # one call per col is enough
+                doctor_slots = self._extract_doctor_button(
+                    item, dept_code, session_date, current_period
+                )
+                slots.extend(doctor_slots)
 
         return slots
 
@@ -528,6 +493,76 @@ class NTUHHsinchuScraper(BaseScraper):
         block_text = block.get_text(separator=" ", strip=True)[:100]
         return _parse_period(block_text)
 
+    def _extract_doctor_button(
+        self,
+        btn: Tag,
+        dept_code: str,
+        session_date: date,
+        session_type: str,
+    ) -> list[DoctorSlot]:
+        """
+        Extract DoctorSlot from a single button.doctor-tag element.
+        """
+        btn_classes = " ".join(btn.get("class", []))
+
+        # ── Detect cancellation / full from button class ──────────
+        is_cancelled = "stopped" in btn_classes or "停診" in btn.get_text()
+        is_full = "full" in btn_classes and "avaliable" not in btn_classes
+
+        # ── Extract name/room from div.doc-name ───────────────────
+        name_div = (
+            btn.find("div", class_="doc-name")
+            or btn.find(class_=re.compile(r"doc.?name|doctor.?name", re.I))
+        )
+
+        if name_div:
+            name_text = name_div.get_text(strip=True)
+        else:
+            # Fall back: use the whole button text up to first newline-like break
+            full_text = btn.get_text(separator="\n", strip=True)
+            lines = [l.strip() for l in full_text.splitlines() if l.strip()]
+            name_text = lines[0] if lines else ""
+
+        if not name_text or " | " not in name_text:
+            return []
+
+        doctor_name, clinic_room, specialty, h5_cancelled = _parse_doctor_h5(name_text)
+        is_cancelled = is_cancelled or h5_cancelled
+
+        # ── Extract doctor ID from onclick URL ────────────────────
+        doctor_id = self._extract_dr_id_from_element(btn)
+        # Also check the enclosing col div id which may contain e.g. "1_呂紹宇"
+        parent_col = btn.find_parent("div", id=re.compile(r"^\d+_"))
+        if not doctor_id and parent_col:
+            col_id = parent_col.get("id", "")
+            parts = col_id.split("_", 1)
+            if len(parts) == 2 and parts[1]:
+                doctor_id = f"NTUH_T4_{parts[1]}"
+
+        doctor_no = doctor_id or _make_doctor_no(doctor_name)
+
+        # ── Build status string ───────────────────────────────────
+        status_text: Optional[str] = None
+        if is_cancelled:
+            status_text = "停診"
+        elif is_full:
+            status_text = "額滿"
+
+        return [
+            DoctorSlot(
+                doctor_no=doctor_no,
+                doctor_name=doctor_name,
+                department_code=dept_code,
+                session_date=session_date,
+                session_type=session_type,
+                total_quota=None,
+                registered=None,
+                clinic_room=clinic_room,
+                is_full=is_full,
+                status=status_text,
+            )
+        ]
+
     def _extract_doctor_tags(
         self,
         container: Tag,
@@ -536,83 +571,13 @@ class NTUHHsinchuScraper(BaseScraper):
         session_type: str,
     ) -> list[DoctorSlot]:
         """
-        Extract DoctorSlot entries from button.doctor-tag elements within container.
-
-        Actual button structure (NTUH Hsinchu 2026-03):
-          <button class="doctor-tag avaliable|full|stopped">
-            <div class="doc-name">呂紹宇 | 39 診</div>
-            <div class="btn btn-secondary">老年醫學部 | 普通門診</div>
-          </button>
-
-        Button status classes: avaliable, full, stopped (typo on site).
+        Legacy method kept for compatibility with other internal callers if any.
+        Extracts all tags within a container.
         """
         slots: list[DoctorSlot] = []
-        buttons = container.find_all("button", class_=re.compile(r"doctor.?tag", re.I))
-
+        buttons = container.find_all(["button", "a"], class_=re.compile(r"doctor.?tag", re.I))
         for btn in buttons:
-            btn_classes = " ".join(btn.get("class", []))
-
-            # ── Detect cancellation / full from button class ──────────
-            is_cancelled = "stopped" in btn_classes
-            is_full = "full" in btn_classes and "avaliable" not in btn_classes
-
-            # ── Extract name/room from div.doc-name ───────────────────
-            # Actual class used on NTUH site is 'doc-name', not 'doctor-name'
-            name_div = (
-                btn.find("div", class_="doc-name")
-                or btn.find(class_=re.compile(r"doc.?name|doctor.?name", re.I))
-            )
-
-            if name_div:
-                name_text = name_div.get_text(strip=True)
-            else:
-                # Fall back: use the whole button text up to first newline-like break
-                # and strip the info portion (dept | clinic-type line)
-                full_text = btn.get_text(separator="\n", strip=True)
-                lines = [l.strip() for l in full_text.splitlines() if l.strip()]
-                name_text = lines[0] if lines else ""
-
-            if not name_text or " | " not in name_text:
-                continue
-
-            doctor_name, clinic_room, specialty, h5_cancelled = _parse_doctor_h5(name_text)
-            is_cancelled = is_cancelled or h5_cancelled
-
-            # ── Extract doctor ID from onclick URL ────────────────────
-            doctor_id = self._extract_dr_id_from_element(btn)
-            # Also check the enclosing col div id which may contain e.g. "1_呂紹宇"
-            parent_col = btn.find_parent("div", id=re.compile(r"^\d+_"))
-            if not doctor_id and parent_col:
-                col_id = parent_col.get("id", "")
-                # id format: "<scheduleNo>_<doctorName>"
-                parts = col_id.split("_", 1)
-                if len(parts) == 2 and parts[1]:
-                    doctor_id = f"NTUH_T4_{parts[1]}"
-
-            doctor_no = doctor_id or _make_doctor_no(doctor_name)
-
-            # ── Build status string ───────────────────────────────────
-            status_text: Optional[str] = None
-            if is_cancelled:
-                status_text = "停診"
-            elif is_full:
-                status_text = "額滿"
-
-            slots.append(
-                DoctorSlot(
-                    doctor_no=doctor_no,
-                    doctor_name=doctor_name,
-                    department_code=dept_code,
-                    session_date=session_date,
-                    session_type=session_type,
-                    total_quota=None,
-                    registered=None,
-                    clinic_room=clinic_room,
-                    is_full=is_full,
-                    status=status_text,
-                )
-            )
-
+            slots.extend(self._extract_doctor_button(btn, dept_code, session_date, session_type))
         return slots
 
     def _parse_h5_schedule(
@@ -1298,6 +1263,19 @@ class NTUHHsinchuScraper(BaseScraper):
         ])
         
         return remaining
+
+    def _deduplicate_slots(self, slots: list[DoctorSlot]) -> list[DoctorSlot]:
+        """
+        Deduplicates doctor slots by (doctor_no, session_date, session_type).
+        """
+        seen = set()
+        unique_slots = []
+        for s in slots:
+            key = (s.doctor_no, s.session_date, s.session_type)
+            if key not in seen:
+                seen.add(key)
+                unique_slots.append(s)
+        return unique_slots
 
 
 # ─────────────────────────────────────────────────────────
