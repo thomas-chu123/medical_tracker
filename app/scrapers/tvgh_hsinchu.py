@@ -154,7 +154,6 @@ class TvghHsinchuScraper(BaseScraper):
         for form in forms:
             name_input = form.find("input", {"name": "doctorChineseName"})
             date_input = form.find("input", {"name": "consultDateAD"})
-            room_input = form.find("input", {"name": "consultRoomLocation"})
             doc_no_input = form.find("input", {"name": "doctorNumber"})
             session_input = form.find("input", {"name": "consultNoonFlag"})
 
@@ -165,7 +164,31 @@ class TvghHsinchuScraper(BaseScraper):
             date_ad_str = date_input.get("value", "").strip()
             doc_no_str = doc_no_input.get("value", "").strip()
             session_flag = session_input.get("value", "").strip()
-            room_str = room_input.get("value", "") if room_input else ""
+            
+            # --- Fix: Extract room and registered from table cells ---
+            room_str = ""
+            registered = None
+            parent_td = form.find_parent("td")
+            if parent_td:
+                parent_tr = parent_td.find_parent("tr")
+                if parent_tr:
+                    tds = parent_tr.find_all("td")
+                    # Column 5 (index 4) is "診間"
+                    if len(tds) >= 5:
+                        room_str = tds[4].get_text(strip=True)
+                    # Column 6 (index 5) is "已掛人數"
+                    if len(tds) >= 6:
+                        reg_text_td = tds[5].get_text(strip=True)
+                        if reg_text_td.isdigit():
+                            registered = int(reg_text_td)
+            
+            # Fallback to hidden input if room table parsing failed
+            if not room_str:
+                room_input = form.find("input", {"name": "consultRoomLocation"})
+                room_str = room_input.get("value", "") if room_input else ""
+            
+            # Clean room string: remove "第" and "診"
+            room_str = re.sub(r"[第診]", "", room_str).strip()
 
             if len(date_ad_str) == 8: # YYYYMMDD
                 try:
@@ -181,6 +204,28 @@ class TvghHsinchuScraper(BaseScraper):
             elif session_flag == "N":
                 session_type = "晚上"
 
+            # Extract registration info from anchor tag as fallback
+            reg_link = parent_td.find("a") if parent_td else None
+            reg_text = reg_link.get_text(strip=True) if reg_link else ""
+            
+            total_quota = None
+            is_full = False
+            
+            if registered is None and "已掛" in reg_text:
+                reg_match = re.search(r"已掛\s*(\d+)", reg_text)
+                if reg_match:
+                    registered = int(reg_match.group(1))
+            
+            if "額滿" in reg_text:
+                quota_match = re.search(r"額滿\s*(\d+)", reg_text)
+                if quota_match:
+                    total_quota = int(quota_match.group(1))
+                is_full = True
+            elif "可掛" in reg_text:
+                quota_match = re.search(r"可掛\s*(\d+)", reg_text)
+                if quota_match:
+                    total_quota = int(quota_match.group(1))
+
             slots.append(
                 DoctorSlot(
                     doctor_no=doc_no_str,
@@ -188,10 +233,10 @@ class TvghHsinchuScraper(BaseScraper):
                     department_code=dept_code,
                     session_date=slot_date,
                     session_type=session_type,
-                    total_quota=None,
-                    registered=None,
+                    total_quota=total_quota,
+                    registered=registered,
                     clinic_room=room_str.strip() or None,
-                    is_full=False, # We can't determine is_full easily from this page structure without looking at the <a> tag status
+                    is_full=is_full,
                 )
             )
 
@@ -238,6 +283,8 @@ class TvghHsinchuScraper(BaseScraper):
         doctor_name = kwargs.get("doctor_name")
         
         found_current_number = None
+        found_registered = None
+        found_total_quota = None
         found_doctor = None
 
         for item in items:
@@ -248,17 +295,36 @@ class TvghHsinchuScraper(BaseScraper):
             info_text = tds[0].get_text(separator=' ', strip=True)
             number_text = tds[1].get_text(separator=' ', strip=True)
             
-            # Priority 1: Match doctor name if provided
-            if doctor_name and doctor_name in info_text:
-                found_current_number = _parse_int(number_text)
-                found_doctor = doctor_name
-                break
+            # Robust matching: 
+            # 1. Exact doctor match OR partial match if doctor name is in info_text
+            # 2. Dept match if no doctor provided 
+            match_found = False
+            if doctor_name:
+                # Use regex for flexible matching (ignore spaces/titles)
+                clean_doc = re.escape(doctor_name)
+                if re.search(clean_doc, info_text):
+                    match_found = True
+            elif target_dept_name and target_dept_name in info_text:
+                match_found = True
                 
-            # Priority 2: Match dept/room name
-            if target_dept_name in info_text:
+            if match_found:
                 found_current_number = _parse_int(number_text)
-                # Parse out doctor name by taking text before the space (if any)
-                # e.g. "尹居浩 神經內科" -> "尹居浩"
+                
+                # Check for "掛號" or "人數" in the text to extract registration count
+                # Or if the number_text matches a solitary number pattern
+                reg_match = re.search(r"(?:掛號|人數)\D*(\d+)", number_text)
+                if reg_match:
+                    found_registered = int(reg_match.group(1))
+                elif number_text.isdigit():
+                    # If it's just a number, it might be the current number, 
+                    # but we keep the logic consistent with current_number assignment
+                    pass 
+                
+                # Check for "總號" or "限額" if available
+                quota_match = re.search(r"(?:總號|限額)\D*(\d+)", number_text)
+                if quota_match:
+                    found_total_quota = int(quota_match.group(1))
+
                 doc_parts = info_text.split()
                 if doc_parts:
                     found_doctor = doc_parts[0]
@@ -270,8 +336,10 @@ class TvghHsinchuScraper(BaseScraper):
         return ClinicProgress(
             clinic_room=room,
             session_type=self.PERIOD_MAP.get(period, period),
-            current_number=found_current_number or 0,
-            status=None,
+            current_number=found_current_number,
+            registered_count=found_registered,
+            total_quota=found_total_quota,
+            status="看診中" if found_current_number > 0 else None,
             clinic_queue_details=[{"doctor": found_doctor}] if found_doctor else []
         )
 
