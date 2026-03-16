@@ -18,6 +18,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import httpx
 from app.core.logger import logger
 
 # ──────────────────────────────────────────────────────────────
@@ -118,6 +119,9 @@ async def record_speed_sample(
             f"delta={delta_calls}號/{delta_minutes:.1f}min = {speed:.3f}號/min"
         )
         return True
+    except httpx.RemoteProtocolError as e:
+        logger.warning(f"[SpeedEstimator] Supabase disconnected while recording speed sample for {doctor_id}: {e}")
+        return False
     except Exception as e:
         logger.error(f"[SpeedEstimator] Failed to record speed sample: {e}")
         return False
@@ -176,6 +180,9 @@ async def get_estimated_wait_minutes(
             .execute()
         )
         samples = res.data or []
+    except httpx.RemoteProtocolError as e:
+        logger.warning(f"[SpeedEstimator] Supabase disconnected while querying speed samples for {doctor_id}: {e}")
+        samples = []
     except Exception as e:
         logger.error(f"[SpeedEstimator] Error querying speed samples: {e}")
         samples = []
@@ -277,6 +284,9 @@ async def get_previous_snapshot(
                 
         return None
 
+    except httpx.RemoteProtocolError as e:
+        logger.warning(f"[SpeedEstimator] Supabase disconnected while fetching previous snapshot for {doctor_id}: {e}")
+        return None
     except Exception as e:
         logger.error(f"[SpeedEstimator] Error fetching previous snapshot: {e}")
         return None

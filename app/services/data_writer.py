@@ -10,6 +10,8 @@ import re
 from datetime import date
 from typing import Optional
 
+import httpx
+from app.core.logger import logger
 from app.database import get_supabase
 from app.scrapers.base import DepartmentData, DoctorSlot
 
@@ -120,23 +122,32 @@ async def batch_insert_snapshots(rows: list[dict]):
     chunk_size = 200
     for i in range(0, len(deduped_rows), chunk_size):
         chunk = deduped_rows[i:i + chunk_size]
-        await _run(
-            lambda c=chunk: supabase.table("appointment_snapshots")
-            .upsert(
-                c,
-                on_conflict="doctor_id,department_id,session_date,session_type",
+        try:
+            await _run(
+                lambda c=chunk: supabase.table("appointment_snapshots")
+                .upsert(
+                    c,
+                    on_conflict="doctor_id,department_id,session_date,session_type",
+                )
+                .execute()
             )
-            .execute()
-        )
+        except httpx.RemoteProtocolError as e:
+            logger.warning(f"[DataWriter] Supabase disconnected during batch snapshots upsert (chunk size {len(chunk)}): {e}")
+            # We don't return so it can try the next chunk, although the connection might still be down.
+            continue
 
 
 async def get_hospital_id(hospital_code: str) -> Optional[str]:
     supabase = get_supabase()
-    result = await _run(
-        lambda: supabase.table("hospitals")
-        .select("id")
-        .eq("code", hospital_code)
-        .maybe_single()
-        .execute()
-    )
-    return result.data["id"] if result and hasattr(result, "data") and result.data else None
+    try:
+        result = await _run(
+            lambda: supabase.table("hospitals")
+            .select("id")
+            .eq("code", hospital_code)
+            .maybe_single()
+            .execute()
+        )
+        return result.data["id"] if result and hasattr(result, "data") and result.data else None
+    except httpx.RemoteProtocolError as e:
+        logger.warning(f"[DataWriter] Supabase disconnected during hospital lookup for {hospital_code}: {e}")
+        return None

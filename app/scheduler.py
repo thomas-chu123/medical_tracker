@@ -7,6 +7,7 @@ blocking the FastAPI event loop while scraping.
 
 import asyncio
 import random
+import httpx
 from datetime import date, datetime, time, timedelta, timezone
 
 from app.core.timezone import now_tw, today_tw, today_tw_str, now_utc_str
@@ -111,11 +112,15 @@ async def _sync_hospital_morning_progress(scraper):
         
         # 1. Get tracked doctor_ids from tracking_subscriptions
         # NOTE: tracking_subscriptions is the active table (not the legacy 'tracking' table)
-        tracking_res = await asyncio.to_thread(
-            lambda: supabase.table("tracking_subscriptions")
-            .select("doctor_id")
-            .execute()
-        )
+        try:
+            tracking_res = await asyncio.to_thread(
+                lambda: supabase.table("tracking_subscriptions")
+                .select("doctor_id")
+                .execute()
+            )
+        except httpx.RemoteProtocolError as e:
+            logger.warning(f"[Scheduler] Supabase disconnected during morning sync for {scraper.HOSPITAL_CODE}: {e}")
+            return
         # Collect all unique tracked doctor_ids
         all_tracked_doctor_ids = list(set([t["doctor_id"] for t in (tracking_res.data or []) if t.get("doctor_id")]))
         
@@ -126,14 +131,18 @@ async def _sync_hospital_morning_progress(scraper):
         tracked_doctor_ids = all_tracked_doctor_ids
 
         # 2. Fetch latest snapshots for these doctors today, FILTERING BY HOSPITAL ID
-        res = await asyncio.to_thread(
-            lambda: supabase.table("appointment_snapshots")
-            .select("*, doctors!inner(doctor_no, name, hospital_id), departments(code)")
-            .in_("doctor_id", tracked_doctor_ids)
-            .eq("session_date", today_str)
-            .eq("doctors.hospital_id", hosp_id)  # MUST filter by this scraper's hospital
-            .execute()
-        )
+        try:
+            res = await asyncio.to_thread(
+                lambda: supabase.table("appointment_snapshots")
+                .select("*, doctors!inner(doctor_no, name, hospital_id), departments(code)")
+                .in_("doctor_id", tracked_doctor_ids)
+                .eq("session_date", today_str)
+                .eq("doctors.hospital_id", hosp_id)  # MUST filter by this scraper's hospital
+                .execute()
+            )
+        except httpx.RemoteProtocolError as e:
+            logger.warning(f"[Scheduler] Supabase disconnected during morning sync snapshots for {scraper.HOSPITAL_CODE}: {e}")
+            return
         
         snapshots = res.data or []
         if not snapshots:
@@ -279,55 +288,54 @@ async def _scrape_hospital_tracked_data(scraper):
             logger.warning(f"[Scheduler] {scraper.HOSPITAL_CODE} hospital not found in DB.")
             return
 
-        # Fetch ONLY active tracking subscriptions for today onwards
-        today_str = str(date.today())
-        track_res = await asyncio.to_thread(
-            lambda: supabase.table("tracking_subscriptions")
-            .select("department_id, doctor_id")
-            .eq("is_active", True)
-            .gte("session_date", today_str)  # Only track today and future dates
-            .execute()
-        )
-        tracks = track_res.data or []
-        
-        if not tracks:
-            logger.info(f"[Scheduler] No active trackings found for {scraper.HOSPITAL_CODE}. Skipping targeted scrape.")
-            return
-            
-        # Collect sets of tracked departments and doctors
-        tracked_depts = {t["department_id"] for t in tracks if t.get("department_id")}
-        tracked_doctors = {t["doctor_id"] for t in tracks if t.get("doctor_id")}
-
-        # If there are tracked doctors without explicit department trackings, we still need
-        # to know their departments to scrape them (since scraping is per-department).
-        if tracked_doctors:
-            doc_dept_res = await asyncio.to_thread(
-                lambda: supabase.table("doctors")
-                .select("department_id")
-                .in_("id", list(tracked_doctors))
-                # Note: Do NOT filter by hospital_id here — tracked doctors may belong
-                # to a different hospital entity than this scraper's hospital.
-                # The dept filter below (line ~265) ensures each scraper only
-                # scrapes its own hospital's departments.
+        try:
+            # Fetch ONLY active tracking subscriptions for today onwards
+            today_str = str(date.today())
+            track_res = await asyncio.to_thread(
+                lambda: supabase.table("tracking_subscriptions")
+                .select("department_id, doctor_id")
+                .eq("is_active", True)
+                .gte("session_date", today_str)  # Only track today and future dates
                 .execute()
             )
-            for d in (doc_dept_res.data or []):
-                tracked_depts.add(d["department_id"])
+            tracks = track_res.data or []
+            
+            if not tracks:
+                logger.info(f"[Scheduler] No active trackings found for {scraper.HOSPITAL_CODE}. Skipping targeted scrape.")
+                return
+                
+            # Collect sets of tracked departments and doctors
+            tracked_depts = {t["department_id"] for t in tracks if t.get("department_id")}
+            tracked_doctors = {t["doctor_id"] for t in tracks if t.get("doctor_id")}
 
+            # If there are tracked doctors without explicit department trackings, we still need
+            # to know their departments to scrape them (since scraping is per-department).
+            if tracked_doctors:
+                doc_dept_res = await asyncio.to_thread(
+                    lambda: supabase.table("doctors")
+                    .select("department_id")
+                    .in_("id", list(tracked_doctors))
+                    .execute()
+                )
+                for d in (doc_dept_res.data or []):
+                    tracked_depts.add(d["department_id"])
 
-        if not tracked_depts:
-            logger.info(f"[Scheduler] No departments resolved from trackings for {scraper.HOSPITAL_CODE}. Skipping.")
+            if not tracked_depts:
+                logger.info(f"[Scheduler] No departments resolved from trackings for {scraper.HOSPITAL_CODE}. Skipping.")
+                return
+
+            # Fetch department info for the tracked departments
+            dept_res = await asyncio.to_thread(
+                lambda: supabase.table("departments")
+                .select("id, code, name")
+                .in_("id", list(tracked_depts))
+                .eq("hospital_id", hosp_id)
+                .execute()
+            )
+            departments = dept_res.data or []
+        except httpx.RemoteProtocolError as e:
+            logger.warning(f"[Scheduler] Supabase disconnected during tracked data fetch for {scraper.HOSPITAL_CODE}: {e}. Skipping this cycle.")
             return
-
-        # Fetch department info for the tracked departments
-        dept_res = await asyncio.to_thread(
-            lambda: supabase.table("departments")
-            .select("id, code, name")
-            .in_("id", list(tracked_depts))
-            .eq("hospital_id", hosp_id)
-            .execute()
-        )
-        departments = dept_res.data or []
         
         # Keep track of which doctors we've already scraped in this cycle
         scraped_doctor_ids = set()
@@ -351,13 +359,17 @@ async def _scrape_hospital_tracked_data(scraper):
                 continue
 
             # Pre-fetch doctors for this department to map doctor_no to doc_id
-            doc_res = await asyncio.to_thread(
-                lambda: supabase.table("doctors")
-                .select("id, doctor_no")
-                .eq("department_id", dept_id)
-                .execute()
-            )
-            doctor_map = {d["doctor_no"]: d["id"] for d in (doc_res.data or [])}
+            try:
+                doc_res = await asyncio.to_thread(
+                    lambda: supabase.table("doctors")
+                    .select("id, doctor_no")
+                    .eq("department_id", dept_id)
+                    .execute()
+                )
+                doctor_map = {d["doctor_no"]: d["id"] for d in (doc_res.data or [])}
+            except httpx.RemoteProtocolError as e:
+                logger.warning(f"[Scheduler] Supabase disconnected during doctor mapping for {scraper.HOSPITAL_CODE}, dept={dept_name}: {e}")
+                continue
 
             for slot in slots:
                 doctor_id = doctor_map.get(slot.doctor_no)
@@ -393,6 +405,9 @@ async def _scrape_hospital_tracked_data(scraper):
                 )
                 logger.info(f"[Scheduler] DEBUG: Query returned {len(doc_info_res.data or [])} results (filtered by hospital_id={hosp_id})")
 
+            except httpx.RemoteProtocolError as e:
+                logger.warning(f"[Scheduler] Supabase disconnected during doctor supplement for {scraper.HOSPITAL_CODE}: {e}")
+                doc_info_res = None
             except Exception as e:
                 logger.error(f"[Scheduler] Error querying doctors for supplement: {e}")
                 doc_info_res = None
@@ -578,6 +593,8 @@ async def _build_snapshot_row(scraper, slot, doctor_id, dept_id, needs_progress)
                         use_fallback=True,
                     )
 
+            except httpx.RemoteProtocolError as e:
+                logger.warning(f"[Scheduler] Supabase disconnected during speed estimation for doctor_id={doctor_id}: {e}")
             except Exception as e:
                 logger.error(f"[Scheduler] Error in speed estimation for doctor_id={doctor_id}: {e}")
 
