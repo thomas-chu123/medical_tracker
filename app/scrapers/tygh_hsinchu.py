@@ -282,7 +282,10 @@ class TyghHsinchuScraper(BaseScraper):
             
             # Left box contains category, items (room name, doctor name)
             left_box = item.find("div", class_="left-box")
+            category_tag = left_box.find("p", class_="category") if left_box else None
             name_tags = left_box.find_all("p", class_="item") if left_box else []
+            
+            item_category = category_tag.get_text(strip=True) if category_tag else ""
             
             # Right box contains "目前燈號" and the actual number
             number_tag = item.find("h2", class_="number")
@@ -298,7 +301,12 @@ class TyghHsinchuScraper(BaseScraper):
                 
             item_room = room_tag.get_text(strip=True)
             # Doctor name is usually the last item tag in left box
-            doc_name = name_tags[-1].get_text(strip=True) if name_tags else ""
+            # Doctor name is usually in p.name now, but fallback to last p.item for compatibility
+            name_tag = left_box.find("p", class_="name") if left_box else None
+            if name_tag:
+                doc_name = name_tag.get_text(strip=True)
+            else:
+                doc_name = name_tags[-1].get_text(strip=True) if name_tags else ""
             number_str = number_tag.get_text(strip=True)
             session_text = session_tag.get_text(strip=True) if session_tag else global_session_text
 
@@ -315,12 +323,27 @@ class TyghHsinchuScraper(BaseScraper):
                 continue
             
             kwargs_doctor = kwargs.get('doctor_name', '')
+            kwargs_dept_code = kwargs.get('dept_code', '')
+            
+            # Simple mapping for TYGH dept codes to categories if needed
+            # For now, we prioritize doctor name + category matches if any category hint is provided
             
             is_match = False
-            # Try matching by doctor name first, then by room
+            # Try matching by doctor name first
             if kwargs_doctor and kwargs_doctor in doc_name:
                 is_match = True
-            elif str(room) == item_room:
+                
+                # If we have multiple boxes for the same doctor, try to anchor by category/dept
+                # e.g. for 神經內科 (code 10)
+                # Note: TYGH often lists special clinics with different categories
+                if kwargs_dept_code == "10":
+                    valid_categories = ["神經內科", "腦血管介入診", "特別診"]
+                    if not any(cat in item_category or cat in doc_name for cat in valid_categories):
+                        # Special check: sometimes the doctor name or item_category doesn't match a narrow list
+                        # If we ONLY have one match for this doctor, we should probably take it
+                        pass 
+                
+            elif str(room) == item_room and room: # Only match by room if room is not empty
                 is_match = True
                 
             if is_match:
