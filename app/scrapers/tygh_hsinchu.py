@@ -262,11 +262,15 @@ class TyghHsinchuScraper(BaseScraper):
                 registered_count=0
             )
 
+        # Global session detection (fallback)
+        global_session_text = ""
+        session_header = soup.find(id="ctl00_ContentPlaceHolder1_labRegDay")
+        if session_header:
+            global_session_text = session_header.get_text(strip=True)
+
         # Map period 1,2,3 to timeslot
         period_str = self.PERIOD_MAP.get(period, period)
         
-        # We find the table that has 'room' text as Header or within td
-        # TYGH uses li elements for modern layout
         target_number = None
         target_doctor = None
         target_room = None
@@ -275,17 +279,28 @@ class TyghHsinchuScraper(BaseScraper):
         items = soup.find_all("li", class_="number-light-box")
         for item in items:
             room_tag = item.find("h2", class_="room")
-            name_tag = item.find("p", class_="name")
-            number_tag = item.find("span", class_="number")
+            
+            # Left box contains category, items (room name, doctor name)
+            left_box = item.find("div", class_="left-box")
+            name_tags = left_box.find_all("p", class_="item") if left_box else []
+            
+            # Right box contains "目前燈號" and the actual number
+            number_tag = item.find("h2", class_="number")
+            
+            # Legacy check if labels changed back or are different
+            if not number_tag:
+                number_tag = item.find("span", class_="number")
+                
             session_tag = item.select_one(".number-status-box span")
             
-            if not room_tag or not name_tag or not number_tag:
+            if not room_tag or not number_tag:
                 continue
                 
             item_room = room_tag.get_text(strip=True)
-            doc_name = name_tag.get_text(strip=True)
+            # Doctor name is usually the last item tag in left box
+            doc_name = name_tags[-1].get_text(strip=True) if name_tags else ""
             number_str = number_tag.get_text(strip=True)
-            session_text = session_tag.get_text(strip=True) if session_tag else ""
+            session_text = session_tag.get_text(strip=True) if session_tag else global_session_text
 
             # Session verification
             item_period = "0"
@@ -297,13 +312,12 @@ class TyghHsinchuScraper(BaseScraper):
                 item_period = "3"
             
             if period and item_period != period:
-                # Extra check: if session_text is "全日", might match any? 
-                # But TYGH usually specifies session.
                 continue
             
             kwargs_doctor = kwargs.get('doctor_name', '')
             
             is_match = False
+            # Try matching by doctor name first, then by room
             if kwargs_doctor and kwargs_doctor in doc_name:
                 is_match = True
             elif str(room) == item_room:
@@ -315,6 +329,7 @@ class TyghHsinchuScraper(BaseScraper):
                 target_room = item_room
                 break
 
+        # Fallback to older table-based structure if li items not found
         if target_number is None and not items:
             tables = soup.find_all("table")
             for table in tables:
@@ -333,7 +348,7 @@ class TyghHsinchuScraper(BaseScraper):
                             if (kwargs_doctor and kwargs_doctor in doc_name) or (kwargs_dept and kwargs_dept in dept_name):
                                 target_number = _parse_int(number_str)
                                 target_doctor = doc_name
-                                target_room = dept_name # the page uses dept_name position for rooms in this older format
+                                target_room = dept_name 
                                 break
                 if target_number is not None:
                     break
@@ -349,6 +364,14 @@ class TyghHsinchuScraper(BaseScraper):
             status=status,
             clinic_queue_details=[{"doctor": target_doctor}] if target_doctor else []
         )
+
+    def calculate_remaining_count(
+        self,
+        current_number: int,
+        target_number: int,
+        clinic_queue_details: list[dict],
+    ) -> int:
+        return max(0, target_number - current_number)
 
     def calculate_remaining_count(
         self,
