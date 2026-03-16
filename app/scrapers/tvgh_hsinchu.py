@@ -19,7 +19,7 @@ from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -68,7 +68,7 @@ class TvghHsinchuScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get(self, url: str, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()

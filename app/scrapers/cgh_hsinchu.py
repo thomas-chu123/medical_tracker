@@ -24,7 +24,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -154,7 +154,7 @@ class CGHHsinchuScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get(self, url: str, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] GET {url}")
         client = await self._get_client()
@@ -164,7 +164,7 @@ class CGHHsinchuScraper(BaseScraper):
             resp.encoding = "utf-8"
         return resp.text
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _post(self, url: str, data: dict, extra_headers: dict = None, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] POST {url} with data {data}")
         client = await self._get_client()

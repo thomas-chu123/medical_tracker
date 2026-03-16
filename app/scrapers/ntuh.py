@@ -31,7 +31,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from app.core.logger import logger as log
 from app.core.timezone import now_tw, today_tw_str
@@ -191,7 +191,7 @@ class NTUHHsinchuScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get(self, url: str, **kwargs) -> str:
         """
         Execute GET request with streaming to avoid malformed chunked encoding
@@ -210,7 +210,7 @@ class NTUHHsinchuScraper(BaseScraper):
         log.info(f"[NTUH] GET {url} → {len(content)} chars")
         return content
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _post(self, url: str, data: dict, **kwargs) -> str:
         """Execute POST request with retry logic."""
         log.info(f"[NTUH] POST {url} data keys={list(data.keys())} kwargs={kwargs}")

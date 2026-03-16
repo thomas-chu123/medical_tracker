@@ -48,6 +48,16 @@
 - **`calculate_remaining_count(self, current_number: int, target_number: int, clinic_queue_details: list[dict]) -> int`**:
   計算使用者預約號碼 (`target_number`) 與當前號碼 (`current_number`) 之間，還有多少人未看診。因各家醫院對於「過號」、「退掛」、「完成」的顯示邏輯不同，因此交由各爬蟲自行實作。
 
+## 共用機制 (Common Mechanisms)
+
+### 1. 標準化重試機制 (Standardized Retry)
+所有醫院爬蟲的網路請求皆整合了 `tenacity` 函式庫，並遵循以下標準化重試策略：
+- **重試次數**: 最多 3 次 (含初始嘗試)。
+- **等候時間**: 固定 5 秒 (`wait_fixed(5)`)。
+- **適用範圍**: 核心網路方法如 `_get`, `_post` 或 `fetch_departments` 等。
+
+這是為了確保在面對醫院伺服器暫時性不穩或 WAF 誤導時，系統能有基本的容錯能力。
+
 ## 與 Scheduler 的互動機制
 
 `app/scheduler.py` 負責調度爬蟲任務，主要分為兩種模式：

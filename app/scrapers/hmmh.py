@@ -24,7 +24,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -204,7 +204,7 @@ class HMMHScraper(BaseScraper):
             if driver:
                 driver.quit()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get(self, url: str, **kwargs) -> str:
         params = kwargs.get("params")
         if params:
@@ -222,7 +222,7 @@ class HMMHScraper(BaseScraper):
             log.error(f"[HMMH] Selenium fetch failed for {url}: {e}")
             raise
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _post(self, url: str, data: dict) -> str:
         await self._apply_random_delay()
         log.info(f"[HMMH] POST {url} with data {data}")

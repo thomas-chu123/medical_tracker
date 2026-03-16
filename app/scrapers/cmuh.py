@@ -15,7 +15,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -83,16 +83,21 @@ class CMUHScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get(self, url: str, **kwargs) -> str:
         log.info(f"[CMUH] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()
         resp = await client.get(url, **kwargs)
         resp.raise_for_status()
+        
+        # Handle Big5/CP950 if specified or if it's from CGI
+        if kwargs.get("encoding") == "big5" or "cgi-bin" in url:
+            return _decode_big5_response(resp.content)
+            
         log.info(f"[CMUH] GET {url} success ({len(resp.text)} chars)")
         return resp.text
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _post(self, url: str, data: dict) -> str:
         client = await self._get_client()
         resp = await client.post(url, data=data)
@@ -217,20 +222,12 @@ class CMUHScraper(BaseScraper):
         appointment_doc_no = f"D{doc_no}" if not doc_no.startswith("D") else doc_no
         url = f"{self.CGI_BASE_URL}/reg52.cgi"
         
-        client = await self._get_client()
-        html = ""
-        for attempt in range(3):
-            try:
-                # Need to handle Big5/CP950 encoding from the CGI backend
-                resp = await client.get(url, params={"DocNo": appointment_doc_no, "Docname": doc_name})
-                resp.raise_for_status()
-                html = _decode_big5_response(resp.content)
-                break
-            except Exception as e:
-                if attempt == 2:
-                    log.error(f"[CMUH] Error fetching doctor info for {doc_no} ({doc_name}) after 3 attempts: {e}")
-                    return []
-                await asyncio.sleep(1.0 * (attempt + 1))
+        try:
+            # Need to handle Big5/CP950 encoding from the CGI backend via self._get
+            html = await self._get(url, params={"DocNo": appointment_doc_no, "Docname": doc_name})
+        except Exception as e:
+            log.error(f"[CMUH] Error fetching doctor info for {doc_no} ({doc_name}) after retries: {e}")
+            return []
                 
         if not html:
             log.warning(f"[CMUH] Empty HTML response for doctor {doc_no} ({doc_name})")
@@ -346,14 +343,10 @@ class CMUHScraper(BaseScraper):
         params = {"TimeCode": period, "CliRoom": room.strip()}
         log.debug(f"[CMUH] Fetching clinic progress: CliRoom={room}, Period={period}")
         try:
-            client = await self._get_client()
-            # reg64.cgi responds with Big5 encoding
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            html = _decode_big5_response(resp.content)
+            # reg64.cgi responds with Big5 encoding, handled by self._get
+            html = await self._get(url, params=params)
             log.debug(f"[CMUH] Clinic progress HTML received for CliRoom={room}, length={len(html)}")
         except Exception as e:
-            # Fallback to old behavior if reg64 fails, or just return None
             log.error(f"[CMUH] Error fetching clinic progress for CliRoom={room}: {e}")
             return None
 
