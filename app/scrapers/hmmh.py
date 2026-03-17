@@ -776,11 +776,17 @@ class HMMHScraper(BaseScraper):
 
         soup = BeautifulSoup(html, "lxml")
 
-        # Check for global status ONLY if there is no regtable found
+        # Detect global/page-level status from page text.
+        # This works even when regtable exists but doesn't list the target doctor
+        # (e.g. 心臟內科 is in the table, but 吳敘平's session hasn't started yet).
         page_text = soup.get_text()
         global_status = None
-        if "尚未開始看診" in page_text and "regtable" not in html:
+        if "尚未開始看診" in page_text or "門診尚未開始" in page_text:
             global_status = "未開診"
+        elif "看診完畢" in page_text or "已結束看診" in page_text:
+            global_status = "看診完畢"
+        elif "已停診" in page_text:
+            global_status = "已停診"
 
         # Find the progress table (class="regtable")
         # Table columns: 位置 | 診別 | 醫師 | 目前看診號 | 未看診人數
@@ -859,7 +865,20 @@ class HMMHScraper(BaseScraper):
             log.debug(f"[HMMH] Clinic row match: {clinic_name} 醫師={doctor} 看診號={current_no_text} 未看診={waiting_text}")
 
         if not clinic_queue_details and not doctor_status:
-            log.warning(f"[HMMH] No data rows and no status for dept={room}, ap={period}")
+            log.warning(f"[HMMH] No data rows for dept={room}, ap={period} (target doctor: {kwargs.get('doctor_name', '?')})")
+            # Fall back to global_status detected from page text (e.g. 尚未開始看診)
+            if global_status:
+                log.info(f"[HMMH] Returning global status '{global_status}' for dept={room}, ap={period}")
+                return ClinicProgress(
+                    clinic_room=room,
+                    session_type=self.PERIOD_MAP.get(period, period),
+                    current_number=0,
+                    total_quota=0,
+                    registered_count=0,
+                    status=global_status,
+                    waiting_list=[],
+                    clinic_queue_details=[],
+                )
             return None
 
         log.info(
