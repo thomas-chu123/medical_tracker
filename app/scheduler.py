@@ -412,34 +412,35 @@ async def _scrape_hospital_tracked_data(scraper):
                 logger.error(f"[Scheduler] Error querying doctors for supplement: {e}")
                 doc_info_res = None
             
-            for d in (doc_info_res.data or []):
-                doc_id = d["id"]
-                doc_no = d["doctor_no"]
-                doc_name = d["name"]
-                dept_id = d["department_id"]
-                dept_code = d.get("departments", {}).get("code") if d.get("departments") else None
-                
-                if not dept_code: continue
-                
-                try:
-                    logger.info(f"[Scheduler] DEBUG: Fetching slots for {doc_name} ({doc_no})")
-                    await asyncio.sleep(0.5)
+            if doc_info_res:
+                for d in (doc_info_res.data or []):
+                    doc_id = d["id"]
+                    doc_no = d["doctor_no"]
+                    doc_name = d["name"]
+                    dept_id = d["department_id"]
+                    dept_code = d.get("departments", {}).get("code") if d.get("departments") else None
                     
-                    # Some scrapers (like TVGHTaichung) implement individual doctor fetching
-                    if hasattr(scraper, "_fetch_doctor_slots"):
-                        slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
-                    else:
-                        # Fallback: Fetch whole department and filter for this doctor
-                        all_dept_slots = await scraper.fetch_schedule(dept_code)
-                        slots = [s for s in all_dept_slots if s.doctor_no == doc_no]
+                    if not dept_code: continue
+                    
+                    try:
+                        logger.info(f"[Scheduler] DEBUG: Fetching slots for {doc_name} ({doc_no})")
+                        await asyncio.sleep(0.5)
                         
-                    logger.info(f"[Scheduler] DEBUG: Found {len(slots)} slots for {doc_name}")
-                    for slot in slots:
-                        row = await _build_snapshot_row(scraper, slot, doc_id, dept_id, True)
-                        if row:
-                            all_snapshot_rows.append(row)
-                except Exception as e:
-                    logger.error(f"[Scheduler] Error supplement-fetching doctor {doc_name}: {e}")
+                        # Some scrapers (like TVGHTaichung) implement individual doctor fetching
+                        if hasattr(scraper, "_fetch_doctor_slots"):
+                            slots = await scraper._fetch_doctor_slots(doc_no, doc_name, dept_code)
+                        else:
+                            # Fallback: Fetch whole department and filter for this doctor
+                            all_dept_slots = await scraper.fetch_schedule(dept_code)
+                            slots = [s for s in all_dept_slots if s.doctor_no == doc_no]
+                            
+                        logger.info(f"[Scheduler] DEBUG: Found {len(slots)} slots for {doc_name}")
+                        for slot in slots:
+                            row = await _build_snapshot_row(scraper, slot, doc_id, dept_id, True)
+                            if row:
+                                all_snapshot_rows.append(row)
+                    except Exception as e:
+                        logger.error(f"[Scheduler] Error supplement-fetching doctor {doc_name}: {e}")
 
         # Batch insert all gathered snapshots
         if all_snapshot_rows:

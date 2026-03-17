@@ -5,7 +5,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
 
 from app.scrapers.base import BaseScraper, ClinicProgress, DepartmentData, DoctorSlot
 from app.core.logger import logger
@@ -25,7 +25,7 @@ class TVGHTaichungScraper(BaseScraper):
     async def close(self):
         await self.client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def fetch_departments(self) -> list[DepartmentData]:
         url = f"{self.BASE_URL}/register/listSection.jsp"
         resp = await self.client.get(url)
@@ -60,7 +60,7 @@ class TVGHTaichungScraper(BaseScraper):
         unique_depts = {d.code: d for d in departments}
         return list(unique_depts.values())
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def fetch_schedule(self, dept_code: str) -> list[DoctorSlot]:
         url = f"{self.BASE_URL}/register/listDoctor.jsp"
         params = {"init": "sub", "section": dept_code}
@@ -102,7 +102,7 @@ class TVGHTaichungScraper(BaseScraper):
             
         return slots
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _fetch_doctor_slots(self, drno: str, drname: str, dept_code: str) -> list[DoctorSlot]:
         url = f"{self.BASE_URL}/register/doctor_schedule.jsp"
         params = {
@@ -173,7 +173,7 @@ class TVGHTaichungScraper(BaseScraper):
             
         return slots
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def fetch_clinic_progress(self, room: str, period: str, dept_code: str = None, doctor_name: str = None, **kwargs) -> Optional[ClinicProgress]:
         if not dept_code:
             logger.warning(f"[{self.HOSPITAL_CODE}] fetch_clinic_progress needs dept_code")
