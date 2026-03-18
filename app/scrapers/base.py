@@ -3,6 +3,75 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+import httpx
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
+
+
+# ───────────────────────────────────────────────────────────────
+# 自訂異常類別
+# ───────────────────────────────────────────────────────────────
+class ScraperException(Exception):
+    """所有 Scraper 異常的基礎類別"""
+    pass
+
+
+class ScraperNetworkError(ScraperException):
+    """網路連接失敗（RemoteProtocolError, ConnectError 等）"""
+    pass
+
+
+class ScraperTimeoutError(ScraperException):
+    """HTTP 請求逾時"""
+    pass
+
+
+class ScraperParseError(ScraperException):
+    """HTML 解析失敗"""
+    pass
+
+
+class ScraperHTTPError(ScraperException):
+    """HTTP 狀態碼異常（4xx, 5xx）"""
+    pass
+
+
+# ───────────────────────────────────────────────────────────────
+# 重試策略：針對網路異常的指數退避重試
+# ───────────────────────────────────────────────────────────────
+def _is_retryable_error(exc: Exception) -> bool:
+    """判斷異常是否應該重試。"""
+    if isinstance(exc, (
+        httpx.RemoteProtocolError,
+        httpx.ConnectError,
+        httpx.TimeoutException,
+        httpx.ProxyError,
+        httpx.NetworkError,
+    )):
+        return True
+    if isinstance(exc, ScraperNetworkError):
+        return True
+    return False
+
+
+RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(5),  # 最多重試 5 次
+    wait=wait_exponential(multiplier=1, min=2, max=30),  # 2^n 秒，最多 30 秒
+    retry=retry_if_exception_type((
+        httpx.RemoteProtocolError,
+        httpx.ConnectError,
+        httpx.TimeoutException,
+        httpx.ProxyError,
+        httpx.NetworkError,
+        ScraperNetworkError,
+    )),
+    reraise=True,  # 最終失敗時重新拋出異常
+)
+
 
 @dataclass
 class DepartmentData:

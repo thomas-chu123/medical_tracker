@@ -24,7 +24,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -36,6 +36,7 @@ from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicPro
 from app.config import get_settings
 
 settings = get_settings()
+
 
 RANDOM_USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -204,7 +205,17 @@ class HMMHScraper(BaseScraper):
             if driver:
                 driver.quit()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _get(self, url: str, **kwargs) -> str:
         params = kwargs.get("params")
         if params:
@@ -219,18 +230,32 @@ class HMMHScraper(BaseScraper):
             log.info(f"[HMMH] GET {url} success ({len(html)} chars) via Selenium")
             return html
         except Exception as e:
-            log.error(f"[HMMH] Selenium fetch failed for {url}: {e}")
+            log.error(f"[HMMH] Selenium fetch failed for {url}: {type(e).__name__}: {e}")
             raise
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _post(self, url: str, data: dict) -> str:
         await self._apply_random_delay()
         log.info(f"[HMMH] POST {url} with data {data}")
         client = await self._get_client()
         headers = self._get_headers()
-        resp = await client.post(url, data=data, headers=headers)
-        resp.raise_for_status()
-        return resp.text
+        try:
+            resp = await client.post(url, data=data, headers=headers)
+            resp.raise_for_status()
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[HMMH] Network error on POST {url}: {type(e).__name__}: {e}")
+            raise
 
     # ─────────────────────────────────────────────────────────
     # 1. Fetch department list

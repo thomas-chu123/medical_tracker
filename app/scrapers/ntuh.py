@@ -31,7 +31,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.logger import logger as log
 from app.core.timezone import now_tw, today_tw_str
@@ -50,6 +50,7 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": "https://reg.ntuh.gov.tw/",
 }
+
 
 # Category (showBlock) mapping
 SHOW_BLOCK_NAMES = {
@@ -191,7 +192,17 @@ class NTUHHsinchuScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _get(self, url: str, **kwargs) -> str:
         """
         Execute GET request with streaming to avoid malformed chunked encoding
@@ -199,25 +210,43 @@ class NTUHHsinchuScraper(BaseScraper):
         """
         log.info(f"[NTUH] GET {url} params={kwargs.get('params')}")
         client = await self._get_client()
-        # Use stream=True so we accumulate bytes incrementally and tolerate
-        # the server's non-compliant chunked encoding footers.
-        async with client.stream("GET", url, **kwargs) as resp:
-            resp.raise_for_status()
-            chunks: list[bytes] = []
-            async for chunk in resp.aiter_bytes():
-                chunks.append(chunk)
-        content = b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
-        log.info(f"[NTUH] GET {url} → {len(content)} chars")
-        return content
+        try:
+            # Use stream=True so we accumulate bytes incrementally and tolerate
+            # the server's non-compliant chunked encoding footers.
+            async with client.stream("GET", url, **kwargs) as resp:
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                async for chunk in resp.aiter_bytes():
+                    chunks.append(chunk)
+            content = b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
+            log.info(f"[NTUH] GET {url} → {len(content)} chars")
+            return content
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[NTUH] Network error on GET {url}: {type(e).__name__}: {e}")
+            raise
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _post(self, url: str, data: dict, **kwargs) -> str:
         """Execute POST request with retry logic."""
         log.info(f"[NTUH] POST {url} data keys={list(data.keys())} kwargs={kwargs}")
         client = await self._get_client()
-        resp = await client.post(url, data=data, **kwargs)
-        resp.raise_for_status()
-        return resp.text
+        try:
+            resp = await client.post(url, data=data, **kwargs)
+            resp.raise_for_status()
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[NTUH] Network error on POST {url}: {type(e).__name__}: {e}")
+            raise
 
     # ─────────────────────────────────────────────────────────
     # 1. Fetch department list

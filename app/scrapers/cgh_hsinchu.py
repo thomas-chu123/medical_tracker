@@ -24,7 +24,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.logger import logger as log
 from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
@@ -154,28 +154,56 @@ class CGHHsinchuScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _get(self, url: str, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] GET {url}")
         client = await self._get_client()
-        resp = await client.get(url, **kwargs)
-        resp.raise_for_status()
-        if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
-            resp.encoding = "utf-8"
-        return resp.text
+        try:
+            resp = await client.get(url, **kwargs)
+            resp.raise_for_status()
+            if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
+                resp.encoding = "utf-8"
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[{self.HOSPITAL_CODE}] Network error on GET {url}: {type(e).__name__}: {e}")
+            raise
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _post(self, url: str, data: dict, extra_headers: dict = None, **kwargs) -> str:
         log.info(f"[{self.HOSPITAL_CODE}] POST {url} with data {data}")
         client = await self._get_client()
         merged_headers = {}
         if extra_headers:
             merged_headers.update(extra_headers)
-        resp = await client.post(url, data=data, headers=merged_headers, **kwargs)
-        resp.raise_for_status()
-        if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
-            resp.encoding = "utf-8"
-        return resp.text
+        try:
+            resp = await client.post(url, data=data, headers=merged_headers, **kwargs)
+            resp.raise_for_status()
+            if resp.encoding is None or resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
+                resp.encoding = "utf-8"
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[{self.HOSPITAL_CODE}] Network error on POST {url}: {type(e).__name__}: {e}")
+            raise
 
     async def fetch_departments(self) -> list[DepartmentData]:
         url = f"{self.BASE_URL}/tw/reg/main_01.jsp?area={self.AREA}"

@@ -15,10 +15,10 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.logger import logger as log
-from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress
+from app.scrapers.base import BaseScraper, DepartmentData, DoctorSlot, ClinicProgress, ScraperNetworkError
 from app.config import get_settings
 
 settings = get_settings()
@@ -83,26 +83,62 @@ class CMUHScraper(BaseScraper):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _get(self, url: str, **kwargs) -> str:
         log.info(f"[CMUH] GET {url} with params {kwargs.get('params')}")
         client = await self._get_client()
-        resp = await client.get(url, **kwargs)
-        resp.raise_for_status()
-        
-        # Handle Big5/CP950 if specified or if it's from CGI
-        if kwargs.get("encoding") == "big5" or "cgi-bin" in url:
-            return _decode_big5_response(resp.content)
+        try:
+            resp = await client.get(url, **kwargs)
+            resp.raise_for_status()
             
-        log.info(f"[CMUH] GET {url} success ({len(resp.text)} chars)")
-        return resp.text
+            # Handle Big5/CP950 if specified or if it's from CGI
+            if kwargs.get("encoding") == "big5" or "cgi-bin" in url:
+                return _decode_big5_response(resp.content)
+                
+            log.info(f"[CMUH] GET {url} success ({len(resp.text)} chars)")
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[CMUH] Network error on GET {url}: {type(e).__name__}: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            log.error(f"[CMUH] HTTP error {e.response.status_code} on GET {url}")
+            raise
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def _post(self, url: str, data: dict) -> str:
+        log.info(f"[CMUH] POST {url} with data {data}")
         client = await self._get_client()
-        resp = await client.post(url, data=data)
-        resp.raise_for_status()
-        return resp.text
+        try:
+            resp = await client.post(url, data=data)
+            resp.raise_for_status()
+            return resp.text
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            log.warning(f"[CMUH] Network error on POST {url}: {type(e).__name__}: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            log.error(f"[CMUH] HTTP error {e.response.status_code} on POST {url}")
+            raise
+
 
     # ─────────────────────────────────────────────────────────
     # 1. Fetch department list

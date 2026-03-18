@@ -5,7 +5,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.scrapers.base import BaseScraper, ClinicProgress, DepartmentData, DoctorSlot
 from app.core.logger import logger
@@ -25,11 +25,25 @@ class TVGHTaichungScraper(BaseScraper):
     async def close(self):
         await self.client.aclose()
 
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.ProxyError,
+        )),
+        reraise=True
+    )
     async def fetch_departments(self) -> list[DepartmentData]:
         url = f"{self.BASE_URL}/register/listSection.jsp"
-        resp = await self.client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await self.client.get(url)
+            resp.raise_for_status()
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.warning(f"[{self.HOSPITAL_CODE}] Network error on fetch_departments: {type(e).__name__}: {e}")
+            raise
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         departments = []

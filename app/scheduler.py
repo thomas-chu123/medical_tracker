@@ -3,6 +3,11 @@ APScheduler task: scrape CMUH data for master data and appointments.
 
 All synchronous Supabase calls are run via asyncio.to_thread() to prevent
 blocking the FastAPI event loop while scraping.
+
+Error Handling Strategy:
+- Network errors (RemoteProtocolError, ConnectError) are logged but don't stop the entire scrape.
+- Individual doctor/department failures are isolated and logged without cascading.
+- Retry logic is handled at the HTTP client level with exponential backoff.
 """
 
 import asyncio
@@ -192,16 +197,40 @@ async def _sync_hospital_morning_progress(scraper):
         await scraper.close()
 
 async def _scrape_hospital_master_data(scraper):
-    """Worker to scrape master data for a single hospital with concurrency and delays."""
+    """
+    Worker to scrape master data for a single hospital with concurrency and delays.
+    
+    改進的異常處理：
+    - 網路失敗會在更下層的 HTTP 調用中重試（指數退避）
+    - 單個醫生/科室的失敗不會導致整個醫院停止
+    - 詳細的異常日誌幫助除錯
+    """
     import random
+    failed_depts = []
+    failed_doctors = []
+    
     try:
         hosp_id = await get_hospital_id(scraper.HOSPITAL_CODE)
         if not hosp_id:
             logger.warning(f"[Scheduler] {scraper.HOSPITAL_CODE} hospital not found in DB.")
             return
 
-        departments = await scraper.fetch_departments()
-        logger.info(f"[Scheduler] Found {len(departments)} departments from {scraper.HOSPITAL_CODE} website")
+        try:
+            departments = await scraper.fetch_departments()
+            logger.info(f"[Scheduler] Found {len(departments)} departments from {scraper.HOSPITAL_CODE} website")
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.error(
+                f"[Scheduler] Network error fetching departments from {scraper.HOSPITAL_CODE}: {type(e).__name__}: {e}. "
+                f"底層的 HTTP 客戶端已自動重試 5 次。請檢查網路連接或醫院網站狀態。",
+                exc_info=True
+            )
+            return
+        except Exception as e:
+            logger.error(
+                f"[Scheduler] Unexpected error fetching departments from {scraper.HOSPITAL_CODE}: {e}",
+                exc_info=True
+            )
+            return
         
         # We will also collect snapshots to insert so that off-peak times populate our DB with the full schedule.
         snapshot_rows: list[dict] = []
@@ -210,25 +239,56 @@ async def _scrape_hospital_master_data(scraper):
             if "_" in dept.code:
                 continue
 
-            dept_id = await upsert_department(hosp_id, dept)
+            try:
+                dept_id = await upsert_department(hosp_id, dept)
+            except Exception as e:
+                logger.error(
+                    f"[Scheduler] Failed to upsert department {dept.name} ({dept.code}) for {scraper.HOSPITAL_CODE}: {e}"
+                )
+                failed_depts.append((dept.code, dept.name, str(e)))
+                continue
 
             try:
                 # Add a small delay between departments to avoid overloading the server
                 await asyncio.sleep(random.uniform(1.0, 3.0))
                 slots = await scraper.fetch_schedule(dept.code)
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+                logger.warning(
+                    f"[Scheduler] Network error scraping schedule for {scraper.HOSPITAL_CODE}/{dept.code}: "
+                    f"{type(e).__name__}: {e}. 跳過此科室（HTTP 客戶端已自動重試）。"
+                )
+                failed_depts.append((dept.code, dept.name, f"Network: {type(e).__name__}"))
+                continue
             except Exception as e:
-                logger.warning(f"[Scheduler] Warning: Error scraping dept {dept.code}: {e}")
+                logger.warning(f"[Scheduler] Error scraping schedule for {scraper.HOSPITAL_CODE}/{dept.code}: {e}")
+                failed_depts.append((dept.code, dept.name, str(e)))
+                continue
+
+            if not slots:
+                logger.debug(f"[Scheduler] No doctor slots found for {scraper.HOSPITAL_CODE}/{dept.code}")
                 continue
 
             # Optimize finding doctor IDs
             doc_map = {}
-            for slot in slots:
+            for idx, slot in enumerate(slots, start=1):
                 if slot.doctor_no not in doc_map:
                     try:
                         doc_id = await upsert_doctor(hosp_id, dept_id, slot)
                         doc_map[slot.doctor_no] = doc_id
+                    except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException) as e:
+                        logger.error(
+                            f"[Scheduler] Network error saving doctor {slot.doctor_name} "
+                            f"({slot.doctor_no}) for {scraper.HOSPITAL_CODE}/{dept.code}: "
+                            f"{type(e).__name__}: {e}. 跳過此醫生（HTTP 客戶端已自動重試）。"
+                        )
+                        failed_doctors.append((dept.code, slot.doctor_name, slot.doctor_no, f"Network: {type(e).__name__}"))
+                        continue
                     except Exception as e:
-                        logger.error(f"[Scheduler]   -> Error saving doctor {slot.doctor_name}: {e}")
+                        logger.error(
+                            f"[Scheduler] Error saving doctor {slot.doctor_name} ({slot.doctor_no}) "
+                            f"for {scraper.HOSPITAL_CODE}/{dept.code}: {e}"
+                        )
+                        failed_doctors.append((dept.code, slot.doctor_name, slot.doctor_no, str(e)))
                         continue
                 
                 # Append to snapshot rows without doing real-time progress fetches
@@ -254,13 +314,35 @@ async def _scrape_hospital_master_data(scraper):
                 await batch_insert_snapshots(snapshot_rows)
                 logger.info(f"[Scheduler] Successfully inserted {len(snapshot_rows)} off-peak schedule snapshots for {scraper.HOSPITAL_CODE}.")
             except Exception as e:
-                logger.error(f"[Scheduler] Error batch inserting master snapshots for {scraper.HOSPITAL_CODE}: {e}")
+                logger.error(f"[Scheduler] Error batch inserting master snapshots for {scraper.HOSPITAL_CODE}: {e}", exc_info=True)
 
-        logger.info(f"[Scheduler] Master data scrape complete for {scraper.HOSPITAL_CODE}.")
+        # Log summary
+        summary_lines = [f"[Scheduler] Master data scrape summary for {scraper.HOSPITAL_CODE}:"]
+        summary_lines.append(f"  - Departments processed: {len(departments)} total, {len(departments) - len(failed_depts)} succeeded, {len(failed_depts)} failed")
+        summary_lines.append(f"  - Snapshots inserted: {len(snapshot_rows)}")
+        if failed_depts:
+            summary_lines.append(f"  - Failed departments ({len(failed_depts)}):")
+            for code, name, error in failed_depts[:5]:  # Show first 5
+                summary_lines.append(f"    • {name} ({code}): {error}")
+            if len(failed_depts) > 5:
+                summary_lines.append(f"    ... and {len(failed_depts) - 5} more")
+        if failed_doctors:
+            summary_lines.append(f"  - Failed doctors ({len(failed_doctors)}):")
+            for dept_code, doc_name, doc_no, error in failed_doctors[:5]:  # Show first 5
+                summary_lines.append(f"    • {doc_name} ({doc_no}) in {dept_code}: {error}")
+            if len(failed_doctors) > 5:
+                summary_lines.append(f"    ... and {len(failed_doctors) - 5} more")
+        
+        logger.info("\n".join(summary_lines))
+        
     except Exception as e:
         logger.error(f"[Scheduler] Fatal error in master data for {scraper.HOSPITAL_CODE}: {e}", exc_info=True)
     finally:
-        await scraper.close()
+        try:
+            await scraper.close()
+        except Exception as e:
+            logger.warning(f"[Scheduler] Error closing {scraper.HOSPITAL_CODE} scraper: {e}")
+
 
 
 async def run_tracked_appointments():
