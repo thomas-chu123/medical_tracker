@@ -171,6 +171,13 @@ class HMMHScraper(BaseScraper):
                 if os.path.exists(potential_binary):
                     driver_path = potential_binary
             
+            # 確保 chromedriver 有可執行權限
+            try:
+                os.chmod(driver_path, 0o755)
+                log.debug(f"[HMMH] Set chromedriver executable permission: {driver_path}")
+            except Exception as e:
+                log.warning(f"[HMMH] Failed to set chmod 755 on {driver_path}: {e}")
+            
             service = Service(executable_path=driver_path)
             driver = webdriver.Chrome(service=service, options=chrome_options)
             driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
