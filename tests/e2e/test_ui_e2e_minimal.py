@@ -19,6 +19,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.expected_conditions import (
     presence_of_element_located,
     visibility_of_element_located,
+    element_to_be_clickable,
 )
 
 

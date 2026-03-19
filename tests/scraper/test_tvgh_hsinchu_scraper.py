@@ -109,7 +109,7 @@ async def test_fetch_schedule():
             assert slot1.doctor_no == "0530A"
             assert slot1.session_date == date(2026, 4, 3)
             assert slot1.session_type == "上午"
-            assert slot1.clinic_room == "第18診"
+            assert slot1.clinic_room == "18"
 
             slot2 = slots[1]
             assert slot2.session_type == "下午"

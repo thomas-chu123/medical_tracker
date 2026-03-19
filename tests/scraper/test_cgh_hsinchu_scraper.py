@@ -48,8 +48,28 @@ MOCK_PROGRESS_HTML = """
 <html>
 <body>
     <table>
-        <tr><td>021</td><td>黃漢倫</td><td>15</td><td>38</td></tr>
-        <tr><td>022</td><td>測試醫師</td><td>0</td><td>10</td></tr>
+        <tr>
+            <td>目前看診序號：15</td>
+        </tr>
+        <tr>
+            <td>診間</td>
+            <td>醫生</td>
+            <td>當前號</td>
+            <td>總號</td>
+        </tr>
+        <tr>
+            <td>021</td>
+            <td>黃漢倫</td>
+            <td>15</td>
+            <td>38</td>
+        </tr>
+        <tr>
+            <td>尚未就診病人號碼：</td>
+            <td>1</td><td>3</td><td>6</td><td>8</td><td>10</td>
+            <td>12</td><td>14</td><td>19</td><td>20</td><td>21</td>
+            <td>22</td><td>23</td><td>24</td><td>25</td><td>26</td>
+            <td>27</td><td>28</td>
+        </tr>
     </table>
 </body>
 </html>
@@ -116,6 +136,7 @@ async def test_cgh_fetch_clinic_progress():
     scraper = CGHHsinchuScraper()
     
     async def mock_post(url, data, **kwargs):
+        # Return MOCK_PROGRESS_HTML for all clinic progress queries
         if data and data.get("hosarea") == "3":
             return MOCK_PROGRESS_HTML
         return ""
@@ -125,16 +146,25 @@ async def test_cgh_fetch_clinic_progress():
         progress = await scraper.fetch_clinic_progress("021", "1")
         assert progress is not None
         assert progress.current_number == 15
-        assert progress.total_quota == 38
+        # total_quota is calculated as the max of queue numbers: [1,3,6,8,10,12,14,19,20,21,22,23,24,25,26,27,28]
+        assert progress.total_quota == 28
         
-        # By doctor name
+        # By doctor name (room is empty, so should match by doctor name in HTML)
         progress2 = await scraper.fetch_clinic_progress("", "1", doctor_name="黃漢倫")
         assert progress2 is not None
         assert progress2.current_number == 15
         
-        # Not found
-        progress3 = await scraper.fetch_clinic_progress("999", "1")
-        assert progress3 is None
+        # Not found - return empty HTML for room 999
+        # Modify mock to return empty HTML when room is not 021
+        
+        async def mock_post_not_found(url, data, **kwargs):
+            if data and data.get("hosarea") == "3" and data.get("room") == "021":
+                return MOCK_PROGRESS_HTML
+            return ""
+        
+        with patch.object(scraper, '_post', side_effect=mock_post_not_found):
+            progress3 = await scraper.fetch_clinic_progress("999", "1")
+            assert progress3 is None
 
 def test_cgh_calculate_remaining_count():
     scraper = CGHHsinchuScraper()

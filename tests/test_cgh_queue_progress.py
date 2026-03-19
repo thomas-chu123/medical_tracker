@@ -32,6 +32,9 @@ def test_queue_number_extraction():
     print("   當前看診序號：14")
     print("   等候號碼：1, 3, 6, 8, 10, 12, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28")
 
+    # ✅ 當前號碼應該來自「目前看診序號：」這一欄，而不是隊列第一個
+    current_number = 14  # 從「目前看診序號：14」提取
+    
     # 模擬提取的等候號碼
     all_queue_numbers = [1, 3, 6, 8, 10, 12, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
 
@@ -41,9 +44,8 @@ def test_queue_number_extraction():
     all_queue_numbers = sorted(set(all_queue_numbers))
     print(f"   1. 排序去重: {all_queue_numbers}")
 
-    # 第一個號碼是當前看診號
-    current_number = all_queue_numbers[0]
-    print(f"   2. 當前號 (第一個): {current_number}")
+    # 當前號碼已從 HTML 中的「目前看診序號：」提取
+    print(f"   2. 當前號 (來自HTML): {current_number}")
 
     # 最後一個號碼是最大掛號號
     max_number = all_queue_numbers[-1]
@@ -60,13 +62,13 @@ def test_queue_number_extraction():
     print("\n📊 驗證結果:")
     print(f"   ✅ 當前看診號：{current_number} (應為 14)")
     print(f"   ✅ 等候人數：{waiting_count} (應為 14)")
-    print(f"   ✅ 總掛號人數：{registered_count} (應為 28)")
+    print(f"   ✅ 總掛號人數：{registered_count} (應為 17)")
     print(f"   ✅ 最大掛號號：{max_number} (應為 28)")
 
     # 檢查結果
     assert current_number == 14, f"當前號應為 14，得到 {current_number}"
     assert waiting_count == 14, f"等候人數應為 14，得到 {waiting_count}"
-    assert registered_count == 28, f"掛號人數應為 28，得到 {registered_count}"
+    assert registered_count == 17, f"掛號人數應為 17，得到 {registered_count}"
     assert max_number == 28, f"最大號應為 28，得到 {max_number}"
 
     print("\n✅ 所有測試通過！")

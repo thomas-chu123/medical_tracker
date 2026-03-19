@@ -47,6 +47,7 @@ HOSPITAL_SCRAPERS: Dict[str, Type[BaseScraper]] = {
 }
 
 
+@lru_cache(maxsize=1)
 def get_enabled_scrapers() -> List[BaseScraper]:
     """
     根據環境變數配置動態加載啟用的爬蟲。
