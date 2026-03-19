@@ -237,3 +237,73 @@ async def test_multiple_thresholds_trigger_once(
         appointment_number=10,
         estimated_time=ANY,
     )
+
+
+@pytest.mark.asyncio
+async def test_sends_notification_at_threshold_5_even_when_past_appointment(
+    mocker, mock_send_email, mock_send_line_notify, mock_build_email
+):
+    """
+    Verify that when current_number > target_number (already past the appointment),
+    only the 5-person threshold notification is sent, and 20/10 thresholds are skipped.
+    
+    This addresses the requirement: when the system detects the appointment is already called,
+    it should still send the final 5-person notification instead of marking all thresholds as pending.
+    """
+    # Arrange
+    subscription = {
+        "id": "sub_past", "user_id": "user_past", "doctor_id": 99,
+        "session_date": str(date.today()), "session_type": "上午", "appointment_number": 40,
+        "notify_at_20": True, "notify_at_10": True, "notify_at_5": True,
+        "notified_20": False, "notified_10": False, "notified_5": False,
+        "notify_email": True, "notify_line": True,
+        "doctors": {"name": "Dr. Past", "hospital_id": 1},
+        "departments": {"name": "Past Dept"},
+    }
+    # Simulate past appointment: current_number (60) > target_number (40)
+    snapshot_data = {
+        "current_number": 60,
+        "waiting_list": list(range(61, 80)),
+        "clinic_room": "Room 201"
+    }
+
+    mock_snap_res = MagicMock(); mock_snap_res.data = [snapshot_data]
+    mock_hosp_res = MagicMock(); mock_hosp_res.data = {"name": "Past Hospital"}
+    mock_profile_res = MagicMock(); mock_profile_res.data = [{"line_user_id": "UPASTLINE123"}]
+    mock_log_res = MagicMock(); mock_log_res.data = [{"id": 999}]
+    mock_update_res = MagicMock()
+
+    mock_run = mocker.patch(
+        "app.services.notification._run",
+        new_callable=AsyncMock,
+        # snap, hosp, profile, log_email, update_log_email, log_line, update_log_line, update_notified_20, update_notified_10, update_sub
+        side_effect=[mock_snap_res, mock_hosp_res, mock_profile_res, mock_log_res, mock_update_res, mock_log_res, mock_update_res, mock_update_res, mock_update_res, mock_update_res]
+    )
+    mocker.patch('app.services.notification._get_user_email', AsyncMock(return_value="userpast@email.com"))
+
+    from datetime import timezone, timedelta
+    tz = timezone(timedelta(hours=8))
+    morning_time = datetime(date.today().year, date.today().month, date.today().day, 9, 0, tzinfo=tz)
+    mocker.patch('app.core.timezone.now_tw', return_value=morning_time)
+
+    # Act
+    await _process_subscription(MagicMock(), subscription)
+
+    # Assert: 5-person notification should be sent
+    mock_send_email.assert_called_once()
+    mock_send_line_notify.assert_called_once()
+
+    # Verify it was the 5-person threshold notification
+    mock_build_email.assert_called_with(
+        hospital_name="Past Hospital",
+        clinic_room="Room 201",
+        doctor_name="Dr. Past",
+        department_name="Past Dept",
+        session_date=str(date.today()),
+        session_type="上午",
+        current_number=60,
+        remaining=0,  # Since current_number > target_number
+        threshold=5,   # Only 5-person threshold triggers
+        appointment_number=40,
+        estimated_time=ANY,
+    )

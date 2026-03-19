@@ -236,10 +236,13 @@ async def _process_subscription(supabase, sub: dict):
             continue
 
         if current_number > target_number:
-            # If we missed the window entirely, mark as notified to stop trying, 
-            # but don't send an alert for a past appointment.
-            await _run(lambda: supabase.table("tracking_subscriptions").update({notified_flag: True}).eq("id", sub["id"]).execute())
-            continue
+            # If we missed the window entirely
+            # For 20 and 10 thresholds, mark as notified to stop trying
+            # But still allow the final 5-person notification to be sent
+            if threshold > 5:
+                await _run(lambda: supabase.table("tracking_subscriptions").update({notified_flag: True}).eq("id", sub["id"]).execute())
+                continue
+            # For threshold == 5, allow notification to proceed even if already past the appointment
 
         if remaining > threshold:
             continue  # Not yet reached
