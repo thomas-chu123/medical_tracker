@@ -767,6 +767,7 @@ function renderClinicCard(sub, snap) {
     const total_quota = (sub.total_quota != null) ? sub.total_quota : (snap?.total_quota != null ? snap.total_quota : '—');
     const current_registered = (sub.current_registered != null) ? sub.current_registered : (snap?.current_registered != null ? snap.current_registered : '—');
     const waiting_list = sub.waiting_list || snap?.waiting_list || [];
+    const clinicQueueDetails = sub.clinic_queue_details || snap?.clinic_queue_details || [];
     const eta = sub.eta || snap?.eta;
 
     // 2. Updated Number Display
@@ -828,6 +829,18 @@ function renderClinicCard(sub, snap) {
     const hospLabel = sub.hospital_name || '';
     const sessionLabel = [sub.session_date, sub.session_type ? sub.session_type + '診' : ''].filter(Boolean).join(' ');
     const apptNoHtml = `<div style="font-size:12px; color:var(--text-muted); margin-top:2px">🎫 我的號碼：${(sub.appointment_number != null) ? sub.appointment_number : '<span style="opacity:0.6">(未填寫)</span>'}</div>`;
+    const summaryWaitingCount = clinicQueueDetails.find(item =>
+        item?.waiting_count != null && Number.isFinite(Number(item.waiting_count))
+    )?.waiting_count;
+    const detailedWaitingCount = typeof current === 'number'
+        ? clinicQueueDetails.filter(item => Number(item?.number) > current && item?.status !== '完成').length
+        : null;
+    const waitingCount = summaryWaitingCount != null
+        ? Number(summaryWaitingCount)
+        : (clinicQueueDetails.some(item => item?.number != null)
+            ? detailedWaitingCount
+            : (waiting_list.length > 0 ? waiting_list.length : null));
+    const waitingCountHtml = `<div style="font-size:12px; color:var(--text-muted); margin-top:2px">⏳ 等候人數：${waitingCount != null ? `<strong style="color:var(--text)">${waitingCount}</strong>` : '—'}</div>`;
     const statusBadge = status ? `<span class="status-badge ${isFinished ? 'finished' : 'upcoming'}">${status}</span>` : '';
 
     // 5. Waiting People & Distance
@@ -862,6 +875,7 @@ function renderClinicCard(sub, snap) {
       ${(sub.clinic_room || snap?.clinic_room) ? `<span class="dept-tag" style="margin-left:6px;">🚪 診間：${escHtml((sub.clinic_room || snap.clinic_room).replace(/診$/, ''))}診</span>` : ''}
     </div>
     ${apptNoHtml}
+    ${waitingCountHtml}
     ${etaHtml}
     <div class="number-display">
       <div class="current-num ${isFinished ? 'text-muted' : ''}">${isFinished ? '完畢' : current}</div>
@@ -3358,4 +3372,3 @@ function filterRankingTable() {
     });
     renderRankingTable(filtered);
 }
-
